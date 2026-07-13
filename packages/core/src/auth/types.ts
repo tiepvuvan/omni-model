@@ -43,8 +43,9 @@ export interface AuthVerifier {
    * Returns `null` when the request carries no credential this verifier is
    * responsible for (e.g. its header is absent) — in `mode: any` the next
    * verifier is consulted. Returns `{ ok: false }` when a credential was
-   * presented but is invalid; an explicit failure always rejects the request,
-   * even in `mode: any`, so clients cannot fall back past a bad token.
+   * presented but is invalid; in `mode: any` later verifiers may still
+   * authenticate the request, but if none does, the first explicit failure's
+   * reason (and status) is what the client receives.
    */
   verify(request: Request, ctx: VerifyContext): Promise<AuthResult | null>;
   routes?: AuthRoute[];

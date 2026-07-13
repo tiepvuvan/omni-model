@@ -1,0 +1,28 @@
+{
+  "name": "omni-model",
+  "description": "Self-hosted OpenAI-compatible AI proxy with YAML-configured auth, rate limits and model routing.",
+  "repository": "https://github.com/omni-model/omni-model",
+  "options": {
+    "allow-unauthenticated": true,
+    "memory": "512Mi",
+    "port": 8787
+  },
+  "env": {
+    "OPENAI_API_KEY": {
+      "description": "OpenAI API key (if the openai provider is configured)",
+      "required": false
+    },
+    "ANTHROPIC_API_KEY": {
+      "description": "Anthropic API key (if the anthropic provider is configured)",
+      "required": false
+    },
+    "GEMINI_API_KEY": {
+      "description": "Google Gemini API key (if the google provider is configured)",
+      "required": false
+    },
+    "OMNI_CONFIG": {
+      "description": "Inline YAML configuration (overrides the omni.yaml baked into the image)",
+      "required": false
+    }
+  }
+}
