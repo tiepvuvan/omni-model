@@ -1,0 +1,90 @@
+# omni-model configuration example.
+# Full reference: docs/configuration.md
+version: 1
+
+server:
+  logLevel: info
+  cors:
+    allowOrigins: ["*"]
+
+# Where rate-limit counters, token budgets and attestation keys live.
+# Built-in types: memory, cloudflare-kv, durable-object, redis, postgres.
+storage:
+  type: memory
+
+security:
+  # any: the first verifier that recognizes and accepts a credential wins.
+  # all: every configured verifier must accept the request.
+  mode: any
+  providers:
+    # Firebase App Check tokens (header: X-Firebase-AppCheck).
+    - type: firebase-app-check
+      projectNumber: "1234567890"
+    # Firebase Auth ID tokens (header: Authorization: Bearer <token>).
+    - type: firebase-auth
+      projectId: my-firebase-project
+    # Supabase access tokens.
+    # - type: supabase
+    #   url: https://abcdefgh.supabase.co
+    #   jwtSecret: ${SUPABASE_JWT_SECRET}
+    # Any custom JWT.
+    # - type: jwt
+    #   jwksUrl: https://auth.example.com/.well-known/jwks.json
+    #   issuer: https://auth.example.com
+    #   audience: omni-model
+    # Apple DeviceCheck (header: X-Apple-Device-Token).
+    # - type: apple-device-check
+    #   teamId: ABCDE12345
+    #   keyId: FGHIJ67890
+    #   privateKey: ${APPLE_DEVICECHECK_KEY}
+    # Apple App Attest assertions.
+    # - type: apple-app-attest
+    #   teamId: ABCDE12345
+    #   bundleId: com.example.app
+
+rateLimits:
+  - name: per-user-requests
+    key: user
+    requests: { limit: 60, window: 1m }
+  - name: per-user-daily-tokens
+    key: user
+    tokens: { limit: 200000, window: 1d }
+  - name: free-tier
+    when: 'user.claims.tier == "free"'
+    key: user
+    requests: { limit: 10, window: 1m }
+
+providers:
+  openai:
+    type: openai
+    apiKey: ${OPENAI_API_KEY}
+  anthropic:
+    type: anthropic
+    apiKey: ${ANTHROPIC_API_KEY}
+  google:
+    type: google
+    apiKey: ${GEMINI_API_KEY}
+  # Any OpenAI-compatible endpoint:
+  # groq:
+  #   type: openai-compatible
+  #   baseUrl: https://api.groq.com/openai/v1
+  #   apiKey: ${GROQ_API_KEY}
+
+routing:
+  routes:
+    # Map a client-facing alias to a concrete provider+model by policy.
+    - name: smart-for-pro
+      when: 'request.model == "smart" && user.claims.tier == "pro"'
+      provider: anthropic
+      model: claude-opus-4-8
+    - name: smart-default
+      when: 'request.model == "smart"'
+      provider: openai
+      model: gpt-4o-mini
+  modelRules:
+    # No route matched: send the client's model to the provider that owns it.
+    - match: 'request.model.startsWith("claude-")'
+      provider: anthropic
+    - match: 'request.model.startsWith("gemini-")'
+      provider: google
+  defaultProvider: openai

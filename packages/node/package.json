@@ -1,0 +1,32 @@
+{
+  "name": "@omni-model/node",
+  "version": "0.1.0",
+  "description": "Node.js server for omni-model: loads a YAML config file and serves the proxy (for Docker, Fly.io, Cloud Run, and bare Node).",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "omni-model": "./dist/cli.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/cli.js"
+  },
+  "dependencies": {
+    "@hono/node-server": "^2.0.0",
+    "@omni-model/core": "workspace:*",
+    "@omni-model/storage-postgres": "workspace:*",
+    "@omni-model/storage-redis": "workspace:*",
+    "hono": "^4.12.0"
+  }
+}
