@@ -1,5 +1,11 @@
-import type { ChatCompletion, ChatProvider, ProviderFactory } from "@omni-model/core";
-import { createDefaultRegistry, silentLogger } from "@omni-model/core";
+import type {
+  ChatCompletion,
+  ChatCompletionChunk,
+  ChatProvider,
+  ProviderFactory,
+  Usage,
+} from "@omni-model/core";
+import { createDefaultRegistry, silentLogger, sseStreamFromChunks } from "@omni-model/core";
 import { describe, expect, it, vi } from "vitest";
 import type {
   DurableObjectNamespaceLike,
@@ -45,6 +51,24 @@ routing:
 
 const FAKE_USAGE_TOTAL = 7;
 
+// durable-object storage + a token budget: lets the streaming test read back
+// the counter the post-response usage recording wrote.
+const STREAM_DO_YAML = `
+version: 1
+storage:
+  type: durable-object
+  binding: OMNI_DO
+rateLimits:
+  - name: budget
+    key: user
+    tokens: { limit: 1000, window: 1h }
+providers:
+  fake-stream:
+    type: fake-stream
+routing:
+  defaultProvider: fake-stream
+`;
+
 function fakeCompletion(model: string): ChatCompletion {
   return {
     id: "chatcmpl-worker-test",
@@ -64,6 +88,49 @@ function createFakeProviderFactory(): ProviderFactory {
       type: "fake",
       async chat(request) {
         return { kind: "completion", completion: fakeCompletion(request.model) };
+      },
+    }),
+  };
+}
+
+function streamChunk(
+  model: string,
+  delta: ChatCompletionChunk["choices"][number]["delta"],
+  finish: string | null = null,
+): ChatCompletionChunk {
+  return {
+    id: "chatcmpl-worker-stream",
+    object: "chat.completion.chunk",
+    created: 1_750_000_000,
+    model,
+    choices: [{ index: 0, delta, finish_reason: finish }],
+  };
+}
+
+/** Provider that returns an SSE stream plus an already-resolved usage promise. */
+function createFakeStreamingProviderFactory(): ProviderFactory {
+  return {
+    type: "fake-stream",
+    create: (id): ChatProvider => ({
+      id,
+      type: "fake-stream",
+      async chat(request) {
+        async function* chunks(): AsyncGenerator<ChatCompletionChunk> {
+          yield streamChunk(request.model, { role: "assistant", content: "" });
+          yield streamChunk(request.model, { content: "Hel" });
+          yield streamChunk(request.model, { content: "lo" });
+          yield streamChunk(request.model, {}, "stop");
+        }
+        const usage: Usage = {
+          prompt_tokens: 3,
+          completion_tokens: 4,
+          total_tokens: FAKE_USAGE_TOTAL,
+        };
+        return {
+          kind: "stream",
+          sse: sseStreamFromChunks(chunks()),
+          usage: Promise.resolve(usage),
+        };
       },
     }),
   };
@@ -142,11 +209,11 @@ function healthzRequest(): Request {
   return new Request("https://omni.test/healthz");
 }
 
-function chatRequest(): Request {
+function chatRequest(stream = false): Request {
   return new Request("https://omni.test/v1/chat/completions", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ model: "any", messages: [{ role: "user", content: "hi" }] }),
+    body: JSON.stringify({ model: "any", messages: [{ role: "user", content: "hi" }], stream }),
   });
 }
 
@@ -215,6 +282,35 @@ describe("createWorker", () => {
     const second = await worker.fetch(chatRequest(), env, ctx);
     expect(second.status).toBe(429);
     expect(second.headers.get("x-ratelimit-rule")).toBe("burst");
+  });
+
+  it("streams SSE through the worker and records usage via executionCtx.waitUntil", async () => {
+    const namespace = new FakeNamespace();
+    const registry = createDefaultRegistry();
+    registry.providers.set("fake-stream", createFakeStreamingProviderFactory());
+    const worker = createWorker({ configYaml: STREAM_DO_YAML, registry, logger: silentLogger });
+    const env: WorkerEnv = { OMNI_DO: namespace };
+    const { ctx, flush } = createCtx();
+
+    const response = await worker.fetch(chatRequest(true), env, ctx);
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("text/event-stream; charset=utf-8");
+    // The body is a live ReadableStream, not a buffered string.
+    expect(response.body).toBeInstanceOf(ReadableStream);
+
+    const text = await response.text();
+    expect(text).toContain('"content":"Hel"');
+    expect(text).toContain('"content":"lo"');
+    expect(text.trimEnd().endsWith("data: [DONE]")).toBe(true);
+
+    // Post-response token accounting is scheduled on the execution context and
+    // runs after the stream is consumed; it must land in the DO-backed budget.
+    await flush();
+    const tokenKey = namespace.names.find((name) => name.startsWith("rl:tok:budget:"));
+    expect(tokenKey).toBeDefined();
+    if (tokenKey === undefined) throw new Error("unreachable");
+    const reader = new DurableObjectStorageAdapter(namespace);
+    expect(await reader.getCounter(tokenKey)).toBe(FAKE_USAGE_TOTAL);
   });
 
   it("serves requests with cloudflare-kv storage under a custom binding name", async () => {
