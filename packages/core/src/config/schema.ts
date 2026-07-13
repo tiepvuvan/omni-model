@@ -18,6 +18,15 @@ export const serverConfigSchema = z.strictObject({
   cors: corsConfigSchema.optional(),
   /** Log level for the built-in console logger. */
   logLevel: z.enum(["debug", "info", "warn", "error", "silent"]).default("info"),
+  /**
+   * Trust client-suppliable forwarding headers (`cf-connecting-ip`,
+   * `x-forwarded-for`, `x-real-ip`) when deriving the client IP. Leave `false`
+   * unless the proxy sits behind a trusted reverse proxy / CDN that overwrites
+   * these headers; otherwise a client can spoof its rate-limit key.
+   */
+  trustProxyHeaders: z.boolean().default(false),
+  /** Maximum accepted request body size in bytes; larger bodies get a 413. */
+  maxBodyBytes: z.number().int().positive().default(2_000_000),
 });
 
 /**
@@ -98,12 +107,15 @@ export const routingConfigSchema = z.strictObject({
 
 export const omniConfigSchema = z.strictObject({
   version: z.literal(1).default(1),
-  server: serverConfigSchema.default({ logLevel: "info" }),
+  // `prefault({})` supplies an empty object as the pre-parse input when the key
+  // is omitted, so each block's own field defaults apply (and stay the single
+  // source of truth).
+  server: serverConfigSchema.prefault({}),
   storage: storageConfigSchema,
-  security: securityConfigSchema.default({ mode: "any", publicPaths: [], providers: [] }),
+  security: securityConfigSchema.prefault({}),
   rateLimits: z.array(rateLimitRuleSchema).default([]),
   providers: z.record(z.string().min(1), providerConfigSchema).default({}),
-  routing: routingConfigSchema.default({ routes: [], modelRules: [] }),
+  routing: routingConfigSchema.prefault({}),
 });
 
 export type CorsConfig = z.output<typeof corsConfigSchema>;

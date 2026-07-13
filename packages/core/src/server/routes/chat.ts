@@ -5,7 +5,7 @@ import type { ChatProvider } from "../../providers/types.js";
 import type { RateLimitDecision, RateLimiter } from "../../ratelimit/types.js";
 import type { RequestFacts, Router } from "../../routing/types.js";
 import type { Logger, RuntimeContext } from "../../types.js";
-import { buildRequestFacts, extractClientIp } from "../facts.js";
+import { buildRequestFacts } from "../facts.js";
 import type { AppEnv } from "../types.js";
 
 /** Dependencies shared by every `/v1` route handler. */
@@ -16,13 +16,44 @@ export interface RouteDeps {
   log: Logger;
   /** Per-request runtime: `waitUntil` bound to the platform execution context. */
   runtimeFor: (c: Context<AppEnv>) => RuntimeContext;
+  /** Resolve the client IP (gated on `server.trustProxyHeaders`, or socket-based). */
+  clientIp: (c: Context<AppEnv>) => string | null;
+  /** Reject request bodies larger than this many bytes with a 413. */
+  maxBodyBytes: number;
 }
 
-/** Parse the request body as a JSON object; anything else is a 400. */
-export async function readJsonObject(c: Context<AppEnv>): Promise<Record<string, unknown>> {
+const bodyEncoder = new TextEncoder();
+
+function payloadTooLarge(maxBodyBytes: number): OmniError {
+  return new OmniError(413, `request body exceeds the ${maxBodyBytes}-byte limit`, {
+    code: "payload_too_large",
+  });
+}
+
+/**
+ * Parse the request body as a JSON object, rejecting bodies over
+ * `maxBodyBytes` (checked against the declared `content-length` and the actual
+ * bytes read, since the header can be absent or lie). Anything non-object is a
+ * 400.
+ */
+export async function readJsonObject(
+  c: Context<AppEnv>,
+  maxBodyBytes: number,
+): Promise<Record<string, unknown>> {
+  const declared = Number(c.req.header("content-length"));
+  if (Number.isFinite(declared) && declared > maxBodyBytes) {
+    throw payloadTooLarge(maxBodyBytes);
+  }
+  let text: string;
+  try {
+    text = await c.req.text();
+  } catch {
+    throw badRequest("request body is not valid JSON", { code: "invalid_json" });
+  }
+  if (bodyEncoder.encode(text).length > maxBodyBytes) throw payloadTooLarge(maxBodyBytes);
   let parsed: unknown;
   try {
-    parsed = await c.req.json();
+    parsed = JSON.parse(text);
   } catch {
     throw badRequest("request body is not valid JSON", { code: "invalid_json" });
   }
@@ -37,12 +68,13 @@ export function factsFor(
   c: Context<AppEnv>,
   body: ChatCompletionRequest | { model?: string },
   now: number,
+  ip: string | null,
 ): RequestFacts {
   const facts = buildRequestFacts({
     method: c.req.method,
     path: c.req.path,
     headers: c.req.raw.headers,
-    ip: extractClientIp(c.req.raw.headers),
+    ip,
     body,
     identity: c.get("identity") ?? null,
     now,
@@ -94,7 +126,7 @@ const STREAM_RESPONSE_HEADERS = {
  */
 export function createChatHandler(deps: RouteDeps): (c: Context<AppEnv>) => Promise<Response> {
   return async (c) => {
-    const body = await readJsonObject(c);
+    const body = await readJsonObject(c, deps.maxBodyBytes);
     if (typeof body.model !== "string" || body.model.length === 0) {
       throw badRequest("you must provide a model parameter", { param: "model" });
     }
@@ -106,7 +138,7 @@ export function createChatHandler(deps: RouteDeps): (c: Context<AppEnv>) => Prom
     const request = body as ChatCompletionRequest;
 
     const runtime = deps.runtimeFor(c);
-    const facts = factsFor(c, request, runtime.now());
+    const facts = factsFor(c, request, runtime.now(), deps.clientIp(c));
     await enforceRateLimit(deps.limiter, facts);
 
     const decision = deps.router.resolve(facts);

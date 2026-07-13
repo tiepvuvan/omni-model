@@ -1,3 +1,4 @@
+import type { Context } from "hono";
 import type { Identity } from "../auth/types.js";
 import type { OmniConfig } from "../config/schema.js";
 import type { OmniRegistry } from "../registry.js";
@@ -33,6 +34,14 @@ export interface OmniAppInit {
   waitUntil?: (promise: Promise<unknown>) => void;
   /** Defaults to `createConsoleLogger(config.server.logLevel)`. */
   logger?: Logger;
+  /**
+   * Resolve the client IP used for rate-limit keys. Defaults to a header-only
+   * resolver that honors forwarding headers exactly when
+   * `config.server.trustProxyHeaders` is true. Platforms with access to the
+   * connection socket (e.g. Node via `getConnInfo`) pass a resolver that
+   * returns the real peer address when proxy headers are not trusted.
+   */
+  clientIp?: (c: Context<AppEnv>) => string | null;
 }
 
 /**

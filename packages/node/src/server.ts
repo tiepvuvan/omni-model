@@ -1,10 +1,12 @@
 import type { AddressInfo } from "node:net";
 import { type ServerType, serve } from "@hono/node-server";
+import { getConnInfo } from "@hono/node-server/conninfo";
 import {
   ConfigError,
   createConsoleLogger,
   createDefaultRegistry,
   createOmniApp,
+  extractClientIp,
   type Logger,
   parseConfig,
   type RuntimeContext,
@@ -42,6 +44,17 @@ export interface RunningServer {
 
 function describeError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * Parse a port from the environment. Returns `undefined` for unset/blank/NaN
+ * so the caller can fall back to the default, while preserving an explicit
+ * `0` (bind an ephemeral port) — which `Number(x) || default` would discard.
+ */
+function parsePort(value: string | undefined): number | undefined {
+  if (value === undefined || value.trim() === "") return undefined;
+  const port = Number(value);
+  return Number.isInteger(port) && port >= 0 && port <= 65535 ? port : undefined;
 }
 
 async function closeStorage(storage: StorageAdapter): Promise<void> {
@@ -86,9 +99,21 @@ export async function startServer(options: StartOptions): Promise<RunningServer>
   const storage = await factory.create(config.storage, runtime);
 
   try {
-    const app = await createOmniApp({ config, registry, env, storage, logger });
+    const app = await createOmniApp({
+      config,
+      registry,
+      env,
+      storage,
+      logger,
+      // Behind a trusted proxy, derive the IP from headers; otherwise use the
+      // real socket peer, which a client cannot spoof.
+      clientIp: (c) =>
+        config.server.trustProxyHeaders
+          ? extractClientIp(c.req.raw.headers, true)
+          : (getConnInfo(c).remote.address ?? null),
+    });
 
-    const port = options.port ?? (Number(env.PORT) || 8787);
+    const port = options.port ?? parsePort(env.PORT) ?? 8787;
     const hostname = options.hostname ?? "0.0.0.0";
 
     let onListening: (info: AddressInfo) => void = () => {};

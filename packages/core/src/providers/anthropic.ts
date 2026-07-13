@@ -8,11 +8,18 @@ import type {
   ChatContentPart,
   ChatMessage,
   ChatToolCall,
+  ModelInfo,
   Usage,
 } from "../openai/types.js";
 import type { RuntimeContext } from "../types.js";
 import { readSSEStream, sseStreamFromChunks } from "../util/sse.js";
-import { createDeferred, joinUrl, openAIErrorBody, upstreamErrorToResult } from "./shared.js";
+import {
+  createDeferred,
+  joinUrl,
+  openAIErrorBody,
+  readBodyText,
+  upstreamErrorToResult,
+} from "./shared.js";
 import type { ChatProvider, ChatResult, ProviderCallOptions, ProviderFactory } from "./types.js";
 
 const anthropicOptionsSchema = z.strictObject({
@@ -68,7 +75,11 @@ interface AnthropicTool {
   input_schema: Record<string, unknown>;
 }
 
-type AnthropicToolChoice = { type: "auto" } | { type: "any" } | { type: "tool"; name: string };
+type AnthropicToolChoice =
+  | { type: "auto" }
+  | { type: "any" }
+  | { type: "none" }
+  | { type: "tool"; name: string };
 
 interface AnthropicRequestBody {
   model: string;
@@ -110,6 +121,17 @@ interface AnthropicStreamEvent {
 
 const DATA_URL_PATTERN = /^data:([^;,]+);base64,(.+)$/s;
 
+/** Anthropic /v1/models reports `created_at` as an ISO 8601 string; OpenAI's
+ * `created` is epoch seconds. Accept a numeric value too, defensively. */
+function epochSecondsFromCreatedAt(value: unknown): number {
+  if (typeof value === "number") return Math.floor(value);
+  if (typeof value === "string") {
+    const ms = Date.parse(value);
+    if (!Number.isNaN(ms)) return Math.floor(ms / 1000);
+  }
+  return 0;
+}
+
 function mapStopReason(reason: string | null | undefined): string {
   switch (reason) {
     case "max_tokens":
@@ -141,7 +163,8 @@ function contentPartsToBlocks(parts: ChatContentPart[]): AnthropicContentBlock[]
   for (const part of parts) {
     if (part.type === "text") {
       const text = (part as { text?: unknown }).text;
-      if (typeof text === "string") blocks.push({ type: "text", text });
+      // Anthropic 400s on empty text blocks ({type:"text",text:""}); drop them.
+      if (typeof text === "string" && text.length > 0) blocks.push({ type: "text", text });
       continue;
     }
     if (part.type === "image_url") {
@@ -224,7 +247,12 @@ function translateMessages(openaiMessages: ChatMessage[]): {
         const role = message.role === "assistant" ? "assistant" : "user";
         const blocks: AnthropicContentBlock[] =
           typeof message.content === "string"
-            ? [{ type: "text", text: message.content }]
+            ? // Drop empty text; Anthropic rejects {type:"text",text:""}. An empty
+              // string with no tool_calls yields zero blocks, so pushMerged omits
+              // the whole message rather than send an empty-content turn.
+              message.content.length > 0
+              ? [{ type: "text", text: message.content }]
+              : []
             : message.content === null
               ? []
               : contentPartsToBlocks(message.content);
@@ -240,6 +268,13 @@ function translateMessages(openaiMessages: ChatMessage[]): {
     }
   }
 
+  // Anthropic requires the first message to be role "user". If dropping empty
+  // messages (or an assistant-led history) leaves an assistant turn first,
+  // prepend a minimal placeholder user turn so the request validates.
+  if (messages[0]?.role === "assistant") {
+    messages.unshift({ role: "user", content: [{ type: "text", text: "." }] });
+  }
+
   return { system: systemParts.length > 0 ? systemParts.join("\n\n") : undefined, messages };
 }
 
@@ -247,8 +282,10 @@ function translateTools(request: ChatCompletionRequest): {
   tools?: AnthropicTool[];
   tool_choice?: AnthropicToolChoice;
 } {
-  // Anthropic has no "none" choice: drop the tools entirely instead.
-  if (request.tools === undefined || request.tool_choice === "none") return {};
+  // Only drop tools when there are genuinely none defined. When tool_choice is
+  // "none" we KEEP the tools array (historical tool_use/tool_result turns 400
+  // without it) and send tool_choice {type:"none"}, supported since 2024-10.
+  if (request.tools === undefined) return {};
 
   const tools: AnthropicTool[] = request.tools.map((tool) => ({
     name: tool.function.name,
@@ -258,7 +295,9 @@ function translateTools(request: ChatCompletionRequest): {
 
   const choice = request.tool_choice;
   let tool_choice: AnthropicToolChoice | undefined;
-  if (choice === "auto") {
+  if (choice === "none") {
+    tool_choice = { type: "none" };
+  } else if (choice === "auto") {
     tool_choice = { type: "auto" };
   } else if (choice === "required") {
     tool_choice = { type: "any" };
@@ -403,7 +442,7 @@ class AnthropicProvider implements ChatProvider {
     }
 
     if (!response.ok) {
-      return upstreamErrorToResult(this.id, response.status, await response.text());
+      return upstreamErrorToResult(this.id, response.status, await readBodyText(response));
     }
 
     if (request.stream === true) {
@@ -418,7 +457,7 @@ class AnthropicProvider implements ChatProvider {
           ),
         };
       }
-      return this.streamResult(response.body, request, ctx);
+      return this.streamResult(response.body, request, ctx, options?.signal);
     }
 
     let parsed: unknown;
@@ -444,16 +483,72 @@ class AnthropicProvider implements ChatProvider {
     };
   }
 
+  /**
+   * List Claude models via GET /v1/models. The endpoint is paginated
+   * ({ data, has_more, first_id, last_id }); one page is enough here — we do not
+   * follow the cursor. Any failure (network, non-2xx, unparsable body) yields an
+   * empty list so /v1/models never fails because one upstream is down.
+   */
+  async listModels(ctx: RuntimeContext): Promise<ModelInfo[]> {
+    try {
+      const response = await ctx.fetch(joinUrl(this.options.baseUrl, "/v1/models"), {
+        method: "GET",
+        headers: {
+          "x-api-key": this.options.apiKey,
+          "anthropic-version": this.options.version,
+        },
+      });
+      if (!response.ok) return [];
+      const parsed: unknown = JSON.parse(await readBodyText(response));
+      const data =
+        parsed !== null && typeof parsed === "object"
+          ? (parsed as Record<string, unknown>).data
+          : undefined;
+      if (!Array.isArray(data)) return [];
+      const models: ModelInfo[] = [];
+      for (const item of data as unknown[]) {
+        if (item === null || typeof item !== "object") continue;
+        const record = item as Record<string, unknown>;
+        if (typeof record.id !== "string") continue;
+        models.push({
+          id: record.id,
+          object: "model",
+          created: epochSecondsFromCreatedAt(record.created_at),
+          owned_by: "anthropic",
+        });
+      }
+      return models;
+    } catch {
+      return [];
+    }
+  }
+
   private streamResult(
     upstream: ReadableStream<Uint8Array>,
     request: ChatCompletionRequest,
     ctx: RuntimeContext,
+    clientSignal?: AbortSignal,
   ): ChatResult {
     const usage = createDeferred<Usage | null>();
     const includeUsage = request.stream_options?.include_usage === true;
     const providerId = this.id;
     const created = Math.floor(ctx.now() / 1000);
     const model = request.model;
+
+    // One controller ties client cancel to upstream teardown: aborting it
+    // cancels the SSE reader (unblocking a read stalled on a quiet upstream) so
+    // the generator's finally runs and the usage promise resolves. It fires
+    // either from an upstream client disconnect (clientSignal) or from a client
+    // cancelling the returned SSE stream (onCancel below).
+    const controller = new AbortController();
+    if (clientSignal !== undefined) {
+      if (clientSignal.aborted) controller.abort(clientSignal.reason);
+      else {
+        clientSignal.addEventListener("abort", () => controller.abort(clientSignal.reason), {
+          once: true,
+        });
+      }
+    }
 
     async function* translate(): AsyncGenerator<ChatCompletionChunk> {
       let chunkId = "chatcmpl-unknown";
@@ -463,6 +558,12 @@ class AnthropicProvider implements ChatProvider {
       // Anthropic content-block index -> sequential OpenAI tool_calls index.
       const toolIndexByBlock = new Map<number, number>();
       let nextToolIndex = 0;
+      // Track which tool blocks received argument text and which already had an
+      // empty-args "{}" emitted, so a zero-argument tool_use accumulates to "{}"
+      // (not "") without double-emitting when both content_block_stop and the
+      // end-of-stream sweep fire.
+      const toolBlocksWithArgs = new Set<number>();
+      const toolBlocksFlushed = new Set<number>();
 
       const chunk = (
         delta: ChatChunkDelta,
@@ -475,8 +576,20 @@ class AnthropicProvider implements ChatProvider {
         choices: [{ index: 0, delta, finish_reason: finishReason }],
       });
 
+      // Emit an arguments:"{}" delta for any tool block that produced no
+      // input_json_delta, so clients that JSON.parse the accumulated arguments
+      // never see an empty string.
+      function* flushEmptyToolArgs(blockIndex?: number): Generator<ChatCompletionChunk> {
+        for (const [block, toolIndex] of toolIndexByBlock) {
+          if (blockIndex !== undefined && block !== blockIndex) continue;
+          if (toolBlocksWithArgs.has(block) || toolBlocksFlushed.has(block)) continue;
+          toolBlocksFlushed.add(block);
+          yield chunk({ tool_calls: [{ index: toolIndex, function: { arguments: "{}" } }] });
+        }
+      }
+
       try {
-        for await (const message of readSSEStream(upstream)) {
+        for await (const message of readSSEStream(upstream, { signal: controller.signal })) {
           if (message.data === "") continue;
           let parsed: unknown;
           try {
@@ -533,6 +646,7 @@ class AnthropicProvider implements ChatProvider {
                 const toolIndex =
                   typeof event.index === "number" ? toolIndexByBlock.get(event.index) : undefined;
                 if (toolIndex === undefined) break;
+                if (typeof event.index === "number") toolBlocksWithArgs.add(event.index);
                 yield chunk({
                   tool_calls: [
                     { index: toolIndex, function: { arguments: event.delta.partial_json } },
@@ -552,7 +666,14 @@ class AnthropicProvider implements ChatProvider {
               }
               break;
             }
+            case "content_block_stop": {
+              // A tool block ends here; if it carried no arguments, emit "{}".
+              if (typeof event.index === "number") yield* flushEmptyToolArgs(event.index);
+              break;
+            }
             case "message_stop": {
+              // Sweep any tool blocks that never sent a content_block_stop.
+              yield* flushEmptyToolArgs();
               if (includeUsage) {
                 yield {
                   id: chunkId,
@@ -576,6 +697,7 @@ class AnthropicProvider implements ChatProvider {
               ctx.log.warn(`[provider ${providerId}] anthropic stream error`, {
                 error: event.error,
               });
+              yield* flushEmptyToolArgs();
               yield chunk({}, "stop");
               return;
             }
@@ -600,7 +722,11 @@ class AnthropicProvider implements ChatProvider {
       }
     }
 
-    return { kind: "stream", sse: sseStreamFromChunks(translate()), usage: usage.promise };
+    return {
+      kind: "stream",
+      sse: sseStreamFromChunks(translate(), { onCancel: () => controller.abort() }),
+      usage: usage.promise,
+    };
   }
 }
 

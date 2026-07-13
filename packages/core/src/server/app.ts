@@ -14,6 +14,7 @@ import { CelExpressionEngine } from "../routing/cel.js";
 import { createRouter } from "../routing/router.js";
 import type { RuntimeContext } from "../types.js";
 import { createAuthMiddleware } from "./auth.js";
+import { extractClientIp } from "./facts.js";
 import { createChatHandler, type RouteDeps } from "./routes/chat.js";
 import { createEmbeddingsHandler } from "./routes/embeddings.js";
 import { createModelsHandler } from "./routes/models.js";
@@ -162,6 +163,13 @@ export async function createOmniApp(init: OmniAppInit): Promise<Hono<AppEnv>> {
   });
   const verifyContextFor = (c: Context<AppEnv>): VerifyContext => ({ ...runtimeFor(c), storage });
 
+  // Default IP resolver: header-only, gated on trustProxyHeaders. Platforms
+  // with socket access (Node) override this via `init.clientIp`.
+  const clientIp =
+    init.clientIp ??
+    ((c: Context<AppEnv>): string | null =>
+      extractClientIp(c.req.raw.headers, config.server.trustProxyHeaders));
+
   app.get("/healthz", (c) => c.json({ status: "ok" }));
 
   // Verifier-contributed routes (e.g. App Attest challenge issuance) mount
@@ -188,7 +196,15 @@ export async function createOmniApp(init: OmniAppInit): Promise<Hono<AppEnv>> {
     );
   }
 
-  const deps: RouteDeps = { providers, router, limiter, log, runtimeFor };
+  const deps: RouteDeps = {
+    providers,
+    router,
+    limiter,
+    log,
+    runtimeFor,
+    clientIp,
+    maxBodyBytes: config.server.maxBodyBytes,
+  };
   app.post("/v1/chat/completions", createChatHandler(deps));
   app.get("/v1/models", createModelsHandler(deps));
   app.post("/v1/embeddings", createEmbeddingsHandler(deps));

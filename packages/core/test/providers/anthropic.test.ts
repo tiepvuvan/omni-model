@@ -284,6 +284,50 @@ describe("anthropic request translation", () => {
     ]);
   });
 
+  it("drops empty-text messages but keeps tool_use when text is empty", async () => {
+    const body = await sentBody(
+      baseRequest({
+        messages: [
+          { role: "user", content: "first" },
+          // An empty user message must be omitted entirely (Anthropic 400s on
+          // an empty text block / empty-content message).
+          { role: "user", content: "" },
+          {
+            role: "assistant",
+            // Empty text with tool_calls: drop the text, keep the tool_use.
+            content: "",
+            tool_calls: [
+              { id: "call_1", type: "function", function: { name: "f", arguments: "{}" } },
+            ],
+          },
+        ],
+      }),
+    );
+    expect(body.messages).toEqual([
+      { role: "user", content: [{ type: "text", text: "first" }] },
+      {
+        role: "assistant",
+        content: [{ type: "tool_use", id: "call_1", name: "f", input: {} }],
+      },
+    ]);
+  });
+
+  it("prepends a placeholder user turn when the first message is an assistant", async () => {
+    const body = await sentBody(
+      baseRequest({
+        messages: [
+          { role: "assistant", content: "Following up:" },
+          { role: "user", content: "ok" },
+        ],
+      }),
+    );
+    expect(body.messages).toEqual([
+      { role: "user", content: [{ type: "text", text: "." }] },
+      { role: "assistant", content: [{ type: "text", text: "Following up:" }] },
+      { role: "user", content: [{ type: "text", text: "ok" }] },
+    ]);
+  });
+
   it("clamps temperature to [0,1] and passes top_p, stop and user through", async () => {
     const body = await sentBody(
       baseRequest({ temperature: 1.7, top_p: 0.9, stop: "END", user: "user-42" }),
@@ -312,7 +356,7 @@ describe("anthropic request translation", () => {
     );
   });
 
-  it("maps tool_choice variants and drops tools when choice is none", async () => {
+  it("maps tool_choice variants and keeps tools with {type:none} when choice is none", async () => {
     const tools = [
       {
         type: "function" as const,
@@ -334,9 +378,11 @@ describe("anthropic request translation", () => {
     );
     expect(named.tool_choice).toEqual({ type: "tool", name: "lookup" });
 
+    // tool_choice "none" must keep `tools` present so historical tool_use /
+    // tool_result turns validate; Anthropic supports {type:"none"} to suppress.
     const none = await sentBody(baseRequest({ tools, tool_choice: "none" }));
-    expect(none.tools).toBeUndefined();
-    expect(none.tool_choice).toBeUndefined();
+    expect(none.tools).toHaveLength(1);
+    expect(none.tool_choice).toEqual({ type: "none" });
 
     const unspecified = await sentBody(baseRequest({ tools }));
     expect(unspecified.tools).toHaveLength(1);
@@ -579,6 +625,62 @@ describe("anthropic streaming translation", () => {
     });
   });
 
+  it("accumulates {} for a streamed tool call that sent no argument deltas", async () => {
+    const fixture =
+      sseEvent("message_start", { message: { id: "msg_z", usage: { input_tokens: 4 } } }) +
+      sseEvent("content_block_start", {
+        index: 0,
+        content_block: { type: "tool_use", id: "toolu_z", name: "noargs", input: {} },
+      }) +
+      sseEvent("content_block_stop", { index: 0 }) +
+      sseEvent("message_delta", {
+        delta: { stop_reason: "tool_use" },
+        usage: { output_tokens: 2 },
+      }) +
+      sseEvent("message_stop", {});
+    const { impl } = fetchStub(() => sseResponse(fixture));
+    const result = await createProvider().chat(baseRequest({ stream: true }), makeCtx(impl));
+    const { chunks } = await collectStream(result);
+    const args = chunks
+      .flatMap((c) => c.choices[0]?.delta.tool_calls ?? [])
+      .filter((tc) => tc.index === 0)
+      .map((tc) => tc.function?.arguments ?? "")
+      .join("");
+    expect(args).toBe("{}");
+    expect(JSON.parse(args)).toEqual({});
+  });
+
+  it("resolves usage without hanging when the consumer cancels a quiet upstream", async () => {
+    // An upstream that emits message_start then never closes: without signal
+    // wiring, the reader would block forever and usage would never resolve.
+    const fixture = sseEvent("message_start", {
+      message: { id: "msg_q", usage: { input_tokens: 7 } },
+    });
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(fixture));
+        // Intentionally never close: the stream stays open.
+      },
+    });
+    const response = new Response(stream, {
+      status: 200,
+      headers: { "content-type": "text/event-stream" },
+    });
+    const { impl } = fetchStub(() => response);
+    const result = await createProvider().chat(baseRequest({ stream: true }), makeCtx(impl));
+    if (result.kind !== "stream") throw new Error(`expected stream, got ${result.kind}`);
+
+    const reader = result.sse.getReader();
+    await reader.read();
+    await reader.cancel();
+
+    await expect(result.usage).resolves.toEqual({
+      prompt_tokens: 7,
+      completion_tokens: 0,
+      total_tokens: 7,
+    });
+  });
+
   it("resolves usage as null when the upstream never reported it", async () => {
     const fixture =
       sseEvent("content_block_delta", { index: 0, delta: { type: "text_delta", text: "x" } }) +
@@ -588,5 +690,50 @@ describe("anthropic streaming translation", () => {
     if (result.kind !== "stream") throw new Error("expected stream");
     await collectStream(result);
     await expect(result.usage).resolves.toBeNull();
+  });
+});
+
+describe("anthropic listModels", () => {
+  it("maps /v1/models data to ModelInfo with epoch created", async () => {
+    const { calls, impl } = fetchStub(() =>
+      Response.json({
+        data: [
+          {
+            type: "model",
+            id: "claude-sonnet-4-5",
+            display_name: "Claude Sonnet 4.5",
+            created_at: "2024-10-22T00:00:00Z",
+          },
+          { type: "model", id: "claude-opus-4-1", display_name: "Claude Opus 4.1" },
+        ],
+        has_more: false,
+        first_id: "claude-sonnet-4-5",
+        last_id: "claude-opus-4-1",
+      }),
+    );
+    const provider = createProvider();
+    if (provider.listModels === undefined) throw new Error("listModels not implemented");
+    const models = await provider.listModels(makeCtx(impl));
+
+    expect(calls[0]?.url).toBe("https://api.anthropic.com/v1/models");
+    const headers = calls[0]?.init.headers as Record<string, string>;
+    expect(headers["x-api-key"]).toBe("sk-ant-test");
+    expect(headers["anthropic-version"]).toBe("2023-06-01");
+    expect(models).toEqual([
+      {
+        id: "claude-sonnet-4-5",
+        object: "model",
+        created: Math.floor(Date.parse("2024-10-22T00:00:00Z") / 1000),
+        owned_by: "anthropic",
+      },
+      { id: "claude-opus-4-1", object: "model", created: 0, owned_by: "anthropic" },
+    ]);
+  });
+
+  it("returns [] when the upstream fails", async () => {
+    const { impl } = fetchStub(() => new Response("boom", { status: 500 }));
+    const provider = createProvider();
+    if (provider.listModels === undefined) throw new Error("listModels not implemented");
+    expect(await provider.listModels(makeCtx(impl))).toEqual([]);
   });
 });

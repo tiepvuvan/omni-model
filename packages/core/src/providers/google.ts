@@ -14,7 +14,13 @@ import type {
 } from "../openai/types.js";
 import type { RuntimeContext } from "../types.js";
 import { readSSEStream, sseStreamFromChunks } from "../util/sse.js";
-import { createDeferred, joinUrl, openAIErrorBody, upstreamErrorToResult } from "./shared.js";
+import {
+  createDeferred,
+  joinUrl,
+  openAIErrorBody,
+  readBodyText,
+  upstreamErrorToResult,
+} from "./shared.js";
 import type {
   ChatProvider,
   ChatResult,
@@ -79,6 +85,8 @@ interface GeminiCandidate {
 interface GeminiUsageMetadata {
   promptTokenCount?: number;
   candidatesTokenCount?: number;
+  // Thinking models bill reasoning tokens separately; they are part of output.
+  thoughtsTokenCount?: number;
   totalTokenCount?: number;
 }
 
@@ -213,17 +221,59 @@ function translateMessages(messages: ChatMessage[]): {
   };
 }
 
-/**
- * Recursively strip JSON-schema keys Gemini rejects ("$schema",
- * "additionalProperties") and rewrite nullable type unions like
- * `type: ["string", "null"]` to `type: "string", nullable: true`.
- */
-function sanitizeSchema(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(sanitizeSchema);
+/** Collect the root-level `$defs`/`definitions` maps a `$ref` can resolve into. */
+function collectDefs(root: unknown): Record<string, unknown> {
+  const defs: Record<string, unknown> = {};
+  if (root === null || typeof root !== "object" || Array.isArray(root)) return defs;
+  for (const container of ["$defs", "definitions"] as const) {
+    const group = (root as Record<string, unknown>)[container];
+    if (group !== null && typeof group === "object" && !Array.isArray(group)) {
+      for (const [name, schema] of Object.entries(group as Record<string, unknown>)) {
+        defs[name] = schema;
+      }
+    }
+  }
+  return defs;
+}
+
+/** Extract the definition name from a local `#/$defs/Name` or `#/definitions/Name` ref. */
+function localRefName(ref: string): string | undefined {
+  return /^#\/(?:\$defs|definitions)\/(.+)$/.exec(ref)?.[1];
+}
+
+function sanitizeNode(
+  value: unknown,
+  defs: Record<string, unknown>,
+  seen: ReadonlySet<string>,
+): unknown {
+  if (Array.isArray(value)) return value.map((item) => sanitizeNode(item, defs, seen));
   if (value === null || typeof value !== "object") return value;
+
   const result: Record<string, unknown> = {};
   for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
-    if (key === "$schema" || key === "additionalProperties") continue;
+    // Gemini rejects these; local definition containers are inlined at ref sites.
+    if (
+      key === "$schema" ||
+      key === "additionalProperties" ||
+      key === "$defs" ||
+      key === "definitions"
+    ) {
+      continue;
+    }
+    if (key === "$ref") {
+      if (typeof entry !== "string") continue;
+      const name = localRefName(entry);
+      // Unresolvable or cyclic ref: drop the $ref key, keep the rest of the node.
+      if (name === undefined || !(name in defs) || seen.has(name)) continue;
+      const resolved = sanitizeNode(defs[name], defs, new Set(seen).add(name));
+      if (resolved !== null && typeof resolved === "object" && !Array.isArray(resolved)) {
+        // Inline the referenced schema; sibling keys of the $ref win.
+        for (const [rKey, rEntry] of Object.entries(resolved as Record<string, unknown>)) {
+          if (!(rKey in result)) result[rKey] = rEntry;
+        }
+      }
+      continue;
+    }
     if (key === "type" && Array.isArray(entry)) {
       const types = entry.filter((item): item is string => typeof item === "string");
       const nonNull = types.filter((item) => item !== "null");
@@ -231,9 +281,23 @@ function sanitizeSchema(value: unknown): unknown {
       if (types.includes("null")) result.nullable = true;
       continue;
     }
-    result[key] = sanitizeSchema(entry);
+    result[key] = sanitizeNode(entry, defs, seen);
   }
   return result;
+}
+
+/**
+ * Recursively strip JSON-schema keys Gemini rejects ("$schema",
+ * "additionalProperties") and rewrite nullable type unions like
+ * `type: ["string", "null"]` to `type: "string", nullable: true`.
+ *
+ * Gemini also rejects `$ref`/`$defs`/`definitions`, so local `$ref`s are
+ * inlined from the root `$defs`/`definitions` (with a visited set to break
+ * cycles) and the definition containers are dropped; an unresolvable `$ref`
+ * key is dropped while the rest of its node is kept.
+ */
+function sanitizeSchema(value: unknown): unknown {
+  return sanitizeNode(value, collectDefs(value), new Set());
 }
 
 function translateTools(
@@ -275,12 +339,17 @@ function translateGenerationConfig(
   request: ChatCompletionRequest,
 ): Record<string, unknown> | undefined {
   const config: Record<string, unknown> = {};
+  // OpenAI clients may send explicit `null` for unset params; treat null like
+  // absent (`!= null` is undefined OR null) so we never forward null upstream.
   const maxOutputTokens = request.max_completion_tokens ?? request.max_tokens;
-  if (maxOutputTokens !== undefined) config.maxOutputTokens = maxOutputTokens;
-  if (request.temperature !== undefined) config.temperature = request.temperature;
-  if (request.top_p !== undefined) config.topP = request.top_p;
-  if (request.stop !== undefined) {
-    config.stopSequences = Array.isArray(request.stop) ? request.stop : [request.stop];
+  if (maxOutputTokens != null) config.maxOutputTokens = maxOutputTokens;
+  if (request.temperature != null) config.temperature = request.temperature;
+  if (request.top_p != null) config.topP = request.top_p;
+  if (request.stop != null) {
+    const stops = (Array.isArray(request.stop) ? request.stop : [request.stop]).filter(
+      (item): item is string => typeof item === "string" && item.length > 0,
+    );
+    if (stops.length > 0) config.stopSequences = stops;
   }
   const format = request.response_format;
   if (format !== undefined && (format.type === "json_object" || format.type === "json_schema")) {
@@ -331,7 +400,9 @@ function mapFinishReason(reason: string | undefined, sawFunctionCall: boolean): 
 
 function mapUsage(meta: GeminiUsageMetadata | undefined): Usage {
   const promptTokens = meta?.promptTokenCount ?? 0;
-  const completionTokens = meta?.candidatesTokenCount ?? 0;
+  // Thinking models bill reasoning ("thoughts") tokens as part of the output;
+  // fold them into completion_tokens so total == prompt + completion holds.
+  const completionTokens = (meta?.candidatesTokenCount ?? 0) + (meta?.thoughtsTokenCount ?? 0);
   return {
     prompt_tokens: promptTokens,
     completion_tokens: completionTokens,
@@ -404,11 +475,11 @@ class GoogleProvider implements ChatProvider {
     }
 
     if (!response.ok) {
-      const bodyText = await response.text().catch(() => "");
+      const bodyText = await readBodyText(response);
       return upstreamErrorToResult(this.id, response.status, bodyText);
     }
 
-    if (streaming) return this.streamResult(response, request, model, ctx);
+    if (streaming) return this.streamResult(response, request, model, ctx, options?.signal);
 
     let data: GeminiGenerateContentResponse;
     try {
@@ -506,6 +577,7 @@ class GoogleProvider implements ChatProvider {
     request: ChatCompletionRequest,
     model: string,
     ctx: RuntimeContext,
+    signal?: AbortSignal,
   ): ChatResult {
     if (response.body === null) {
       return {
@@ -521,6 +593,16 @@ class GoogleProvider implements ChatProvider {
     // Re-bind after the null check: the hoisted generator below would
     // otherwise still see the nullable type.
     const body: ReadableStream<Uint8Array> = response.body;
+
+    // Own the upstream connection: aborting this controller cancels the blocked
+    // read of the Gemini body so the generator's finally runs (usage resolves)
+    // and the socket is released. Fires on client cancel (onCancel below) or
+    // when the caller's signal aborts.
+    const upstream = new AbortController();
+    if (signal !== undefined) {
+      if (signal.aborted) upstream.abort(signal.reason);
+      else signal.addEventListener("abort", () => upstream.abort(signal.reason), { once: true });
+    }
 
     const usage = createDeferred<Usage | null>();
     const id = `chatcmpl-${crypto.randomUUID()}`;
@@ -540,7 +622,7 @@ class GoogleProvider implements ChatProvider {
         choices: [{ index: 0, delta, finish_reason: finish }],
       });
       try {
-        for await (const message of readSSEStream(body)) {
+        for await (const message of readSSEStream(body, { signal: upstream.signal })) {
           if (message.data === "" || message.data === "[DONE]") continue;
           let data: GeminiGenerateContentResponse;
           try {
@@ -616,7 +698,12 @@ class GoogleProvider implements ChatProvider {
       }
     }
 
-    return { kind: "stream", sse: sseStreamFromChunks(chunks()), usage: usage.promise };
+    return {
+      kind: "stream",
+      // Cancelling the returned stream tears down the upstream read too.
+      sse: sseStreamFromChunks(chunks(), { onCancel: () => upstream.abort() }),
+      usage: usage.promise,
+    };
   }
 
   async listModels(ctx: RuntimeContext): Promise<ModelInfo[]> {
@@ -704,7 +791,7 @@ class GoogleProvider implements ChatProvider {
     }
 
     if (!response.ok) {
-      const bodyText = await response.text().catch(() => "");
+      const bodyText = await readBodyText(response);
       return upstreamErrorToResult(this.id, response.status, bodyText);
     }
 

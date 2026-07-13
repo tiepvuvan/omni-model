@@ -50,7 +50,11 @@ async function main(): Promise<void> {
     `omni-model listening on http://${server.hostname}:${server.port} (config: ${source})`,
   );
 
+  let shuttingDown = false;
   const shutdown = (): void => {
+    // Guard against a second signal (e.g. SIGINT then SIGTERM) closing twice.
+    if (shuttingDown) return;
+    shuttingDown = true;
     server.close().then(
       () => process.exit(0),
       (error: unknown) => {
@@ -59,8 +63,8 @@ async function main(): Promise<void> {
       },
     );
   };
-  process.once("SIGINT", shutdown);
-  process.once("SIGTERM", shutdown);
+  process.on("SIGINT", shutdown);
+  process.on("SIGTERM", shutdown);
 }
 
 main().catch((error: unknown) => {

@@ -1,11 +1,14 @@
 // Cloudflare Workers deployment for omni-model.
 //
-//   pnpm exec wrangler deploy            # from the repo root
+//   pnpm --filter omni-model-cloudflare deploy      # build first: pnpm build
+//
+// wrangler is a dependency of apps/cloudflare (not the repo root), so run it
+// through that package (or `cd apps/cloudflare` first).
 //
 // Configuration lives in apps/cloudflare/omni.yaml (bundled at deploy time);
 // the OMNI_CONFIG secret overrides it without a rebuild. Provider secrets
 // referenced by the config are set with:
-//   pnpm exec wrangler secret put OPENAI_API_KEY
+//   pnpm --filter omni-model-cloudflare exec wrangler secret put OPENAI_API_KEY
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "omni-model",
@@ -24,6 +27,6 @@
   // Alternative: Workers KV storage (approximate counters, eventually
   // consistent). Create the namespace, paste its id below, and switch the
   // config to `storage: { type: cloudflare-kv, binding: OMNI_KV }`:
-  //   pnpm exec wrangler kv namespace create OMNI_KV
+  //   pnpm --filter omni-model-cloudflare exec wrangler kv namespace create OMNI_KV
   // "kv_namespaces": [{ "binding": "OMNI_KV", "id": "<namespace-id>" }]
 }

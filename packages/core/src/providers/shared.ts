@@ -68,6 +68,19 @@ export function upstreamErrorToResult(
   };
 }
 
+/**
+ * Read a response body as text without throwing. A mid-body network failure
+ * on an already-non-2xx response must still map to the upstream status, not
+ * bubble up as a generic 500.
+ */
+export async function readBodyText(response: Response): Promise<string> {
+  try {
+    return await response.text();
+  } catch {
+    return "";
+  }
+}
+
 /** A promise plus its resolver, for usage reporting from streams. */
 export interface Deferred<T> {
   promise: Promise<T>;

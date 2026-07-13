@@ -435,6 +435,33 @@ describe("appleAppAttestVerifierFactory", () => {
       }
     });
 
+    it("accepts at most one of many concurrent replays of a single assertion", async () => {
+      // A captured (keyId, assertion, challenge) triple fired N times in
+      // parallel must not all pass: the challenge is claimed atomically.
+      const ctx = makeCtx();
+      const verifier = makeVerifier(ctx);
+      const device = await registerDevice(verifier, ctx);
+      const challenge = await issueChallenge(verifier, ctx);
+      const assertion = await buildAssertion({
+        challenge,
+        appId: APP_ID,
+        counter: 1,
+        signingKey: device.leafKeys.privateKey,
+      });
+      const fire = () =>
+        verifier.verify(
+          assertionRequest({
+            "x-appattest-keyid": device.keyId,
+            "x-appattest-assertion": assertion,
+            "x-appattest-challenge": challenge,
+          }),
+          ctx,
+        );
+      const results = await Promise.all([fire(), fire(), fire(), fire(), fire()]);
+      const accepted = results.filter((r) => r !== null && r.ok === true);
+      expect(accepted).toHaveLength(1);
+    });
+
     it("rejects a counter replay", async () => {
       const ctx = makeCtx();
       const verifier = makeVerifier(ctx);

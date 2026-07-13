@@ -42,7 +42,7 @@ included.
   any custom JWT. Combine verifiers with `mode: any` or `mode: all`.
 - **Rate limits that understand LLMs** — fixed-window request limits *and* token budgets per
   user / device / IP / global / custom expression, with conditional rules
-  (`when: 'user.claims.tier == "free"'`). Fail-open on storage outages.
+  (`when: 'has(user.claims.tier) && user.claims.tier == "free"'`). Fail-open on storage outages.
 - **CEL model routing** — map client-facing aliases like `"smart"` to concrete provider+model by
   user tier, request shape or headers; fall back with per-model rules and a default provider.
 - **Runs anywhere** — Cloudflare Workers (KV or Durable Object storage), Docker, Fly.io, Cloud

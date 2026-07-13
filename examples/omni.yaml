@@ -50,7 +50,9 @@ rateLimits:
     key: user
     tokens: { limit: 200000, window: 1d }
   - name: free-tier
-    when: 'user.claims.tier == "free"'
+    # Guard optional claims: bare `user.claims.tier` throws (and the rule then
+    # never fires) for a token without a `tier` claim.
+    when: 'has(user.claims.tier) && user.claims.tier == "free"'
     key: user
     requests: { limit: 10, window: 1m }
 
@@ -74,7 +76,7 @@ routing:
   routes:
     # Map a client-facing alias to a concrete provider+model by policy.
     - name: smart-for-pro
-      when: 'request.model == "smart" && user.claims.tier == "pro"'
+      when: 'request.model == "smart" && has(user.claims.tier) && user.claims.tier == "pro"'
       provider: anthropic
       model: claude-opus-4-8
     - name: smart-default

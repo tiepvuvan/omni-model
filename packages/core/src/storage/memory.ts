@@ -64,5 +64,8 @@ export class MemoryStorageAdapter implements StorageAdapter {
 
 export const memoryStorageFactory: StorageFactory = {
   type: "memory",
-  create: () => new MemoryStorageAdapter(),
+  // Use the injected clock so counter expiry stays in step with the limiter's
+  // `now()` (they must agree for fixed windows to expire correctly under a
+  // fake clock in tests, and under any custom clock in production).
+  create: (_options, runtime) => new MemoryStorageAdapter(runtime.now),
 };

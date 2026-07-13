@@ -3,16 +3,50 @@ import type { ChatCompletionRequest } from "../openai/types.js";
 import type { RequestFacts } from "../routing/types.js";
 
 /**
- * Header values that must never reach CEL expressions (or logs) verbatim.
- * They stay present as `<redacted>` so expressions can still test existence.
+ * Header names that must never reach CEL expressions (or logs) verbatim, in
+ * addition to the pattern check in {@link isRedactedHeader}. They stay present
+ * as `<redacted>` so expressions can still test existence.
  */
-const REDACTED_HEADERS = new Set(["authorization", "cookie", "set-cookie", "x-api-key"]);
+const REDACTED_HEADERS = new Set([
+  "authorization",
+  "cookie",
+  "set-cookie",
+  "x-api-key",
+  // Firebase App Check + Apple DeviceCheck / App Attest credential headers.
+  "x-firebase-appcheck",
+  "x-apple-device-token",
+  "x-appattest-assertion",
+  "x-appattest-keyid",
+  "x-appattest-challenge",
+]);
+
+/** Substrings that mark a header (lowercased name) as credential-bearing. */
+const REDACTED_HEADER_PATTERNS = ["token", "appcheck", "assertion", "api-key", "-key"];
 
 /**
- * Best-effort client IP: `cf-connecting-ip` (set by Cloudflare), then the
- * first (client-most) entry of `x-forwarded-for`, then `x-real-ip`.
+ * Whether a (lowercased) header name carries a credential and must be redacted
+ * before it reaches CEL expressions or logs. Covers the fixed set above plus
+ * any custom verifier header whose name looks token-like.
  */
-export function extractClientIp(headers: Headers): string | null {
+function isRedactedHeader(name: string): boolean {
+  if (REDACTED_HEADERS.has(name)) return true;
+  return REDACTED_HEADER_PATTERNS.some((pattern) => name.includes(pattern));
+}
+
+/**
+ * Best-effort client IP.
+ *
+ * When `trustProxyHeaders` is true (the proxy runs behind a trusted reverse
+ * proxy / CDN), honor `cf-connecting-ip` (set by Cloudflare), then the first
+ * (client-most) entry of `x-forwarded-for`, then `x-real-ip`.
+ *
+ * When it is false, these headers are client-suppliable and therefore
+ * untrusted: they are ignored entirely (returns `null`) so a client cannot
+ * spoof its rate-limit key. The connection-level IP, when available, is
+ * supplied by the platform via the `clientIp` resolver rather than here.
+ */
+export function extractClientIp(headers: Headers, trustProxyHeaders: boolean): string | null {
+  if (!trustProxyHeaders) return null;
   const cfIp = headers.get("cf-connecting-ip")?.trim();
   if (cfIp !== undefined && cfIp !== "") return cfIp;
   const forwarded = headers.get("x-forwarded-for");
@@ -53,7 +87,7 @@ export function buildRequestFacts(input: RequestFactsInput): RequestFacts {
   const headers: Record<string, string> = {};
   input.headers.forEach((value, key) => {
     const name = key.toLowerCase();
-    headers[name] = REDACTED_HEADERS.has(name) ? "<redacted>" : value;
+    headers[name] = isRedactedHeader(name) ? "<redacted>" : value;
   });
 
   return {

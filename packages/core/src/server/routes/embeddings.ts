@@ -19,7 +19,7 @@ export function createEmbeddingsHandler(
   deps: RouteDeps,
 ): (c: Context<AppEnv>) => Promise<Response> {
   return async (c) => {
-    const body = await readJsonObject(c);
+    const body = await readJsonObject(c, deps.maxBodyBytes);
     if (typeof body.model !== "string" || body.model.length === 0) {
       throw badRequest("you must provide a model parameter", { param: "model" });
     }
@@ -29,7 +29,7 @@ export function createEmbeddingsHandler(
     const request = body as EmbeddingsRequest;
 
     const runtime = deps.runtimeFor(c);
-    const facts = factsFor(c, request, runtime.now());
+    const facts = factsFor(c, request, runtime.now(), deps.clientIp(c));
     await enforceRateLimit(deps.limiter, facts);
 
     const decision = deps.router.resolve(facts);

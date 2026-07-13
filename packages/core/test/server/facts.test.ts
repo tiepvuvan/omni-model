@@ -18,23 +18,36 @@ function build(overrides: Partial<Parameters<typeof buildRequestFacts>[0]> = {})
 }
 
 describe("extractClientIp", () => {
-  it("prefers cf-connecting-ip", () => {
-    const headers = new Headers({
-      "cf-connecting-ip": "1.1.1.1",
-      "x-forwarded-for": "2.2.2.2",
-      "x-real-ip": "3.3.3.3",
+  describe("with trustProxyHeaders = true (behind a trusted proxy)", () => {
+    it("prefers cf-connecting-ip", () => {
+      const headers = new Headers({
+        "cf-connecting-ip": "1.1.1.1",
+        "x-forwarded-for": "2.2.2.2",
+        "x-real-ip": "3.3.3.3",
+      });
+      expect(extractClientIp(headers, true)).toBe("1.1.1.1");
     });
-    expect(extractClientIp(headers)).toBe("1.1.1.1");
+
+    it("uses the first x-forwarded-for entry, trimmed", () => {
+      const headers = new Headers({ "x-forwarded-for": " 2.2.2.2 , 10.0.0.1, 10.0.0.2" });
+      expect(extractClientIp(headers, true)).toBe("2.2.2.2");
+    });
+
+    it("falls back to x-real-ip, then null", () => {
+      expect(extractClientIp(new Headers({ "x-real-ip": "3.3.3.3" }), true)).toBe("3.3.3.3");
+      expect(extractClientIp(new Headers(), true)).toBeNull();
+    });
   });
 
-  it("uses the first x-forwarded-for entry, trimmed", () => {
-    const headers = new Headers({ "x-forwarded-for": " 2.2.2.2 , 10.0.0.1, 10.0.0.2" });
-    expect(extractClientIp(headers)).toBe("2.2.2.2");
-  });
-
-  it("falls back to x-real-ip, then null", () => {
-    expect(extractClientIp(new Headers({ "x-real-ip": "3.3.3.3" }))).toBe("3.3.3.3");
-    expect(extractClientIp(new Headers())).toBeNull();
+  describe("with trustProxyHeaders = false (default)", () => {
+    it("ignores all client-suppliable forwarding headers so they cannot be spoofed", () => {
+      const headers = new Headers({
+        "cf-connecting-ip": "1.1.1.1",
+        "x-forwarded-for": "2.2.2.2",
+        "x-real-ip": "3.3.3.3",
+      });
+      expect(extractClientIp(headers, false)).toBeNull();
+    });
   });
 });
 
@@ -99,6 +112,23 @@ describe("buildRequestFacts", () => {
     expect(facts.http.headers.cookie).toBe("<redacted>");
     expect(facts.http.headers["x-api-key"]).toBe("<redacted>");
     expect(facts.http.headers["x-custom"]).toBe("visible");
+  });
+
+  it("redacts device-attestation credential headers", () => {
+    // These carry App Check / DeviceCheck / App Attest tokens and must not
+    // reach CEL expressions or logs verbatim.
+    const facts = build({
+      headers: new Headers({
+        "X-Firebase-AppCheck": "appcheck-token",
+        "X-Apple-Device-Token": "devicecheck-token",
+        "X-AppAttest-Assertion": "assertion-blob",
+        "X-AppAttest-KeyId": "key-id",
+      }),
+    });
+    expect(facts.http.headers["x-firebase-appcheck"]).toBe("<redacted>");
+    expect(facts.http.headers["x-apple-device-token"]).toBe("<redacted>");
+    expect(facts.http.headers["x-appattest-assertion"]).toBe("<redacted>");
+    expect(facts.http.headers["x-appattest-keyid"]).toBe("<redacted>");
   });
 
   it("maps an anonymous request to unauthenticated facts", () => {

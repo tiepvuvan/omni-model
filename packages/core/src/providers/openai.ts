@@ -11,7 +11,13 @@ import type {
 } from "../openai/types.js";
 import type { RuntimeContext } from "../types.js";
 import { type SSEMessage, SSEParser } from "../util/sse.js";
-import { createDeferred, joinUrl, openAIErrorBody, upstreamErrorToResult } from "./shared.js";
+import {
+  createDeferred,
+  joinUrl,
+  openAIErrorBody,
+  readBodyText,
+  upstreamErrorToResult,
+} from "./shared.js";
 import type {
   ChatProvider,
   ChatResult,
@@ -146,9 +152,11 @@ export class OpenAICompatibleProvider implements ChatProvider {
   ): Promise<ChatResult> {
     let body: ChatCompletionRequest = request;
     if (request.stream === true && this.options.includeStreamUsage) {
-      // Client-sent stream_options keys (including an explicit
-      // include_usage: false) win over the injected default.
-      body = { ...request, stream_options: { include_usage: true, ...request.stream_options } };
+      // Force include_usage on: token budgets depend on the usage chunk, so a
+      // client must not be able to suppress it with stream_options.include_usage
+      // false. (Set the `includeStreamUsage` provider option to false only for
+      // upstreams that reject the field entirely.)
+      body = { ...request, stream_options: { ...request.stream_options, include_usage: true } };
     }
 
     let response: Response;
@@ -164,7 +172,7 @@ export class OpenAICompatibleProvider implements ChatProvider {
     }
 
     if (!response.ok) {
-      return upstreamErrorToResult(this.id, response.status, await response.text());
+      return upstreamErrorToResult(this.id, response.status, await readBodyText(response));
     }
 
     if (request.stream === true) {
@@ -240,7 +248,7 @@ export class OpenAICompatibleProvider implements ChatProvider {
       return this.networkErrorResult(error);
     }
     if (!response.ok) {
-      return upstreamErrorToResult(this.id, response.status, await response.text());
+      return upstreamErrorToResult(this.id, response.status, await readBodyText(response));
     }
     try {
       const parsed = (await response.json()) as EmbeddingsResponse;

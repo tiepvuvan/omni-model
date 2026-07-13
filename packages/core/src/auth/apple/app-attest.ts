@@ -52,6 +52,7 @@ const AAGUID_PRODUCTION = utf8("appattest\x00\x00\x00\x00\x00\x00\x00");
 const AAGUID_DEVELOPMENT = utf8("appattestdevelop");
 
 const CHALLENGE_KEY_PREFIX = "aa:ch:";
+const CHALLENGE_CLAIM_PREFIX = "aa:used:";
 const KEY_KEY_PREFIX = "aa:key:";
 
 const optionsSchema = z.strictObject({
@@ -399,6 +400,22 @@ export const appleAppAttestVerifierFactory: AuthVerifierFactory = {
         if ((await ctx.storage.get(CHALLENGE_KEY_PREFIX + challenge)) === null) {
           return fail("unknown or expired App Attest challenge");
         }
+
+        // Atomically claim the challenge BEFORE the (async, yielding) signature
+        // and counter checks. Without this, N concurrent replays of a single
+        // captured assertion all read the same challenge/counter, all pass, and
+        // all delete the challenge at the end — a TOCTOU that defeats single-use.
+        // `increment` is the storage layer's atomic primitive: exactly one
+        // caller sees the post-increment value 1, so only the first replay wins.
+        // (On eventually-consistent backends like Cloudflare KV this is
+        // best-effort per the CounterStore contract; use durable-object/redis/
+        // postgres storage for strict App Attest replay protection.)
+        const claim = await ctx.storage.increment(
+          CHALLENGE_CLAIM_PREFIX + challenge,
+          1,
+          challengeTtlSeconds,
+        );
+        if (claim !== 1) return fail("App Attest challenge already used");
 
         let signature: Uint8Array | null = null;
         let authenticatorData: Uint8Array | null = null;

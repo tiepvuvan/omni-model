@@ -214,6 +214,129 @@ describe("google request translation", () => {
     });
   });
 
+  it("inlines local $ref and strips $defs/$ref from tool parameter schemas", async () => {
+    const { fetch, calls } = stubFetch(textResponse);
+    const provider = createProvider();
+    await provider.chat(
+      {
+        model: "gemini-2.0-flash",
+        messages: [{ role: "user", content: "hi" }],
+        tools: [
+          {
+            type: "function",
+            function: {
+              name: "book",
+              parameters: {
+                type: "object",
+                $defs: {
+                  Address: {
+                    type: "object",
+                    properties: { city: { type: "string" } },
+                    required: ["city"],
+                  },
+                },
+                properties: { home: { $ref: "#/$defs/Address" } },
+              },
+            },
+          },
+        ],
+      },
+      testCtx(fetch),
+    );
+    const body = calls[0]?.body as {
+      tools: Array<{ functionDeclarations: Array<Record<string, unknown>> }>;
+    };
+    const params = body.tools[0]?.functionDeclarations[0]?.parameters;
+    const serialized = JSON.stringify(params);
+    expect(serialized).not.toContain("$ref");
+    expect(serialized).not.toContain("$defs");
+    expect(params).toEqual({
+      type: "object",
+      properties: {
+        home: { type: "object", properties: { city: { type: "string" } }, required: ["city"] },
+      },
+    });
+  });
+
+  it("does not infinite-loop on a cyclic $ref and drops the unresolved ref", async () => {
+    const { fetch, calls } = stubFetch(textResponse);
+    const provider = createProvider();
+    await provider.chat(
+      {
+        model: "gemini-2.0-flash",
+        messages: [{ role: "user", content: "hi" }],
+        tools: [
+          {
+            type: "function",
+            function: {
+              name: "tree",
+              parameters: {
+                type: "object",
+                definitions: {
+                  Node: {
+                    type: "object",
+                    properties: { next: { $ref: "#/definitions/Node" } },
+                  },
+                },
+                properties: { root: { $ref: "#/definitions/Node" } },
+              },
+            },
+          },
+        ],
+      },
+      testCtx(fetch),
+    );
+    const body = calls[0]?.body as {
+      tools: Array<{ functionDeclarations: Array<Record<string, unknown>> }>;
+    };
+    const params = body.tools[0]?.functionDeclarations[0]?.parameters;
+    const serialized = JSON.stringify(params);
+    expect(serialized).not.toContain("$ref");
+    expect(serialized).not.toContain("definitions");
+    // One level of Node is inlined; the recursive ref is dropped, leaving {}.
+    expect(params).toEqual({
+      type: "object",
+      properties: {
+        root: { type: "object", properties: { next: {} } },
+      },
+    });
+  });
+
+  it("treats explicit null sampling params as unset (no null forwarded upstream)", async () => {
+    const { fetch, calls } = stubFetch(textResponse);
+    const provider = createProvider();
+    await provider.chat(
+      {
+        model: "gemini-2.0-flash",
+        messages: [{ role: "user", content: "hi" }],
+        temperature: null,
+        top_p: null,
+        stop: null,
+        max_tokens: null,
+        max_completion_tokens: null,
+      } as unknown as ChatCompletionRequest,
+      testCtx(fetch),
+    );
+    const body = calls[0]?.body as { generationConfig?: Record<string, unknown> };
+    // Every field was null -> no generationConfig at all.
+    expect(body.generationConfig).toBeUndefined();
+  });
+
+  it("filters null/empty entries out of a stop array", async () => {
+    const { fetch, calls } = stubFetch(textResponse);
+    const provider = createProvider();
+    await provider.chat(
+      {
+        model: "gemini-2.0-flash",
+        messages: [{ role: "user", content: "hi" }],
+        stop: ["END", null, "", "STOP"],
+      } as unknown as ChatCompletionRequest,
+      testCtx(fetch),
+    );
+    const body = calls[0]?.body as { generationConfig?: Record<string, unknown> };
+    expect(body.generationConfig).toEqual({ stopSequences: ["END", "STOP"] });
+  });
+
   it.each([
     ["auto", { functionCallingConfig: { mode: "AUTO" } }],
     ["none", { functionCallingConfig: { mode: "NONE" } }],
@@ -418,6 +541,27 @@ describe("google response translation", () => {
     expect(completion.usage).toEqual({ prompt_tokens: 3, completion_tokens: 0, total_tokens: 3 });
   });
 
+  it("folds thoughtsTokenCount into completion_tokens (thinking models)", async () => {
+    const { fetch } = stubFetch(() =>
+      Response.json({
+        candidates: [{ content: { role: "model", parts: [{ text: "x" }] }, finishReason: "STOP" }],
+        usageMetadata: {
+          promptTokenCount: 5,
+          candidatesTokenCount: 7,
+          thoughtsTokenCount: 4,
+          totalTokenCount: 16,
+        },
+      }),
+    );
+    const provider = createProvider();
+    const completion = expectCompletion(await provider.chat(request, testCtx(fetch)));
+    expect(completion.usage).toEqual({
+      prompt_tokens: 5,
+      completion_tokens: 11,
+      total_tokens: 16,
+    });
+  });
+
   it("turns a prompt block into an empty content_filter completion, not an error", async () => {
     const { fetch } = stubFetch(() =>
       Response.json({
@@ -581,6 +725,61 @@ describe("google streaming", () => {
       },
     ]);
     await expect(result.usage).resolves.toBeNull();
+  });
+
+  it("cancelling the returned stream resolves usage and cancels the upstream reader", async () => {
+    let upstreamCancelled = false;
+    // A body that never yields data: read() blocks until the reader is cancelled.
+    const body = new ReadableStream<Uint8Array>({
+      pull() {
+        return new Promise<void>(() => {});
+      },
+      cancel() {
+        upstreamCancelled = true;
+      },
+    });
+    const { fetch } = stubFetch(
+      () => new Response(body, { headers: { "content-type": "text/event-stream" } }),
+    );
+    const provider = createProvider();
+    const result = await provider.chat(streamRequest(), testCtx(fetch));
+    if (result.kind !== "stream") throw new Error(`expected stream, got ${result.kind}`);
+
+    const reader = result.sse.getReader();
+    // Trigger a pull so the generator begins the (blocking) upstream read.
+    reader.read().catch(() => {});
+    await reader.cancel();
+
+    // The usage promise must settle (no hang) and the upstream must be torn down.
+    await expect(result.usage).resolves.toBeNull();
+    expect(upstreamCancelled).toBe(true);
+  });
+
+  it("folds thoughtsTokenCount into the streaming usage accumulation", async () => {
+    const fixture = `data: ${JSON.stringify({
+      candidates: [{ content: { role: "model", parts: [{ text: "hi" }] }, finishReason: "STOP" }],
+      usageMetadata: {
+        promptTokenCount: 5,
+        candidatesTokenCount: 7,
+        thoughtsTokenCount: 4,
+        totalTokenCount: 16,
+      },
+    })}\n\n`;
+    const { fetch } = stubFetch(
+      () => new Response(fixture, { headers: { "content-type": "text/event-stream" } }),
+    );
+    const provider = createProvider();
+    const result = await provider.chat(streamRequest(true), testCtx(fetch));
+    if (result.kind !== "stream") throw new Error(`expected stream, got ${result.kind}`);
+
+    const events = await collectSSE(result.sse);
+    const usageChunk = JSON.parse(events[events.length - 2] ?? "") as ChatCompletionChunk;
+    expect(usageChunk.usage).toEqual({ prompt_tokens: 5, completion_tokens: 11, total_tokens: 16 });
+    await expect(result.usage).resolves.toEqual({
+      prompt_tokens: 5,
+      completion_tokens: 11,
+      total_tokens: 16,
+    });
   });
 
   it("maps a streaming upstream error before any bytes to an error result", async () => {

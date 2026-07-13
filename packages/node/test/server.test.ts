@@ -64,6 +64,20 @@ describe("startServer", () => {
     await expect(fetch(`${base}/healthz`)).rejects.toThrowError();
   });
 
+  it("binds an ephemeral port when PORT=0 in the environment", async () => {
+    // Regression: `Number(env.PORT) || 8787` coerced an explicit "0" to 8787.
+    running = await startServer({
+      configYaml: CONFIG_YAML,
+      env: { PORT: "0" },
+      hostname: "127.0.0.1",
+      logger: silentLogger,
+    });
+    expect(running.port).toBeGreaterThan(0);
+    expect(running.port).not.toBe(8787);
+    const health = await fetch(`http://127.0.0.1:${running.port}/healthz`);
+    expect(health.status).toBe(200);
+  });
+
   it("rejects an unknown storage type, listing redis and postgres as registered", async () => {
     const yaml = `
 version: 1

@@ -63,13 +63,30 @@ function parseEventBlock(block: string): SSEMessage | null {
   return { event, data: data.join("\n"), id };
 }
 
-/** Iterate the SSE events of a byte stream. */
+/**
+ * Iterate the SSE events of a byte stream.
+ *
+ * Pass `options.signal` to make a read blocked on a quiet upstream abortable:
+ * when the signal fires (e.g. the client disconnected), the reader is cancelled
+ * so the pending `read()` settles and the generator's `finally` runs. Without
+ * this, a translation provider awaiting a silent upstream would hang forever and
+ * its usage promise would never resolve.
+ */
 export async function* readSSEStream(
   stream: ReadableStream<Uint8Array>,
+  options?: { signal?: AbortSignal },
 ): AsyncGenerator<SSEMessage, void, undefined> {
   const parser = new SSEParser();
   const decoder = new TextDecoder();
   const reader = stream.getReader();
+  const signal = options?.signal;
+  const onAbort = (): void => {
+    void reader.cancel(signal?.reason).catch(() => {});
+  };
+  if (signal !== undefined) {
+    if (signal.aborted) onAbort();
+    else signal.addEventListener("abort", onAbort, { once: true });
+  }
   try {
     while (true) {
       const { done, value } = await reader.read();
@@ -82,6 +99,7 @@ export async function* readSSEStream(
     const remainder = parser.flush();
     if (remainder !== null) yield remainder;
   } finally {
+    signal?.removeEventListener("abort", onAbort);
     reader.releaseLock();
   }
 }
@@ -95,9 +113,15 @@ export function encodeSSEData(data: string): Uint8Array {
 /**
  * Build an OpenAI-style SSE byte stream — `data: <json>` per chunk, then
  * `data: [DONE]` — from an async iterable of JSON-serializable chunks.
- * Cancelling the stream stops the underlying iterator.
+ * Cancelling the stream stops the underlying iterator; `options.onCancel`
+ * fires first so callers can also tear down an upstream connection the
+ * iterator is reading from (which `iterator.return()` alone cannot interrupt
+ * while it is blocked on a read).
  */
-export function sseStreamFromChunks<T>(chunks: AsyncIterable<T>): ReadableStream<Uint8Array> {
+export function sseStreamFromChunks<T>(
+  chunks: AsyncIterable<T>,
+  options?: { onCancel?: (reason?: unknown) => void },
+): ReadableStream<Uint8Array> {
   const iterator = chunks[Symbol.asyncIterator]();
   return new ReadableStream<Uint8Array>({
     async pull(controller) {
@@ -110,6 +134,7 @@ export function sseStreamFromChunks<T>(chunks: AsyncIterable<T>): ReadableStream
       controller.enqueue(encodeSSEData(JSON.stringify(value)));
     },
     async cancel(reason) {
+      options?.onCancel?.(reason);
       await iterator.return?.(reason);
     },
   });

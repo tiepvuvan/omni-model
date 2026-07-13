@@ -227,6 +227,23 @@ describe("openai provider: chat (non-stream)", () => {
       expect(result.body.error.message).toContain("fetch failed");
     }
   });
+
+  it("still maps the upstream status when reading the error body throws", async () => {
+    // A non-2xx response whose body errors mid-read must keep its mappable
+    // status (429 here), not degrade into a generic 500 from an uncaught throw.
+    const failingBody = new ReadableStream<Uint8Array>({
+      pull() {
+        throw new Error("connection reset while reading body");
+      },
+    });
+    const { ctx } = makeCtx(() => new Response(failingBody, { status: 429 }));
+    const result = await makeProvider().chat(chatRequest(), ctx);
+    expect(result.kind).toBe("error");
+    if (result.kind === "error") {
+      expect(result.status).toBe(429);
+      expect(result.body.error.type).toBe("rate_limit_error");
+    }
+  });
 });
 
 describe("openai provider: chat (stream)", () => {
@@ -335,6 +352,18 @@ describe("openai provider: chat (stream)", () => {
     const request = chatRequest();
     await makeProvider().chat(request, ctx);
     expect(JSON.parse(calls[0]?.body ?? "")).toEqual(request);
+  });
+
+  it("forces include_usage true even when the client sent include_usage false", async () => {
+    // Token budgets depend on the usage chunk; a client must not be able to
+    // suppress it and thereby bypass metering.
+    const { ctx, calls } = makeCtx(() => streamResponse(streamOf(["data: [DONE]\n\n"])));
+    await makeProvider().chat(
+      chatRequest({ stream: true, stream_options: { include_usage: false } }),
+      ctx,
+    );
+    const body = JSON.parse(calls[0]?.body ?? "") as ChatCompletionRequest;
+    expect(body.stream_options).toEqual({ include_usage: true });
   });
 });
 

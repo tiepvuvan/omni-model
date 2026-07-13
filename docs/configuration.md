@@ -12,7 +12,8 @@ Top-level keys:
 ```yaml
 version: 1        # config format version (only 1 exists; may be omitted)
 server: {}        # CORS + log level
-storage: {}       # where counters, budgets and attestation keys live
+storage:          # where counters, budgets and attestation keys live
+  type: memory
 security: {}      # client authentication
 rateLimits: []    # request windows + token budgets
 providers: {}     # upstream model providers, keyed by your own ids
@@ -42,6 +43,18 @@ server:
 | --- | --- | --- | --- |
 | `logLevel` | `debug` \| `info` \| `warn` \| `error` \| `silent` | `info` | Level for the built-in console logger. |
 | `cors` | object | _(none)_ | When present, CORS middleware is applied to every route. When absent, no CORS headers are sent. |
+| `trustProxyHeaders` | boolean | `false` | Trust the client-suppliable forwarding headers (`cf-connecting-ip`, `x-forwarded-for`, `x-real-ip`) when deriving the client IP used by `key: ip` rate limits and the `http.ip` CEL variable. See the security note below. |
+| `maxBodyBytes` | positive integer | `2000000` | Maximum accepted request body size, in bytes (default ~2 MB). A larger body is rejected with HTTP 413 before it reaches a provider. |
+
+**Security note — `trustProxyHeaders`.** The `cf-connecting-ip`, `x-forwarded-for` and `x-real-ip`
+headers are set by whoever sends the request, so a client connecting directly to the proxy can put
+any value in them — forging a fresh IP per request to slip past `key: ip` rate limits or to poison
+the `http.ip` a CEL rule reads. With `trustProxyHeaders: false` (the default) these headers are
+ignored: the client IP comes from the connection socket where the platform exposes it (for example
+the Node server), and is `null` otherwise. Set `trustProxyHeaders: true` **only** when the proxy
+runs behind a trusted reverse proxy or CDN that overwrites these headers on every request. On
+Cloudflare Workers, Cloudflare sets `cf-connecting-ip` itself, so enable it there if you rely on
+IP-based limits.
 
 `server.cors` options:
 
@@ -613,9 +626,9 @@ All `when`, `match` and `keyExpression` fields are
 | `device.id` | string \| null | Device identity (App Check app id, App Attest key id, ...). | `device.id != null` |
 | `http.method` | string | Request method. | `http.method == "POST"` |
 | `http.path` | string | Request path. | `http.path == "/v1/embeddings"` |
-| `http.ip` | string \| null | Best-effort client IP (`cf-connecting-ip`, first `x-forwarded-for` entry, `x-real-ip`). | `http.ip == "203.0.113.7"` |
+| `http.ip` | string \| null | Best-effort client IP. Forwarding headers (`cf-connecting-ip`, first `x-forwarded-for` entry, `x-real-ip`) are used only when [`server.trustProxyHeaders`](#server) is `true`; otherwise it falls back to the connection socket where the platform exposes it, or `null`. | `http.ip == "203.0.113.7"` |
 | `http.headers` | map | Lowercased header names. `authorization`, `cookie`, `set-cookie` and `x-api-key` values are redacted to `"<redacted>"`. | `"x-canary" in http.headers` |
-| `now` | int | Epoch milliseconds. | `now % 86400000 < 43200000` |
+| `now` | int | Epoch milliseconds. Compare against a millisecond constant (`now` is a plain number; CEL has no timestamp type, and its `%` operator rejects it). | `now < 1893456000000` |
 
 **Gotcha — missing map keys throw.** In CEL, accessing a key that does not exist (e.g.
 `user.claims.tier` for a token without a `tier` claim) **throws** at evaluation time; it does not

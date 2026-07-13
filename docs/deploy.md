@@ -35,7 +35,9 @@ registry:
 
 Steps:
 
-1. Fork the repo and `pnpm install`.
+1. Fork the repo, then `pnpm install && pnpm build`. The build is required: wrangler bundles the
+   compiled workspace packages (`@omni-model/core`, `@omni-model/cloudflare`), whose `dist/` output
+   does not exist on a fresh clone until you build.
 2. Edit the worker config (`apps/cloudflare/omni.yaml`) — pick your storage backend and match the
    binding names in `wrangler.jsonc`:
 
@@ -45,11 +47,13 @@ Steps:
      binding: OMNI_DO       # or: OMNI_KV
    ```
 
-3. Put provider keys in Worker secrets (they are exposed to `${...}` interpolation as env vars):
+3. Put provider keys in Worker secrets (they are exposed to `${...}` interpolation as env vars).
+   `wrangler` is a dependency of `apps/cloudflare`, not the repo root, so invoke it through that
+   package:
 
    ```sh
-   wrangler secret put OPENAI_API_KEY
-   wrangler secret put ANTHROPIC_API_KEY
+   pnpm --filter omni-model-cloudflare exec wrangler secret put OPENAI_API_KEY
+   pnpm --filter omni-model-cloudflare exec wrangler secret put ANTHROPIC_API_KEY
    ```
 
 4. Deploy:
@@ -65,7 +69,7 @@ To change configuration without redeploying code, set the entire YAML document a
 `OMNI_CONFIG` secret — it overrides the bundled `omni.yaml`:
 
 ```sh
-wrangler secret put OMNI_CONFIG < my-omni.yaml
+pnpm --filter omni-model-cloudflare exec wrangler secret put OMNI_CONFIG < my-omni.yaml
 ```
 
 ## Fly.io
