@@ -1,0 +1,29 @@
+// Cloudflare Workers deployment for omni-model.
+//
+//   pnpm exec wrangler deploy            # from the repo root
+//
+// Configuration lives in apps/cloudflare/omni.yaml (bundled at deploy time);
+// the OMNI_CONFIG secret overrides it without a rebuild. Provider secrets
+// referenced by the config are set with:
+//   pnpm exec wrangler secret put OPENAI_API_KEY
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "omni-model",
+  "main": "apps/cloudflare/src/index.ts",
+  "compatibility_date": "2025-06-01",
+  // Bundle the YAML config as a plain-text module (see apps/cloudflare/src/yaml.d.ts).
+  "rules": [{ "type": "Text", "globs": ["**/*.yaml"], "fallthrough": true }],
+  // Default storage: a Durable Object (exact rate-limit counters). The class
+  // is exported by apps/cloudflare/src/index.ts.
+  "durable_objects": {
+    "bindings": [{ "name": "OMNI_DO", "class_name": "OmniStorageDurableObject" }]
+  },
+  // SQLite-backed Durable Objects — the kind available on the Workers free plan.
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["OmniStorageDurableObject"] }],
+  "observability": { "enabled": true }
+  // Alternative: Workers KV storage (approximate counters, eventually
+  // consistent). Create the namespace, paste its id below, and switch the
+  // config to `storage: { type: cloudflare-kv, binding: OMNI_KV }`:
+  //   pnpm exec wrangler kv namespace create OMNI_KV
+  // "kv_namespaces": [{ "binding": "OMNI_KV", "id": "<namespace-id>" }]
+}

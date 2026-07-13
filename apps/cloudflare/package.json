@@ -1,0 +1,21 @@
+{
+  "name": "omni-model-cloudflare",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Deployable Cloudflare Worker for omni-model (root wrangler.jsonc points here).",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json --noEmit",
+    "dev": "wrangler dev --config ../../wrangler.jsonc",
+    "deploy": "wrangler deploy --config ../../wrangler.jsonc",
+    "check": "wrangler deploy --dry-run --outdir dist --config ../../wrangler.jsonc"
+  },
+  "dependencies": {
+    "@omni-model/cloudflare": "workspace:*",
+    "@omni-model/core": "workspace:*"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
+}

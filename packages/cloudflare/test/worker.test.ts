@@ -1,0 +1,320 @@
+import type { ChatCompletion, ChatProvider, ProviderFactory } from "@omni-model/core";
+import { createDefaultRegistry, silentLogger } from "@omni-model/core";
+import { describe, expect, it, vi } from "vitest";
+import type {
+  DurableObjectNamespaceLike,
+  DurableObjectStateLike,
+  DurableObjectStubLike,
+  KVNamespaceLike,
+} from "../src/cf-types.js";
+import { DurableObjectStorageAdapter, OmniStorageDurableObject } from "../src/durable-object.js";
+import { createWorker, type WorkerEnv } from "../src/worker.js";
+
+const MEMORY_YAML = `
+version: 1
+storage:
+  type: memory
+providers:
+  openai:
+    type: openai
+    apiKey: \${OPENAI_API_KEY}
+routing:
+  defaultProvider: openai
+`;
+
+// 1h windows keep both chat calls inside one fixed window without an
+// injectable clock (createWorker uses the platform clock).
+const DO_YAML = `
+version: 1
+storage:
+  type: durable-object
+  binding: OMNI_DO
+rateLimits:
+  - name: burst
+    key: user
+    requests: { limit: 1, window: 1h }
+  - name: budget
+    key: user
+    tokens: { limit: 1000, window: 1h }
+providers:
+  fake:
+    type: fake
+routing:
+  defaultProvider: fake
+`;
+
+const FAKE_USAGE_TOTAL = 7;
+
+function fakeCompletion(model: string): ChatCompletion {
+  return {
+    id: "chatcmpl-worker-test",
+    object: "chat.completion",
+    created: 1_750_000_000,
+    model,
+    choices: [{ index: 0, message: { role: "assistant", content: "ok" }, finish_reason: "stop" }],
+    usage: { prompt_tokens: 3, completion_tokens: 4, total_tokens: FAKE_USAGE_TOTAL },
+  };
+}
+
+function createFakeProviderFactory(): ProviderFactory {
+  return {
+    type: "fake",
+    create: (id): ChatProvider => ({
+      id,
+      type: "fake",
+      async chat(request) {
+        return { kind: "completion", completion: fakeCompletion(request.model) };
+      },
+    }),
+  };
+}
+
+function fakeState(): DurableObjectStateLike {
+  const entries = new Map<string, unknown>();
+  return {
+    storage: {
+      async get<T>(key: string): Promise<T | undefined> {
+        return entries.get(key) as T | undefined;
+      },
+      async put(key: string, value: unknown): Promise<void> {
+        entries.set(key, value);
+      },
+      async delete(key: string): Promise<boolean> {
+        return entries.delete(key);
+      },
+    },
+  };
+}
+
+/** Namespace double routing each object name to a real OmniStorageDurableObject. */
+class FakeNamespace implements DurableObjectNamespaceLike {
+  readonly names: string[] = [];
+  private readonly objects = new Map<string, OmniStorageDurableObject>();
+
+  idFromName(name: string): unknown {
+    this.names.push(name);
+    return { name };
+  }
+
+  get(id: unknown): DurableObjectStubLike {
+    const { name } = id as { name: string };
+    let object = this.objects.get(name);
+    if (object === undefined) {
+      object = new OmniStorageDurableObject(fakeState());
+      this.objects.set(name, object);
+    }
+    const target = object;
+    return { fetch: (input, init) => target.fetch(new Request(input, init)) };
+  }
+}
+
+function fakeKVNamespace(): KVNamespaceLike {
+  const entries = new Map<string, string>();
+  return {
+    async get(key) {
+      return entries.get(key) ?? null;
+    },
+    async put(key, value) {
+      entries.set(key, value);
+    },
+    async delete(key) {
+      entries.delete(key);
+    },
+  };
+}
+
+/** waitUntil collector standing in for the Workers ExecutionContext. */
+function createCtx() {
+  const promises: Promise<unknown>[] = [];
+  return {
+    ctx: {
+      waitUntil: (promise: Promise<unknown>): void => {
+        promises.push(promise);
+      },
+    },
+    flush: async (): Promise<void> => {
+      await Promise.allSettled(promises);
+    },
+  };
+}
+
+function healthzRequest(): Request {
+  return new Request("https://omni.test/healthz");
+}
+
+function chatRequest(): Request {
+  return new Request("https://omni.test/v1/chat/completions", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ model: "any", messages: [{ role: "user", content: "hi" }] }),
+  });
+}
+
+async function errorBody(response: Response): Promise<{ message: string; type: string }> {
+  const payload = (await response.json()) as { error: { message: string; type: string } };
+  return payload.error;
+}
+
+describe("createWorker", () => {
+  it("boots from the OMNI_CONFIG env var and serves /healthz", async () => {
+    const worker = createWorker({ logger: silentLogger });
+    const env: WorkerEnv = {
+      OMNI_CONFIG: MEMORY_YAML,
+      OPENAI_API_KEY: "sk-test",
+      // Non-string bindings must be filtered out of the interpolation env.
+      SOME_BINDING: { get: () => null },
+    };
+    const response = await worker.fetch(healthzRequest(), env, createCtx().ctx);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ status: "ok" });
+  });
+
+  it("falls back to options.configYaml when OMNI_CONFIG is absent or blank", async () => {
+    const absent = createWorker({ configYaml: MEMORY_YAML, logger: silentLogger });
+    const env: WorkerEnv = { OPENAI_API_KEY: "sk-test" };
+    expect((await absent.fetch(healthzRequest(), env, createCtx().ctx)).status).toBe(200);
+
+    const blank = createWorker({ configYaml: MEMORY_YAML, logger: silentLogger });
+    const blankEnv: WorkerEnv = { OMNI_CONFIG: "  \n", OPENAI_API_KEY: "sk-test" };
+    expect((await blank.fetch(healthzRequest(), blankEnv, createCtx().ctx)).status).toBe(200);
+  });
+
+  it("serves /healthz with durable-object storage bound from env", async () => {
+    const registry = createDefaultRegistry();
+    registry.providers.set("fake", createFakeProviderFactory());
+    const worker = createWorker({ configYaml: DO_YAML, registry, logger: silentLogger });
+    const env: WorkerEnv = { OMNI_DO: new FakeNamespace() };
+    const response = await worker.fetch(healthzRequest(), env, createCtx().ctx);
+    expect(response.status).toBe(200);
+  });
+
+  it("flows rate-limit counters through the Durable Object namespace", async () => {
+    const namespace = new FakeNamespace();
+    const registry = createDefaultRegistry();
+    registry.providers.set("fake", createFakeProviderFactory());
+    const worker = createWorker({ configYaml: DO_YAML, registry, logger: silentLogger });
+    const env: WorkerEnv = { OMNI_DO: namespace };
+    const { ctx, flush } = createCtx();
+
+    const first = await worker.fetch(chatRequest(), env, ctx);
+    expect(first.status).toBe(200);
+    // Usage recording runs post-response through ctx.waitUntil.
+    await flush();
+
+    // The request-window counter was incremented inside the DO fake...
+    expect(namespace.names.some((name) => name.startsWith("rl:req:burst:"))).toBe(true);
+    // ...and the recorded token usage landed in the DO-backed budget counter.
+    const tokenKey = namespace.names.find((name) => name.startsWith("rl:tok:budget:"));
+    expect(tokenKey).toBeDefined();
+    if (tokenKey === undefined) throw new Error("unreachable");
+    const reader = new DurableObjectStorageAdapter(namespace);
+    expect(await reader.getCounter(tokenKey)).toBe(FAKE_USAGE_TOTAL);
+
+    // Second request in the same window trips the 1-request limit, proving
+    // the count persisted across requests via the shared namespace.
+    const second = await worker.fetch(chatRequest(), env, ctx);
+    expect(second.status).toBe(429);
+    expect(second.headers.get("x-ratelimit-rule")).toBe("burst");
+  });
+
+  it("serves requests with cloudflare-kv storage under a custom binding name", async () => {
+    const yaml = `
+version: 1
+storage:
+  type: cloudflare-kv
+  binding: MY_KV
+providers:
+  openai:
+    type: openai
+    apiKey: sk-test
+routing:
+  defaultProvider: openai
+`;
+    const worker = createWorker({ configYaml: yaml, logger: silentLogger });
+    const env: WorkerEnv = { MY_KV: fakeKVNamespace() };
+    const response = await worker.fetch(healthzRequest(), env, createCtx().ctx);
+    expect(response.status).toBe(200);
+  });
+
+  it("returns a 500 ConfigError naming the missing Durable Object binding", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const yaml = `
+version: 1
+storage:
+  type: durable-object
+providers:
+  openai:
+    type: openai
+    apiKey: sk-test
+routing:
+  defaultProvider: openai
+`;
+      const worker = createWorker({ configYaml: yaml, logger: silentLogger });
+      const response = await worker.fetch(healthzRequest(), {}, createCtx().ctx);
+      expect(response.status).toBe(500);
+      const error = await errorBody(response);
+      expect(error.type).toBe("api_error");
+      expect(error.message).toContain('"OMNI_DO"');
+      expect(error.message).toContain("wrangler.jsonc");
+      expect(errorSpy).toHaveBeenCalled();
+
+      // The failure is memoized: a later request with a valid binding still
+      // reports the cached init error (config mistakes need a redeploy).
+      const retry = await worker.fetch(
+        healthzRequest(),
+        { OMNI_DO: new FakeNamespace() },
+        createCtx().ctx,
+      );
+      expect(retry.status).toBe(500);
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  it("returns a 500 ConfigError naming the missing KV binding", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const yaml = `
+version: 1
+storage:
+  type: cloudflare-kv
+providers:
+  openai:
+    type: openai
+    apiKey: sk-test
+routing:
+  defaultProvider: openai
+`;
+      const worker = createWorker({ configYaml: yaml, logger: silentLogger });
+      // Present but wrong-shaped: without get/put functions the binding does
+      // not look like a KV namespace and must be rejected.
+      const env: WorkerEnv = { OMNI_KV: { idFromName: () => null } };
+      const response = await worker.fetch(healthzRequest(), env, createCtx().ctx);
+      expect(response.status).toBe(500);
+      const error = await errorBody(response);
+      expect(error.type).toBe("api_error");
+      expect(error.message).toContain('"OMNI_KV"');
+      expect(error.message).toContain("wrangler.jsonc");
+      expect(errorSpy).toHaveBeenCalled();
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  it("returns a helpful 500 when no configuration exists anywhere", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const worker = createWorker();
+      const response = await worker.fetch(healthzRequest(), {}, createCtx().ctx);
+      expect(response.status).toBe(500);
+      const error = await errorBody(response);
+      expect(error.type).toBe("api_error");
+      expect(error.message).toContain("OMNI_CONFIG");
+      expect(error.message).toContain("configYaml");
+      expect(errorSpy).toHaveBeenCalled();
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+});

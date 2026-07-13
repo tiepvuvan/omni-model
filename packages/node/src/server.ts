@@ -1,0 +1,132 @@
+import type { AddressInfo } from "node:net";
+import { type ServerType, serve } from "@hono/node-server";
+import {
+  ConfigError,
+  createConsoleLogger,
+  createDefaultRegistry,
+  createOmniApp,
+  type Logger,
+  parseConfig,
+  type RuntimeContext,
+  type StorageAdapter,
+} from "@omni-model/core";
+import { postgresStorageFactory } from "@omni-model/storage-postgres";
+import { redisStorageFactory } from "@omni-model/storage-redis";
+
+/** Options for {@link startServer}. */
+export interface StartOptions {
+  /** Raw YAML configuration, typically from `resolveConfigSource`. */
+  configYaml: string;
+  /**
+   * Environment for `${VAR}` interpolation and component runtime access
+   * (pass `process.env` in production). Defaults to `{}`.
+   */
+  env?: Record<string, string | undefined>;
+  /** Port to bind; `0` picks an ephemeral port. Defaults to `env.PORT`, then 8787. */
+  port?: number;
+  /** Interface to bind. Defaults to "0.0.0.0" (all interfaces, for containers). */
+  hostname?: string;
+  /** Defaults to a console logger at the configured `server.logLevel`. */
+  logger?: Logger;
+}
+
+/** Handle to a running omni-model HTTP server. */
+export interface RunningServer {
+  /** The actually bound port (useful with `port: 0`). */
+  port: number;
+  /** The actually bound address. */
+  hostname: string;
+  /** Stop accepting connections, then close the storage backend. */
+  close(): Promise<void>;
+}
+
+function describeError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+async function closeStorage(storage: StorageAdapter): Promise<void> {
+  await storage.close?.();
+}
+
+/**
+ * Parse the YAML config, construct storage from the registry (built-ins plus
+ * the Redis and Postgres backends), build the omni app and serve it over
+ * HTTP. The returned handle owns the storage lifecycle: `close()` stops the
+ * HTTP server first, then closes the storage adapter.
+ */
+export async function startServer(options: StartOptions): Promise<RunningServer> {
+  const env = options.env ?? {};
+  const config = parseConfig(options.configYaml, env);
+  const logger = options.logger ?? createConsoleLogger(config.server.logLevel);
+
+  const registry = createDefaultRegistry();
+  registry.storage.set(redisStorageFactory.type, redisStorageFactory);
+  registry.storage.set(postgresStorageFactory.type, postgresStorageFactory);
+
+  const runtime: RuntimeContext = {
+    env,
+    fetch: (...args: Parameters<typeof fetch>) => globalThis.fetch(...args),
+    now: Date.now,
+    // Node has no execution context to extend; run the work fire-and-forget.
+    waitUntil: (promise: Promise<unknown>): void => {
+      void promise.catch((error) => {
+        logger.error("background task failed", { error: describeError(error) });
+      });
+    },
+    log: logger,
+  };
+
+  const factory = registry.storage.get(config.storage.type);
+  if (factory === undefined) {
+    const registered = [...registry.storage.keys()].sort().join(", ");
+    throw new ConfigError(
+      `storage: unknown type "${config.storage.type}" (registered storage types: ${registered})`,
+    );
+  }
+  const storage = await factory.create(config.storage, runtime);
+
+  try {
+    const app = await createOmniApp({ config, registry, env, storage, logger });
+
+    const port = options.port ?? (Number(env.PORT) || 8787);
+    const hostname = options.hostname ?? "0.0.0.0";
+
+    let onListening: (info: AddressInfo) => void = () => {};
+    let onError: (error: Error) => void = () => {};
+    const listening = new Promise<AddressInfo>((resolve, reject) => {
+      onListening = resolve;
+      onError = reject;
+    });
+    const server: ServerType = serve({ fetch: app.fetch, port, hostname }, onListening);
+    server.once("error", onError);
+    const info = await listening;
+    server.removeListener("error", onError);
+
+    logger.info(`listening on http://${info.address}:${info.port}`);
+
+    return {
+      port: info.port,
+      hostname: info.address,
+      close: async (): Promise<void> => {
+        try {
+          // Without this, keep-alive sockets keep `close()` pending until
+          // clients hang up on their own.
+          if ("closeIdleConnections" in server) server.closeIdleConnections();
+          await new Promise<void>((resolve, reject) => {
+            server.close((error) => (error === undefined ? resolve() : reject(error)));
+          });
+        } finally {
+          await closeStorage(storage);
+        }
+      },
+    };
+  } catch (error) {
+    // Startup failed after storage was created; don't leak its connections.
+    try {
+      await closeStorage(storage);
+    } catch {
+      // The original startup error is the one worth surfacing.
+    }
+    throw error;
+  }
+}

@@ -1,0 +1,40 @@
+# omni-model starter config for Cloudflare Workers.
+#
+# This file is BUNDLED INTO THE WORKER at deploy time — edit it and redeploy
+# (`pnpm exec wrangler deploy`) to change the configuration. Alternatively,
+# set the OMNI_CONFIG secret to a full YAML document to override this file
+# without rebuilding: `wrangler secret put OMNI_CONFIG < my-config.yaml`.
+#
+# Secrets referenced as ${VAR} come from Workers secrets/vars:
+#   wrangler secret put OPENAI_API_KEY
+#
+# Full reference: examples/omni.yaml and docs/configuration.md.
+version: 1
+
+# Rate-limit counters and attestation state live in a Durable Object,
+# bound as OMNI_DO in wrangler.jsonc (exact counters, free-plan friendly).
+storage:
+  type: durable-object
+  binding: OMNI_DO
+
+# No security providers = OPEN PROXY: anyone who finds the URL can spend
+# your API credits. Add at least one verifier before sharing the URL.
+security:
+  providers: []
+  # Example: only requests carrying a valid Firebase App Check token pass.
+  # providers:
+  #   - type: firebase-app-check
+  #     projectNumber: "1234567890"
+
+rateLimits:
+  - name: per-user-requests
+    key: user
+    requests: { limit: 60, window: 1m }
+
+providers:
+  openai:
+    type: openai
+    apiKey: ${OPENAI_API_KEY}
+
+routing:
+  defaultProvider: openai
