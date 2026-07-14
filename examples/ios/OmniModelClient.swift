@@ -1,28 +1,43 @@
 //
 //  OmniModelClient.swift
-//  Drop-in client for calling a self-hosted omni-model proxy from iOS,
-//  built on MacPaw/OpenAI (https://github.com/MacPaw/OpenAI).
+//  Auth transport for calling a self-hosted omni-model proxy from iOS with the
+//  real MacPaw/OpenAI client (https://github.com/MacPaw/OpenAI).
 //
 //  ─────────────────────────────────────────────────────────────────────────
-//  HOW TO USE
+//  WHY A MIDDLEWARE (not a wrapper)
 //  ─────────────────────────────────────────────────────────────────────────
-//  1. Add MacPaw/OpenAI via Swift Package Manager:
-//        https://github.com/MacPaw/OpenAI  (Up to Next Major, from 0.4.0)
+//  You use MacPaw's `OpenAI` directly — its full API, its types, its updates.
+//  This file only plugs an `OpenAIMiddleware` into it that attaches the caller's
+//  identity (custom JWT / Firebase Auth / App Check / App Attest / DeviceCheck)
+//  to every request, streaming and non-streaming alike. Nothing here forwards
+//  `OpenAIProtocol` methods, so there is no thin wrapper to maintain and you get
+//  MacPaw upgrades for free.
+//
+//  MacPaw's middleware runs synchronously, so headers come from a thread-safe
+//  `OmniAuthBox` that you refresh asynchronously before a request:
+//
+//        let box = OmniAuthBox()
+//        let openAI = OmniModel.makeOpenAI(box: box)     // a real MacPaw OpenAI
+//        let auth = FirebaseAppCheckAuth()               // pick your provider
+//
+//        try await box.refresh(from: auth)               // cheap; required per-call for App Attest
+//        let result = try await openAI.chats(
+//            query: ChatQuery(messages: [.user(.init(content: .string("Hi")))],
+//                             model: "gpt-4o-mini"))
+//
+//        // Streaming works the same — the middleware injects auth on the stream too:
+//        try await box.refresh(from: auth)
+//        for try await chunk in openAI.chatsStream(query: query) {
+//            for c in chunk.choices { print(c.delta.content ?? "", terminator: "") }
+//        }
+//
+//  ─────────────────────────────────────────────────────────────────────────
+//  SETUP
+//  ─────────────────────────────────────────────────────────────────────────
+//  1. Add MacPaw/OpenAI via SPM: https://github.com/MacPaw/OpenAI (from 0.4.0).
 //  2. Copy this file into your app target.
-//  3. Edit `OmniEndpoint.production` below to your deployed proxy URL.
-//  4. Pick an auth provider that matches your proxy's `security.providers`
-//     and make requests:
-//
-//        let client = OmniModelClient(auth: FirebaseAppCheckAuth())
-//        let result = try await client.chat(
-//            ChatQuery(messages: [.user(.init(content: .string("Hello!")))],
-//                      model: "gpt-4o-mini")
-//        )
-//        print(result.choices.first?.message.content ?? "")
-//
-//  The provider API keys never touch the app — the proxy holds them. This file
-//  only attaches the caller's identity (Firebase / App Check / App Attest /
-//  DeviceCheck / custom JWT) as request headers, refreshed on every call.
+//  3. Edit `OmniEndpoint.production` below.
+//  4. Pick the `OmniAuthProvider` matching your proxy's `security.providers`.
 //
 //  Firebase providers compile only when the Firebase SDKs are present
 //  (`#if canImport(...)`), so this file builds with just MacPaw/OpenAI.
@@ -88,7 +103,75 @@ public struct OmniEndpoint: Sendable {
   public static let production = OmniEndpoint("https://your-proxy.example.com")
 }
 
-// MARK: - Auth
+// MARK: - Auth box + middleware
+
+/// Thread-safe holder for the auth headers the middleware injects. Written
+/// asynchronously (via `refresh`), read synchronously by the middleware.
+public final class OmniAuthBox: @unchecked Sendable {
+  private let lock = NSLock()
+  private var headers: [String: String] = [:]
+
+  public init() {}
+
+  /// Replace the current headers with fresh ones from a provider.
+  public func refresh(from provider: OmniAuthProvider) async throws {
+    let next = try await provider.headers()
+    lock.lock()
+    headers = next
+    lock.unlock()
+  }
+
+  /// Set headers directly (e.g. from your own auth layer).
+  public func set(_ headers: [String: String]) {
+    lock.lock()
+    self.headers = headers
+    lock.unlock()
+  }
+
+  func snapshot() -> [String: String] {
+    lock.lock()
+    defer { lock.unlock() }
+    return headers
+  }
+}
+
+/// A MacPaw `OpenAIMiddleware` that stamps the current auth headers onto every
+/// request — including streaming requests (MacPaw applies `intercept(request:)`
+/// to both). This is the whole integration: no `OpenAIProtocol` methods are
+/// reimplemented.
+public struct OmniAuthMiddleware: OpenAIMiddleware {
+  private let box: OmniAuthBox
+
+  public init(box: OmniAuthBox) { self.box = box }
+
+  public func intercept(request: URLRequest) -> URLRequest {
+    var request = request
+    for (name, value) in box.snapshot() {
+      request.setValue(value, forHTTPHeaderField: name)
+    }
+    return request
+  }
+}
+
+/// Build a real MacPaw `OpenAI` pointed at your proxy, with the auth middleware
+/// installed. The returned value is an ordinary `OpenAI` — use its full API.
+public enum OmniModel {
+  public static func makeOpenAI(endpoint: OmniEndpoint = .production, box: OmniAuthBox) -> OpenAI {
+    OpenAI(
+      configuration: .init(
+        // token: nil — the proxy holds the provider keys; identity is in headers.
+        token: nil,
+        host: endpoint.host,
+        port: endpoint.port,
+        scheme: endpoint.scheme,
+        basePath: endpoint.basePath
+      ),
+      middlewares: [OmniAuthMiddleware(box: box)]
+    )
+  }
+}
+
+// MARK: - Auth providers
 
 public enum OmniAuthError: Error {
   case notSignedIn
@@ -98,8 +181,7 @@ public enum OmniAuthError: Error {
   case httpError(status: Int, body: String)
 }
 
-/// Supplies the auth headers attached to each request. Called once per call so
-/// short-lived tokens (Firebase ID tokens, App Attest assertions) stay fresh.
+/// Produces the auth headers for one request. Called by `OmniAuthBox.refresh`.
 public protocol OmniAuthProvider: Sendable {
   func headers() async throws -> [String: String]
 }
@@ -109,23 +191,16 @@ public protocol OmniAuthProvider: Sendable {
 public struct BearerTokenAuth: OmniAuthProvider {
   private let token: @Sendable () async throws -> String
 
-  /// Fetch a fresh token on every call (recommended — tokens expire).
-  public init(_ token: @escaping @Sendable () async throws -> String) {
-    self.token = token
-  }
-
-  /// A fixed token (fine for testing; refresh in production).
-  public init(staticToken value: String) {
-    self.token = { value }
-  }
+  public init(_ token: @escaping @Sendable () async throws -> String) { self.token = token }
+  public init(staticToken value: String) { self.token = { value } }
 
   public func headers() async throws -> [String: String] {
     ["Authorization": "Bearer \(try await token())"]
   }
 }
 
-/// Attach an arbitrary custom header (for a custom `jwt` verifier configured
-/// with a non-default `header`, or any bespoke scheme).
+/// Attach an arbitrary custom header (for a `jwt` verifier configured with a
+/// non-default `header`, or any bespoke scheme).
 public struct CustomHeaderAuth: OmniAuthProvider {
   private let name: String
   private let value: @Sendable () async throws -> String
@@ -142,7 +217,7 @@ public struct CustomHeaderAuth: OmniAuthProvider {
 
 #if canImport(FirebaseAuth)
   /// Firebase Auth ID token → `Authorization: Bearer`. Matches the proxy's
-  /// `firebase-auth` verifier (configured with your `projectId`).
+  /// `firebase-auth` verifier.
   public struct FirebaseIDTokenAuth: OmniAuthProvider {
     private let forcingRefresh: Bool
     public init(forcingRefresh: Bool = false) { self.forcingRefresh = forcingRefresh }
@@ -157,7 +232,8 @@ public struct CustomHeaderAuth: OmniAuthProvider {
 
 #if canImport(FirebaseAppCheck)
   /// Firebase App Check token → `X-Firebase-AppCheck`. Matches the proxy's
-  /// `firebase-app-check` verifier (configured with your `projectNumber`).
+  /// `firebase-app-check` verifier. (App Check is itself backed by App Attest on
+  /// modern devices — a good streaming-friendly choice for Firebase apps.)
   public struct FirebaseAppCheckAuth: OmniAuthProvider {
     private let forcingRefresh: Bool
     public init(forcingRefresh: Bool = false) { self.forcingRefresh = forcingRefresh }
@@ -182,14 +258,14 @@ public struct CustomHeaderAuth: OmniAuthProvider {
     }
   }
 
-  /// Apple App Attest. Matches the proxy's `apple-app-attest` verifier: on first
-  /// use it generates a key, attests it, and registers it via the proxy's
-  /// `/auth/app-attest/register` route; then every call fetches a one-time
-  /// challenge from `/auth/app-attest/challenge` and signs an assertion over it.
+  /// Apple App Attest. Matches the proxy's `apple-app-attest` verifier. Each
+  /// `headers()` fetches a one-time challenge from the proxy and signs a fresh
+  /// assertion over it, so **refresh the box immediately before every request**
+  /// (the assertion is single-use). The one-time attest/register handshake runs
+  /// automatically on first use.
   ///
-  /// An `actor` so the one-time key generation/registration can't race.
-  /// The key id is persisted in the Keychain (survives reinstall-free launches);
-  /// swap the store for your own if you need stricter guarantees.
+  /// An `actor` so key generation/registration can't race. The key id is kept in
+  /// the Keychain.
   @available(iOS 14.0, *)
   public actor AppAttestAuth: OmniAuthProvider {
     private let endpoint: OmniEndpoint
@@ -216,7 +292,6 @@ public struct CustomHeaderAuth: OmniAuthProvider {
     }
 
     private func ensureRegisteredKey() async throws -> String {
-      // A key that's already been attested + registered this session: reuse it.
       if let keyId = Keychain.read(keychainAccount), registered { return keyId }
 
       let keyId: String
@@ -227,8 +302,8 @@ public struct CustomHeaderAuth: OmniAuthProvider {
         try Keychain.write(keyId, account: keychainAccount)
       }
 
-      // (Re)register: harmless if the key was already attested — the proxy
-      // stores the credential idempotently.
+      // (Re)register: harmless if already attested — the proxy stores the
+      // credential idempotently.
       let challenge = try await fetchChallenge()
       let attestation = try await service.attestKey(keyId, clientDataHash: hash(challenge))
       try await register(keyId: keyId, attestation: attestation, challenge: challenge)
@@ -273,69 +348,6 @@ public struct CustomHeaderAuth: OmniAuthProvider {
   }
 #endif
 
-// MARK: - Client
-
-/// A thin, `OpenAIProtocol`-backed client pointed at your omni-model proxy.
-///
-/// Each call fetches fresh auth headers from the provider, then delegates to a
-/// MacPaw/OpenAI `OpenAI` instance configured for your proxy. `OpenAI` is the
-/// real `OpenAIProtocol` implementation, so responses, models, and errors are
-/// exactly what you'd get talking to OpenAI directly — only the base URL and
-/// the auth headers differ.
-public final class OmniModelClient: Sendable {
-  private let endpoint: OmniEndpoint
-  private let auth: OmniAuthProvider
-
-  public init(endpoint: OmniEndpoint = .production, auth: OmniAuthProvider) {
-    self.endpoint = endpoint
-    self.auth = auth
-  }
-
-  private func makeClient(_ headers: [String: String]) -> OpenAI {
-    // token: nil — the proxy holds the provider keys; our identity is in headers.
-    OpenAI(
-      configuration: .init(
-        token: nil,
-        host: endpoint.host,
-        port: endpoint.port,
-        scheme: endpoint.scheme,
-        basePath: endpoint.basePath,
-        customHeaders: headers
-      )
-    )
-  }
-
-  /// Non-streaming chat completion.
-  public func chat(_ query: ChatQuery) async throws -> ChatResult {
-    let client = makeClient(try await auth.headers())
-    return try await client.chats(query: query)
-  }
-
-  /// Streaming chat completion. Auth headers are fetched before the stream opens.
-  public func chatStream(_ query: ChatQuery) -> AsyncThrowingStream<ChatStreamResult, Error> {
-    AsyncThrowingStream { continuation in
-      let task = Task {
-        do {
-          let client = makeClient(try await auth.headers())
-          for try await result in client.chatsStream(query: query) {
-            continuation.yield(result)
-          }
-          continuation.finish()
-        } catch {
-          continuation.finish(throwing: error)
-        }
-      }
-      continuation.onTermination = { _ in task.cancel() }
-    }
-  }
-
-  /// Embeddings.
-  public func embeddings(_ query: EmbeddingsQuery) async throws -> EmbeddingsResult {
-    let client = makeClient(try await auth.headers())
-    return try await client.embeddings(query: query)
-  }
-}
-
 // MARK: - Minimal Keychain helper (App Attest key id persistence)
 
 private enum Keychain {
@@ -354,14 +366,13 @@ private enum Keychain {
   }
 
   static func write(_ value: String, account: String) throws {
-    let data = Data(value.utf8)
     let base: [String: Any] = [
       kSecClass as String: kSecClassGenericPassword,
       kSecAttrAccount as String: account,
     ]
     SecItemDelete(base as CFDictionary)
     var add = base
-    add[kSecValueData as String] = data
+    add[kSecValueData as String] = Data(value.utf8)
     add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
     let status = SecItemAdd(add as CFDictionary, nil)
     guard status == errSecSuccess else {

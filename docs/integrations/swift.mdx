@@ -4,11 +4,11 @@ description: Call omni-model from an iOS app — via Firebase callable functions
 ---
 
 There are two ways an iOS app reaches omni-model. **Serverless** calls a Firebase Callable
-Function; the Firebase SDKs attach Firebase Auth + App Check tokens for you. **Self-hosted** points
-the [MacPaw/OpenAI](https://github.com/MacPaw/OpenAI) Swift client at your proxy using a small
-drop-in wrapper — [`examples/ios/OmniModelClient.swift`](https://github.com/tiepvuvan/omni-model/blob/main/examples/ios/OmniModelClient.swift) —
-that attaches the right auth header (custom JWT, Firebase Auth, App Check, App Attest, or
-DeviceCheck) on every request.
+Function; the Firebase SDKs attach Firebase Auth + App Check tokens for you. **Self-hosted** uses
+the real [MacPaw/OpenAI](https://github.com/MacPaw/OpenAI) client plus a small drop-in
+`OpenAIMiddleware` — [`examples/ios/OmniModelClient.swift`](https://github.com/tiepvuvan/omni-model/blob/main/examples/ios/OmniModelClient.swift) —
+that points it at your proxy and attaches the right auth header (custom JWT, Firebase Auth, App
+Check, App Attest, or DeviceCheck) on every request, streaming included.
 
 Both speak the OpenAI wire format: requests carry `model` and `messages`, responses carry
 `choices`, and streaming emits `chat.completion.chunk` objects.
@@ -135,10 +135,12 @@ Both speak the OpenAI wire format: requests carry `model` and `messages`, respon
   </Tab>
 
   <Tab title="Self-hosted proxy (MacPaw/OpenAI)">
-    The [MacPaw/OpenAI](https://github.com/MacPaw/OpenAI) client already speaks the OpenAI wire
-    format — you only need to point it at your proxy and attach the caller's identity. The drop-in
+    You use the real [MacPaw/OpenAI](https://github.com/MacPaw/OpenAI) `OpenAI` client — its full
+    API, its types, its updates. The drop-in
     [`OmniModelClient.swift`](https://github.com/tiepvuvan/omni-model/blob/main/examples/ios/OmniModelClient.swift)
-    does both.
+    adds only a custom **`OpenAIMiddleware`** that points it at your proxy and stamps the caller's
+    identity onto every request — streaming and non-streaming alike. Nothing forwards
+    `OpenAIProtocol` methods, so there's no wrapper to maintain.
 
     <Steps>
       <Step title="Add MacPaw/OpenAI">
@@ -146,7 +148,7 @@ Both speak the OpenAI wire format: requests carry `model` and `messages`, respon
         `https://github.com/MacPaw/OpenAI` (Up to Next Major Version, from `0.4.0`).
       </Step>
 
-      <Step title="Copy in the wrapper and set your endpoint">
+      <Step title="Copy in the middleware and set your endpoint">
         Copy [`examples/ios/OmniModelClient.swift`](https://github.com/tiepvuvan/omni-model/blob/main/examples/ios/OmniModelClient.swift)
         into your app target and edit one line:
 
@@ -155,23 +157,20 @@ Both speak the OpenAI wire format: requests carry `model` and `messages`, respon
         public static let production = OmniEndpoint("https://your-proxy.example.com")
         ```
 
-        It exposes `OmniModelClient` (`chat`, `chatStream`, `embeddings`) built on the real MacPaw
-        `OpenAI` client, plus an `OmniAuthProvider` for each auth mode. Firebase providers compile
-        only when the Firebase SDKs are present, so the file builds with just MacPaw/OpenAI.
+        It provides `OmniModel.makeOpenAI(box:)` (returns a real MacPaw `OpenAI`), an `OmniAuthBox`
+        (a thread-safe header holder), and an `OmniAuthProvider` for each auth mode. Firebase
+        providers compile only when the Firebase SDKs are present.
       </Step>
 
       <Step title="Pick the auth provider that matches your proxy">
         Choose the provider matching a [`security` verifier](/security/custom-jwt) in your config.
-        Tokens are fetched fresh on every call, so short-lived credentials stay valid.
 
         <AccordionGroup>
           <Accordion title="Custom JWT / Supabase — Authorization: Bearer">
             Matches the [`jwt` / `supabase`](/security/custom-jwt) verifier.
 
             ```swift
-            let client = OmniModelClient(auth: BearerTokenAuth {
-              try await myAuth.freshAccessToken()   // your own JWT / Supabase token
-            })
+            let auth = BearerTokenAuth { try await myAuth.freshAccessToken() }
             ```
           </Accordion>
           <Accordion title="Firebase Auth — Authorization: Bearer (ID token)">
@@ -179,7 +178,7 @@ Both speak the OpenAI wire format: requests carry `model` and `messages`, respon
             SDK and a signed-in user.
 
             ```swift
-            let client = OmniModelClient(auth: FirebaseIDTokenAuth())
+            let auth = FirebaseIDTokenAuth()
             ```
           </Accordion>
           <Accordion title="Firebase App Check — X-Firebase-AppCheck">
@@ -187,44 +186,50 @@ Both speak the OpenAI wire format: requests carry `model` and `messages`, respon
             `FirebaseAppCheck` SDK (initialize the provider before `FirebaseApp.configure()`).
 
             ```swift
-            let client = OmniModelClient(auth: FirebaseAppCheckAuth())
+            let auth = FirebaseAppCheckAuth()
             ```
           </Accordion>
           <Accordion title="Apple App Attest — x-appattest-* headers">
-            Matches the [`apple-app-attest`](/security/app-attest) verifier. The provider runs the
-            one-time attest/register handshake and signs a fresh assertion per call against your
-            proxy's `/auth/app-attest/*` routes automatically.
+            Matches the [`apple-app-attest`](/security/app-attest) verifier. Each refresh runs the
+            challenge/assert flow against your proxy's `/auth/app-attest/*` routes (the one-time
+            attest/register handshake happens on first use).
 
             ```swift
-            let client = OmniModelClient(auth: AppAttestAuth(endpoint: .production))
+            let auth = AppAttestAuth(endpoint: .production)
             ```
           </Accordion>
           <Accordion title="Apple DeviceCheck — X-Apple-Device-Token">
             Matches the [`apple-device-check`](/security/app-attest) verifier.
 
             ```swift
-            let client = OmniModelClient(auth: DeviceCheckAuth())
+            let auth = DeviceCheckAuth()
             ```
           </Accordion>
         </AccordionGroup>
       </Step>
 
-      <Step title="Make requests">
-        `model` is a plain string, so pass whatever your [routing](/model-routing/routing) expects —
-        a real model id or an alias like `"smart"`.
+      <Step title="Make requests with the real OpenAI client">
+        Build the client once, then `refresh` the box before a call so the middleware injects a
+        fresh token. `model` is a plain string, so pass whatever your
+        [routing](/model-routing/routing) expects — a real model id or an alias like `"smart"`.
 
         ```swift
         import OpenAI
 
+        let box = OmniAuthBox()
+        let openAI = OmniModel.makeOpenAI(box: box)   // a genuine MacPaw OpenAI
+
         // Non-streaming
-        let result = try await client.chat(
-          ChatQuery(messages: [.user(.init(content: .string("Hello!")))], model: "gpt-4o-mini")
+        try await box.refresh(from: auth)
+        let result = try await openAI.chats(
+          query: ChatQuery(messages: [.user(.init(content: .string("Hello!")))], model: "gpt-4o-mini")
         )
         print(result.choices.first?.message.content ?? "")
 
-        // Streaming
-        for try await chunk in client.chatStream(
-          ChatQuery(messages: [.user(.init(content: .string("Write a haiku.")))], model: "gpt-4o-mini")
+        // Streaming — the middleware injects auth on the stream too
+        try await box.refresh(from: auth)
+        for try await chunk in openAI.chatsStream(
+          query: ChatQuery(messages: [.user(.init(content: .string("Write a haiku.")))], model: "gpt-4o-mini")
         ) {
           for choice in chunk.choices {
             if let piece = choice.delta.content { print(piece, terminator: "") }
@@ -232,10 +237,19 @@ Both speak the OpenAI wire format: requests carry `model` and `messages`, respon
         }
 
         // Embeddings
-        let vectors = try await client.embeddings(
-          EmbeddingsQuery(model: "text-embedding-3-small", input: "hello world")
+        try await box.refresh(from: auth)
+        let vectors = try await openAI.embeddings(
+          query: EmbeddingsQuery(model: "text-embedding-3-small", input: "hello world")
         )
         ```
+
+        <Note>
+          Why `refresh` before each call? MacPaw's middleware runs **synchronously**, so it can't
+          `await` a token itself — `refresh` does the async work and the middleware reads the result.
+          For **App Attest** this is required per request (its assertion is single-use); for JWT /
+          App Check the call is cheap and you can refresh on a schedule instead. Everything else —
+          `images`, `audio`, `models`, retries, error types — is stock MacPaw/OpenAI.
+        </Note>
       </Step>
     </Steps>
 
