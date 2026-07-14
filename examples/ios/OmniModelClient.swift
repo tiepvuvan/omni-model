@@ -270,7 +270,7 @@ public struct CustomHeaderAuth: OmniAuthProvider {
   ///
   /// An `actor` so key generation/registration can't race. The key id is kept in
   /// the Keychain.
-  @available(iOS 14.0, *)
+  @available(iOS 14.0, macOS 11.0, visionOS 1.0, *)
   public actor AppAttestAuth: OmniAuthProvider {
     private let endpoint: OmniEndpoint
     private let session: URLSession

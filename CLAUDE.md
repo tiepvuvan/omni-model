@@ -32,13 +32,17 @@ packages/node              Node server + CLI (Docker/Fly/Cloud Run entry)
 apps/cloudflare            Deployable worker (root wrangler.jsonc points here)
 extensions/omni-model-proxy  One-click Firebase Extension (callable functions)
 swift/OmniModelFoundation   Apple Foundation Models LanguageModel package (SPM)
+swift/OmniModelClientKit    MacPaw/OpenAI client + OmniAuthMiddleware (SPM)
 examples/                  Example configs + iOS client (examples/ios, ios-app)
+e2e/                       Live end-to-end suite (proxy → OpenRouter; opt-in)
 docs/                      Mintlify docs site (docs.json + MDX): installation,
                            security, integrations, model routing, reference
 ```
 
 > Non-JS members (`swift/`, `examples/ios*`) are not part of the pnpm workspace or `pnpm ci`;
 > they build with their own toolchains (`swift build`, `xcodebuild`, `tuist`). Biome ignores them.
+> `e2e/` holds a live-upstream suite (`e2e/run.sh` / `pnpm test:e2e`) that is **opt-in** — it
+> skips without `OPENROUTER_API_KEY` and is not in the default `pnpm test`. Never commit a key.
 
 > Docs are a Mintlify site. A test (`packages/core/test/docs/`) validates every CEL snippet and
 > config example in `docs/**/*.mdx` + `README.md` against the real schema/engine — keep them

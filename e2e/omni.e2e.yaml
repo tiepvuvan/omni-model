@@ -1,0 +1,32 @@
+# omni-model config for the end-to-end suite. The proxy forwards to OpenRouter
+# (an OpenAI-compatible endpoint) so a real upstream exercises the full pipeline.
+# The API key comes from the OPENROUTER_API_KEY environment variable — never
+# commit a key here.
+version: 1
+
+server:
+  logLevel: warn
+
+storage:
+  type: memory
+
+# No auth for the local E2E server. Add a verifier before exposing it.
+security:
+  providers: []
+
+rateLimits:
+  - name: per-ip-requests
+    key: ip
+    requests: { limit: 120, window: 1m }
+
+providers:
+  openrouter:
+    type: openai-compatible
+    baseUrl: https://openrouter.ai/api/v1
+    apiKey: ${OPENROUTER_API_KEY}
+    headers:
+      HTTP-Referer: https://github.com/tiepvuvan/omni-model
+      X-Title: omni-model e2e
+
+routing:
+  defaultProvider: openrouter
