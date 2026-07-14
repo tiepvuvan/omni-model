@@ -4,10 +4,42 @@ omni-model runs anywhere a `fetch`-based HTTP handler runs: Cloudflare Workers a
 Node server (`packages/node`) in any container platform. All platforms share the same YAML
 configuration ([reference](./configuration.md)).
 
-For every one-click path below: **fork the repository first**, commit your `omni.yaml`, and deploy
-your fork. The deploy buttons in the README reference the canonical repository URL
-(`https://github.com/omni-model/omni-model`) — point them at your fork so your config and secrets
-stay yours.
+There are two deployment styles:
+
+- **Published image (no clone/fork).** Pull `ghcr.io/tiepvuvan/omni-model` and hand it your config
+  at runtime — see below. Best for containers (Fly, Cloud Run, Render, VPS, Kubernetes).
+- **Repo-based one-click buttons.** The Cloudflare button needs a copy in your GitHub account
+  (Workers bindings + Workers Builds live there); **fork the repository first**, commit your
+  `omni.yaml`, and deploy your fork. The buttons in the README reference the canonical repository
+  URL — point them at your fork so your config and secrets stay yours.
+
+## Published image (GHCR) — the fast path
+
+Every push of a `vX.Y.Z` tag publishes a multi-arch (amd64 + arm64) image to
+`ghcr.io/tiepvuvan/omni-model` (`main` also publishes `:edge`). The image ships **no baked
+config** — provide one at runtime:
+
+```sh
+# Inline the whole config (no volume needed):
+docker run -p 8787:8787 \
+  -e OPENAI_API_KEY=sk-... \
+  -e OMNI_CONFIG="$(cat omni.yaml)" \
+  ghcr.io/tiepvuvan/omni-model:latest
+
+# ...or mount a file:
+docker run -p 8787:8787 \
+  -e OPENAI_API_KEY=sk-... \
+  -v "$(pwd)/omni.yaml:/app/omni.yaml:ro" \
+  ghcr.io/tiepvuvan/omni-model:latest
+```
+
+**Tags:** `:1.2.3` (exact), `:1.2` (latest patch of a minor), `:latest` (newest release), `:edge`
+(tip of `main`). Pin a version in production; **update with `docker pull` + restart** — no fork to
+sync, no rebuild.
+
+> First publish only: GHCR packages start **private**. In the repo's *Packages* settings, set the
+> `omni-model` package visibility to **Public** so anyone can `docker pull` without authenticating
+> (or keep it private and `docker login ghcr.io` before pulling).
 
 ## Container config resolution
 
@@ -122,11 +154,13 @@ Render" button on your fork, or create a Blueprint instance from the repo. Set
 
 ## Plain Docker / VPS
 
+Use the published image (above), or build it yourself from a checkout:
+
 ```sh
 docker build -t omni-model .
 docker run -p 8787:8787 \
   -e OPENAI_API_KEY=sk-... \
-  -v ./omni.yaml:/app/omni.yaml:ro \
+  -v "$(pwd)/omni.yaml:/app/omni.yaml:ro" \
   omni-model
 ```
 

@@ -68,15 +68,29 @@ curl http://localhost:8787/v1/chat/completions \
   -d '{"model": "gpt-4o-mini", "messages": [{"role": "user", "content": "Hello!"}]}'
 ```
 
-### Docker
+### Docker (no clone required)
+
+Pull the prebuilt multi-arch image from GHCR and pass your config — no fork, no build:
 
 ```sh
-docker build -t omni-model .
+docker run -p 8787:8787 \
+  -e OPENAI_API_KEY=sk-... \
+  -e OMNI_CONFIG="$(cat omni.yaml)" \
+  ghcr.io/tiepvuvan/omni-model:latest
+```
+
+Or mount the config file instead of inlining it:
+
+```sh
 docker run -p 8787:8787 \
   -e OPENAI_API_KEY=sk-... \
   -v ./omni.yaml:/app/omni.yaml:ro \
-  omni-model
+  ghcr.io/tiepvuvan/omni-model:latest
 ```
+
+**Updating** is just `docker pull ghcr.io/tiepvuvan/omni-model:latest` and a restart — pin to a
+version tag (`:1.2.3` / `:1.2`) for reproducible deploys, or `:edge` to track `main`. To build the
+image yourself instead: `docker build -t omni-model .`.
 
 ### One-click deploys
 

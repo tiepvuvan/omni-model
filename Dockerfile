@@ -31,6 +31,11 @@ RUN pnpm install --prod --frozen-lockfile
 
 # --- Stage 3: runtime --------------------------------------------------------
 FROM node:22-alpine
+# OCI labels: link the published GHCR package to the repo and describe it.
+# (docker/metadata-action overrides these with commit-accurate values in CI.)
+LABEL org.opencontainers.image.source="https://github.com/tiepvuvan/omni-model" \
+      org.opencontainers.image.description="Self-hosted OpenAI-compatible AI proxy with YAML-configured auth, rate limits and model routing." \
+      org.opencontainers.image.licenses="MIT"
 ENV NODE_ENV=production
 WORKDIR /app
 COPY --from=prod-deps /repo /app
