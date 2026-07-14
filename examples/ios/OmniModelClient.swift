@@ -46,6 +46,7 @@
 import CryptoKit
 import Foundation
 import OpenAI
+import os
 
 #if canImport(DeviceCheck)
   import DeviceCheck
@@ -107,31 +108,24 @@ public struct OmniEndpoint: Sendable {
 
 /// Thread-safe holder for the auth headers the middleware injects. Written
 /// asynchronously (via `refresh`), read synchronously by the middleware.
-public final class OmniAuthBox: @unchecked Sendable {
-  private let lock = NSLock()
-  private var headers: [String: String] = [:]
+public final class OmniAuthBox: Sendable {
+  private let state = OSAllocatedUnfairLock<[String: String]>(initialState: [:])
 
   public init() {}
 
   /// Replace the current headers with fresh ones from a provider.
   public func refresh(from provider: OmniAuthProvider) async throws {
     let next = try await provider.headers()
-    lock.lock()
-    headers = next
-    lock.unlock()
+    state.withLock { $0 = next }
   }
 
   /// Set headers directly (e.g. from your own auth layer).
   public func set(_ headers: [String: String]) {
-    lock.lock()
-    self.headers = headers
-    lock.unlock()
+    state.withLock { $0 = headers }
   }
 
   func snapshot() -> [String: String] {
-    lock.lock()
-    defer { lock.unlock() }
-    return headers
+    state.withLock { $0 }
   }
 }
 
@@ -224,7 +218,17 @@ public struct CustomHeaderAuth: OmniAuthProvider {
 
     public func headers() async throws -> [String: String] {
       guard let user = Auth.auth().currentUser else { throw OmniAuthError.notSignedIn }
-      let token = try await user.getIDTokenForcingRefresh(forcingRefresh)
+      // `getIDTokenForcingRefresh` has an optional completion handler, so Swift
+      // doesn't synthesize an async variant — bridge it explicitly.
+      let token: String = try await withCheckedThrowingContinuation { continuation in
+        user.getIDTokenForcingRefresh(forcingRefresh) { token, error in
+          if let token {
+            continuation.resume(returning: token)
+          } else {
+            continuation.resume(throwing: error ?? OmniAuthError.badResponse)
+          }
+        }
+      }
       return ["Authorization": "Bearer \(token)"]
     }
   }

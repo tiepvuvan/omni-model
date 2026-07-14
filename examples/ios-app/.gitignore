@@ -1,0 +1,12 @@
+# Tuist
+Derived/
+*.xcodeproj
+*.xcworkspace
+Tuist/.build/
+Tuist/Dependencies/
+.tuist-version
+
+# SPM / Xcode
+.build/
+DerivedData/
+*.xcodeproj/xcuserdata/

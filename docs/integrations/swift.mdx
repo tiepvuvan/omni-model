@@ -286,6 +286,14 @@ Both speak the OpenAI wire format: requests carry `model` and `messages`, respon
   </Tab>
 </Tabs>
 
+<Note>
+  A runnable SwiftUI example lives at
+  [`examples/ios-app`](https://github.com/tiepvuvan/omni-model/tree/main/examples/ios-app) — a
+  [Tuist](https://tuist.dev) project wiring Firebase + MacPaw/OpenAI around the middleware above.
+  `tuist install && tuist generate`, set your endpoint + `GoogleService-Info.plist`, and run. Its
+  CI build (against the real SDKs) is what keeps `OmniModelClient.swift` honest.
+</Note>
+
 ## Next steps
 
 <CardGroup cols={2}>
