@@ -4,8 +4,11 @@ description: Call omni-model from an iOS app — via Firebase callable functions
 ---
 
 There are two ways an iOS app reaches omni-model. **Serverless** calls a Firebase Callable
-Function; the Firebase SDKs attach Firebase Auth + App Check tokens for you. **Self-hosted** hits a
-plain HTTPS endpoint with `URLSession` and a `Bearer` token you supply.
+Function; the Firebase SDKs attach Firebase Auth + App Check tokens for you. **Self-hosted** points
+the [MacPaw/OpenAI](https://github.com/MacPaw/OpenAI) Swift client at your proxy using a small
+drop-in wrapper — [`examples/ios/OmniModelClient.swift`](https://github.com/tiepvuvan/omni-model/blob/main/examples/ios/OmniModelClient.swift) —
+that attaches the right auth header (custom JWT, Firebase Auth, App Check, App Attest, or
+DeviceCheck) on every request.
 
 Both speak the OpenAI wire format: requests carry `model` and `messages`, responses carry
 `choices`, and streaming emits `chat.completion.chunk` objects.
@@ -131,84 +134,141 @@ Both speak the OpenAI wire format: requests carry `model` and `messages`, respon
     </Steps>
   </Tab>
 
-  <Tab title="Self-hosted proxy">
-    Point `URLSession` at your deployed proxy. Send an `Authorization: Bearer <token>` header that
-    matches a [`security` verifier](/security/custom-jwt) in your config (JWT, Firebase Auth, or
-    Supabase). The body and responses are exactly OpenAI's.
+  <Tab title="Self-hosted proxy (MacPaw/OpenAI)">
+    The [MacPaw/OpenAI](https://github.com/MacPaw/OpenAI) client already speaks the OpenAI wire
+    format — you only need to point it at your proxy and attach the caller's identity. The drop-in
+    [`OmniModelClient.swift`](https://github.com/tiepvuvan/omni-model/blob/main/examples/ios/OmniModelClient.swift)
+    does both.
 
     <Steps>
-      <Step title="Non-streaming request">
-        ```swift
-        struct ChatRequest: Encodable {
-          let model: String
-          let messages: [[String: String]]
-        }
-
-        func complete(_ prompt: String, token: String) async throws -> String {
-          var request = URLRequest(url: URL(string: "https://proxy.example.com/v1/chat/completions")!)
-          request.httpMethod = "POST"
-          request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-          request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-          request.httpBody = try JSONEncoder().encode(ChatRequest(
-            model: "gpt-4o-mini",
-            messages: [["role": "user", "content": prompt]]
-          ))
-
-          let (data, response) = try await URLSession.shared.data(for: request)
-          guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
-            // Body is an OpenAI-style { "error": { message, type, param, code } }.
-            throw URLError(.badServerResponse)
-          }
-          let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
-          let choices = json?["choices"] as? [[String: Any]]
-          let message = choices?.first?["message"] as? [String: Any]
-          return message?["content"] as? String ?? ""
-        }
-        ```
+      <Step title="Add MacPaw/OpenAI">
+        In Xcode, **File → Add Package Dependencies…** and add
+        `https://github.com/MacPaw/OpenAI` (Up to Next Major Version, from `0.4.0`).
       </Step>
 
-      <Step title="Streaming (SSE)">
-        Set `stream: true` and read the response as lines with `URLSession.bytes`. Each `data:`
-        line is a `chat.completion.chunk`; the stream ends with `data: [DONE]`.
+      <Step title="Copy in the wrapper and set your endpoint">
+        Copy [`examples/ios/OmniModelClient.swift`](https://github.com/tiepvuvan/omni-model/blob/main/examples/ios/OmniModelClient.swift)
+        into your app target and edit one line:
 
         ```swift
-        func stream(_ prompt: String, token: String, onDelta: @escaping (String) -> Void) async throws {
-          var request = URLRequest(url: URL(string: "https://proxy.example.com/v1/chat/completions")!)
-          request.httpMethod = "POST"
-          request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-          request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
-          request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-          request.httpBody = try JSONSerialization.data(withJSONObject: [
-            "model": "gpt-4o-mini",
-            "stream": true,
-            "messages": [["role": "user", "content": prompt]],
-          ])
+        // OmniModelClient.swift  — >>> EDIT ME <<<
+        public static let production = OmniEndpoint("https://your-proxy.example.com")
+        ```
 
-          let (bytes, response) = try await URLSession.shared.bytes(for: request)
-          guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
-            throw URLError(.badServerResponse)
-          }
+        It exposes `OmniModelClient` (`chat`, `chatStream`, `embeddings`) built on the real MacPaw
+        `OpenAI` client, plus an `OmniAuthProvider` for each auth mode. Firebase providers compile
+        only when the Firebase SDKs are present, so the file builds with just MacPaw/OpenAI.
+      </Step>
 
-          for try await line in bytes.lines {
-            guard line.hasPrefix("data: ") else { continue }
-            let payload = line.dropFirst(6)
-            if payload == "[DONE]" { break }
-            guard let data = payload.data(using: .utf8),
-                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let choices = json["choices"] as? [[String: Any]],
-                  let delta = choices.first?["delta"] as? [String: Any],
-                  let piece = delta["content"] as? String else { continue }
-            onDelta(piece)
+      <Step title="Pick the auth provider that matches your proxy">
+        Choose the provider matching a [`security` verifier](/security/custom-jwt) in your config.
+        Tokens are fetched fresh on every call, so short-lived credentials stay valid.
+
+        <AccordionGroup>
+          <Accordion title="Custom JWT / Supabase — Authorization: Bearer">
+            Matches the [`jwt` / `supabase`](/security/custom-jwt) verifier.
+
+            ```swift
+            let client = OmniModelClient(auth: BearerTokenAuth {
+              try await myAuth.freshAccessToken()   // your own JWT / Supabase token
+            })
+            ```
+          </Accordion>
+          <Accordion title="Firebase Auth — Authorization: Bearer (ID token)">
+            Matches the [`firebase-auth`](/security/custom-jwt) verifier. Needs the `FirebaseAuth`
+            SDK and a signed-in user.
+
+            ```swift
+            let client = OmniModelClient(auth: FirebaseIDTokenAuth())
+            ```
+          </Accordion>
+          <Accordion title="Firebase App Check — X-Firebase-AppCheck">
+            Matches the [`firebase-app-check`](/security/firebase-app-check) verifier. Needs the
+            `FirebaseAppCheck` SDK (initialize the provider before `FirebaseApp.configure()`).
+
+            ```swift
+            let client = OmniModelClient(auth: FirebaseAppCheckAuth())
+            ```
+          </Accordion>
+          <Accordion title="Apple App Attest — x-appattest-* headers">
+            Matches the [`apple-app-attest`](/security/app-attest) verifier. The provider runs the
+            one-time attest/register handshake and signs a fresh assertion per call against your
+            proxy's `/auth/app-attest/*` routes automatically.
+
+            ```swift
+            let client = OmniModelClient(auth: AppAttestAuth(endpoint: .production))
+            ```
+          </Accordion>
+          <Accordion title="Apple DeviceCheck — X-Apple-Device-Token">
+            Matches the [`apple-device-check`](/security/app-attest) verifier.
+
+            ```swift
+            let client = OmniModelClient(auth: DeviceCheckAuth())
+            ```
+          </Accordion>
+        </AccordionGroup>
+      </Step>
+
+      <Step title="Make requests">
+        `model` is a plain string, so pass whatever your [routing](/model-routing/routing) expects —
+        a real model id or an alias like `"smart"`.
+
+        ```swift
+        import OpenAI
+
+        // Non-streaming
+        let result = try await client.chat(
+          ChatQuery(messages: [.user(.init(content: .string("Hello!")))], model: "gpt-4o-mini")
+        )
+        print(result.choices.first?.message.content ?? "")
+
+        // Streaming
+        for try await chunk in client.chatStream(
+          ChatQuery(messages: [.user(.init(content: .string("Write a haiku.")))], model: "gpt-4o-mini")
+        ) {
+          for choice in chunk.choices {
+            if let piece = choice.delta.content { print(piece, terminator: "") }
           }
         }
+
+        // Embeddings
+        let vectors = try await client.embeddings(
+          EmbeddingsQuery(model: "text-embedding-3-small", input: "hello world")
+        )
         ```
       </Step>
     </Steps>
 
-    <Tip>
-      Because the endpoint is OpenAI-compatible, you can also point a Swift OpenAI client library at
-      it: set the base URL to `https://proxy.example.com/v1` and the API key to your proxy token.
-    </Tip>
+    <Accordion title="No dependencies? Raw URLSession">
+      You can skip MacPaw/OpenAI and hit the endpoint directly — the body and responses are exactly
+      OpenAI's. Send an `Authorization: Bearer <token>` (or the header your verifier expects).
+
+      ```swift
+      func complete(_ prompt: String, token: String) async throws -> String {
+        var request = URLRequest(url: URL(string: "https://your-proxy.example.com/v1/chat/completions")!)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.httpBody = try JSONSerialization.data(withJSONObject: [
+          "model": "gpt-4o-mini",
+          "messages": [["role": "user", "content": prompt]],
+        ])
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+          // Body is an OpenAI-style { "error": { message, type, param, code } }.
+          throw URLError(.badServerResponse)
+        }
+        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        let choices = json?["choices"] as? [[String: Any]]
+        let message = choices?.first?["message"] as? [String: Any]
+        return message?["content"] as? String ?? ""
+      }
+      ```
+
+      For streaming, set `"stream": true`, read `URLSession.shared.bytes(for:)` line by line, strip
+      the `data: ` prefix, stop at `data: [DONE]`, and decode each line as a `chat.completion.chunk`.
+    </Accordion>
   </Tab>
 </Tabs>
 
