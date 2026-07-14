@@ -94,15 +94,20 @@ image yourself instead: `docker build -t omni-model .`.
 
 ### One-click deploys
 
-Fork this repository first, commit your `omni.yaml`, and point the buttons at your fork — as
-written they reference the canonical URL `https://github.com/omni-model/omni-model`.
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/tiepvuvan/omni-model)
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/tiepvuvan/omni-model)
+[![Run on Google Cloud](https://deploy.cloud.run/button.svg)](https://deploy.cloud.run/?git_repo=https://github.com/tiepvuvan/omni-model)
 
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/omni-model/omni-model)
-[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/omni-model/omni-model)
-[![Run on Google Cloud](https://deploy.cloud.run/button.svg)](https://deploy.cloud.run/?git_repo=https://github.com/omni-model/omni-model)
+- **Render** — no fork. The [`render.yaml`](render.yaml) Blueprint runs the prebuilt GHCR image,
+  provisions a managed Key Value (Redis) datastore for rate limits, and prompts you for your
+  provider API keys.
+- **Cloudflare Workers** — the button forks the repo into your account (Workers bindings + secrets
+  live there); edit `apps/cloudflare/omni.yaml`, then `wrangler secret put OPENAI_API_KEY`.
+- **Cloud Run** — no fork; paste your config into the `OMNI_CONFIG` prompt.
+- **Fly.io** — `fly launch --copy-config` (a `fly.toml` ships in the repo).
 
-Fly.io: `fly launch --copy-config` (a `fly.toml` ships in the repo). Full platform walkthroughs —
-including Cloudflare Workers with KV vs Durable Object storage — in [docs/deploy.md](docs/deploy.md).
+Full platform walkthroughs — including Cloudflare KV vs Durable Object storage — in
+[docs/deploy.md](docs/deploy.md).
 
 ## Configuration
 

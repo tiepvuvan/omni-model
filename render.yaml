@@ -1,16 +1,67 @@
-# Render.com one-click deploy for omni-model.
+# Render.com one-click Blueprint for omni-model.
+# Runs the prebuilt public image, provisions a managed Key Value (Redis)
+# datastore, wires its connection string into the proxy config, and prompts
+# the deployer only for provider API keys.
+#
+# Deploy: https://render.com/deploy?repo=https://github.com/tiepvuvan/omni-model
 services:
+  # Shared datastore for rate-limit counters + token budgets.
+  - type: keyvalue
+    name: omni-model-kv
+    plan: free
+    region: oregon
+    # Counters carry their own TTLs; evict least-recently-used under memory
+    # pressure so the proxy keeps serving (fail-open) instead of erroring writes.
+    maxmemoryPolicy: allkeys-lru
+    # Empty list = block all public connections; the web service still reaches
+    # it over Render's private network.
+    ipAllowList: []
+
   - type: web
     name: omni-model
-    runtime: docker
+    runtime: image
     plan: starter
+    region: oregon
     healthCheckPath: /healthz
+    # One-click Blueprints should not auto-redeploy on upstream pushes.
+    autoDeploy: false
+    image:
+      url: ghcr.io/tiepvuvan/omni-model:latest
     envVars:
-      - key: PORT
-        value: "8787"
+      # Deployer is prompted for these at Blueprint apply time.
       - key: OPENAI_API_KEY
         sync: false
       - key: ANTHROPIC_API_KEY
         sync: false
       - key: GEMINI_API_KEY
         sync: false
+      # Internal redis:// URL injected from the Key Value instance.
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: omni-model-kv
+          property: connectionString
+      # Whole omni-model config as inline YAML. omni-model resolves the
+      # ${...} placeholders at startup against the env vars above — Render
+      # does NOT expand them (it treats this literal value verbatim).
+      - key: OMNI_CONFIG
+        value: |
+          version: 1
+          server:
+            logLevel: info
+          storage:
+            type: redis
+            url: ${REDIS_URL}
+          providers:
+            openai:
+              type: openai
+              apiKey: ${OPENAI_API_KEY}
+          rateLimits:
+            - name: per-user-requests
+              key: user
+              requests: { limit: 60, window: 1m }
+            - name: per-user-daily-tokens
+              key: user
+              tokens: { limit: 200000, window: 1d }
+          routing:
+            defaultProvider: openai

@@ -145,12 +145,32 @@ Cloud Run scales to many instances; use `redis` (Memorystore) or `postgres` (Clo
 so limits are enforced across all of them. Pass config via a committed `omni.yaml`, the
 `OMNI_CONFIG` env var, or mount a file with `--update-secrets` and point `OMNI_CONFIG_PATH` at it.
 
-## Render
+## Render (Blueprint — no fork)
 
-`render.yaml` defines a Docker web service with the `/healthz` health check. Use the "Deploy to
-Render" button on your fork, or create a Blueprint instance from the repo. Set
-`OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` in the dashboard (they are declared
-`sync: false`), and either commit an `omni.yaml` or set `OMNI_CONFIG`.
+`render.yaml` is a [Blueprint](https://render.com/docs/infrastructure-as-code) that stands up the
+whole stack in your Render account from the canonical repo — no fork, no build:
+
+1. Click **Deploy to Render** (or point the button at any repo containing this `render.yaml`:
+   `https://render.com/deploy?repo=https://github.com/tiepvuvan/omni-model`).
+2. Render provisions a managed **Key Value (Redis)** instance (`omni-model-kv`) and a **web
+   service** running `ghcr.io/tiepvuvan/omni-model:latest`.
+3. You're prompted for `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` (declared
+   `sync: false`).
+
+The Key Value connection string is injected as `REDIS_URL` via `fromService`, and the bundled
+`OMNI_CONFIG` references `${REDIS_URL}` — so rate limits and token budgets are shared across
+instances out of the box. Edit the inline `OMNI_CONFIG` in `render.yaml` (or replace it via the
+dashboard) to change providers, routing, or limits.
+
+Notes:
+- The **free** Key Value plan has no persistence — counters reset if the instance restarts (fine
+  for ephemeral rate-limit windows; use a paid plan if a token budget must survive restarts).
+- `maxmemoryPolicy: allkeys-lru` is deliberate: under memory pressure it evicts counters (slight
+  under-counting) rather than erroring writes, keeping the proxy fail-open.
+- Don't set a `PORT` env var — Render injects `$PORT` and omni-model reads it.
+- For a managed **Postgres** instead, add a top-level `databases:` entry and switch the config to
+  `storage: { type: postgres, url: ${DATABASE_URL} }` with `DATABASE_URL` from
+  `fromDatabase: { name: <db>, property: connectionString }`.
 
 ## Plain Docker / VPS
 
