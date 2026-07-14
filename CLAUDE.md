@@ -31,10 +31,14 @@ packages/firebase          Callable-function adapter: Auth/App Check identity,
 packages/node              Node server + CLI (Docker/Fly/Cloud Run entry)
 apps/cloudflare            Deployable worker (root wrangler.jsonc points here)
 extensions/omni-model-proxy  One-click Firebase Extension (callable functions)
-examples/                  Example configs
+swift/OmniModelFoundation   Apple Foundation Models LanguageModel package (SPM)
+examples/                  Example configs + iOS client (examples/ios, ios-app)
 docs/                      Mintlify docs site (docs.json + MDX): installation,
                            security, integrations, model routing, reference
 ```
+
+> Non-JS members (`swift/`, `examples/ios*`) are not part of the pnpm workspace or `pnpm ci`;
+> they build with their own toolchains (`swift build`, `xcodebuild`, `tuist`). Biome ignores them.
 
 > Docs are a Mintlify site. A test (`packages/core/test/docs/`) validates every CEL snippet and
 > config example in `docs/**/*.mdx` + `README.md` against the real schema/engine — keep them

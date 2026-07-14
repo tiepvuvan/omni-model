@@ -1,0 +1,66 @@
+---
+title: Apple Foundation Models
+description: Call your omni-model proxy through Apple's Foundation Models framework — same LanguageModelSession API as the on-device model.
+---
+
+Apple's [Foundation Models](https://developer.apple.com/documentation/foundationmodels) framework
+lets any LLM plug in behind its `LanguageModel` protocol. The
+[`OmniModelFoundation`](https://github.com/tiepvuvan/omni-model/tree/main/swift/OmniModelFoundation)
+package is a conforming `LanguageModel` that routes generation through your self-hosted omni-model
+proxy — so your app uses the **same `LanguageModelSession` API** it uses for Apple's on-device
+model, and you swap models with one line.
+
+<Note>
+  This is a real protocol conformer (`LanguageModel` + `LanguageModelExecutor`), not a wrapper — you
+  call `session.respond(to:)` / `session.streamResponse(to:)` exactly as with any Foundation Model,
+  and get `LanguageModelSession` features. Requires the **iOS/macOS/visionOS/watchOS 27** SDKs.
+</Note>
+
+## Use it
+
+```swift
+import FoundationModels
+import OmniModelFoundation
+
+let model = OmniProxyModel(
+  endpoint: OmniEndpoint("https://ai.example.com"),
+  model: "gpt-4o-mini",                     // a model id, or a routing alias like "smart"
+  auth: BearerTokenAuth { try await myAuth.freshToken() }
+)
+
+let session = LanguageModelSession(model: model) { "You are a helpful assistant." }
+
+// One-shot
+let reply = try await session.respond(to: "Write a haiku about the sea.")
+
+// Streaming
+for try await partial in session.streamResponse(to: "Tell me a short story.") {
+  render(partial.content)
+}
+```
+
+Swap the model for Apple's on-device one (`SystemLanguageModel.default`), Private Cloud Compute, or
+back to your proxy — the session code is identical.
+
+## Auth
+
+Pick the provider that matches your proxy's [`security.providers`](/security/custom-jwt):
+
+| Provider | Header | Verifier |
+| --- | --- | --- |
+| `BearerTokenAuth { … }` | `Authorization: Bearer` | [`jwt` / `firebase-auth`](/security/custom-jwt) |
+| `CustomHeaderAuth(header: "X-Firebase-AppCheck") { … }` | `X-Firebase-AppCheck` | [`firebase-app-check`](/security/firebase-app-check) |
+| `AppAttestAuth(endpoint:)` | `x-appattest-*` | [`apple-app-attest`](/security/app-attest) |
+| `DeviceCheckAuth()` | `X-Apple-Device-Token` | [`apple-device-check`](/security/app-attest) |
+
+## Scope
+
+Streaming text, **vision** (image attachments are forwarded to the proxy as data URLs),
+instructions/system prompts, and `GenerationOptions` (`temperature`, `maximumResponseTokens`) are
+supported. Upstream errors map onto `LanguageModelError` (rate limits, context overflow, timeouts,
+guardrails). Tool calling and guided generation run on the upstream model but aren't yet surfaced as
+first-class Foundation Models capabilities.
+
+<Card title="Package + README" icon="swift" href="https://github.com/tiepvuvan/omni-model/tree/main/swift/OmniModelFoundation">
+  Source, install instructions, and the full auth/scope reference.
+</Card>
