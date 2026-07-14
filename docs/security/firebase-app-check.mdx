@@ -1,0 +1,102 @@
+---
+title: Firebase App Check
+description: Verify that requests to the self-hosted proxy come from an authentic instance of your app.
+---
+
+Firebase App Check attests that a request originates from an authentic,
+untampered instance of your app rather than an automated script or a stolen key.
+The `firebase-app-check` verifier validates the App Check token that the
+Firebase SDK attaches, on the **self-hosted HTTP proxy**.
+
+App Check tokens carry no user identity — they attest the app *instance*. The
+Firebase app id (`sub`) becomes `device.id`, and `user.id` stays unset. Pair
+this verifier with a user token verifier such as
+[`firebase-auth`](/security/custom-jwt) when you need both.
+
+<Note>
+**Self-hosted vs. serverless.** On the self-hosted proxy you enforce App Check
+with this verifier. The serverless [Firebase Extension](/installation/firebase)
+enforces App Check **natively** on its callable functions — the client SDK
+attaches the token automatically and you do not configure a verifier there.
+</Note>
+
+## Configuration
+
+```yaml
+security:
+  mode: any
+  providers:
+    - type: firebase-app-check
+      projectNumber: "1234567890"
+      appIds:
+        - "1:1234567890:ios:abcdef123456"
+```
+
+<ParamField path="projectNumber" type="string" required>
+The **numeric** Firebase project number — not the project id. The verifier pins
+the issuer to `https://firebaseappcheck.googleapis.com/<projectNumber>` and the
+audience to `projects/<projectNumber>`.
+</ParamField>
+<ParamField path="appIds" type="string[]">
+Optional allowlist of Firebase app ids, matched against the token `sub`. When
+omitted, any app in the project is accepted.
+</ParamField>
+<ParamField path="header" type="string" default="x-firebase-appcheck">
+Header carrying the raw App Check token (no `Bearer` prefix).
+</ParamField>
+<ParamField path="clockToleranceSeconds" type="integer" default="60">
+Allowed clock skew, in seconds.
+</ParamField>
+
+Tokens are RS256 JWTs verified against Google's App Check JWKS
+(`https://firebaseappcheck.googleapis.com/v1/jwks`). A token with no subject, or
+a subject outside the `appIds` allowlist, is rejected with a token-free reason.
+
+## Sending the token
+
+Fetch a token with the Firebase App Check SDK on the client, then send it in the
+`X-Firebase-AppCheck` header on every request. Unlike the JWT verifiers, this
+header carries the **raw token** with no `Bearer` scheme.
+
+```bash
+curl https://your-proxy.example.com/v1/chat/completions \
+  -H "X-Firebase-AppCheck: $APP_CHECK_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"gpt-4o-mini","messages":[{"role":"user","content":"hi"}]}'
+```
+
+## Requiring App Check and a user
+
+Use `mode: all` to require both an authentic app instance and a signed-in user
+on the same request:
+
+```yaml
+security:
+  mode: all
+  providers:
+    - type: firebase-app-check
+      projectNumber: "1234567890"
+    - type: firebase-auth
+      projectId: my-app-12345
+```
+
+With `mode: all`, a missing credential fails with `credential missing for
+<name>`, and the merged identity carries both `device.id` (from App Check) and
+`user.id` (from Firebase Auth) into [routing and rate-limit rules](/model-routing/routing).
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="Firebase Extension" icon="firebase" href="/installation/firebase">
+    Serverless deploy with native App Check enforcement.
+  </Card>
+  <Card title="JWT-family verifiers" icon="key" href="/security/custom-jwt">
+    Firebase Auth, Supabase, and custom JWT.
+  </Card>
+  <Card title="App Attest & DeviceCheck" icon="apple" href="/security/app-attest">
+    Hardware-backed iOS attestation.
+  </Card>
+  <Card title="Configuration reference" icon="gear" href="/reference/configuration">
+    The full YAML surface.
+  </Card>
+</CardGroup>

@@ -1,0 +1,249 @@
+---
+title: Kotlin (Android)
+description: Call omni-model from an Android app — via Firebase callable functions or a self-hosted HTTP proxy.
+---
+
+There are two ways an Android app reaches omni-model. **Serverless** calls a Firebase Callable
+Function; the Firebase SDKs attach Firebase Auth + App Check tokens for you. **Self-hosted** hits a
+plain HTTPS endpoint with OkHttp and a `Bearer` token you supply.
+
+Both speak the OpenAI wire format: requests carry `model` and `messages`, responses carry
+`choices`, and streaming emits `chat.completion.chunk` objects.
+
+<Tabs>
+  <Tab title="Serverless (Firebase)">
+    Your app calls the callable `ext-omni-model-proxy-chat` deployed by the
+    [Firebase Extension](/installation/firebase). No API keys or proxy URL live in the binary — the
+    Firebase client SDK forwards the signed-in user's Auth ID token and an App Check token on every
+    call.
+
+    <Steps>
+      <Step title="Add the SDKs and initialize App Check + Auth">
+        Depend on `firebase-functions-ktx`, `firebase-appcheck-playintegrity`, and
+        `firebase-auth-ktx`. Install the App Check provider early (e.g. in `Application.onCreate`).
+        On Android, use the Play Integrity provider.
+
+        ```kotlin
+        import com.google.firebase.appcheck.ktx.appCheck
+        import com.google.firebase.appcheck.playintegrity.PlayIntegrityAppCheckProviderFactory
+        import com.google.firebase.ktx.Firebase
+
+        class App : Application() {
+          override fun onCreate() {
+            super.onCreate()
+            Firebase.appCheck.installAppCheckProviderFactory(
+              PlayIntegrityAppCheckProviderFactory.getInstance()
+            )
+          }
+        }
+        ```
+
+        The proxy defaults to `REQUIRE_AUTH=true`, so make sure a user is signed in (e.g.
+        `Firebase.auth.signInAnonymously()`) before calling. See
+        [Installation → Firebase](/installation/firebase) for the extension parameters.
+      </Step>
+
+      <Step title="Non-streaming call">
+        ```kotlin
+        import com.google.firebase.functions.ktx.functions
+        import com.google.firebase.ktx.Firebase
+        import kotlinx.coroutines.tasks.await
+
+        suspend fun complete(prompt: String): String {
+          val data = mapOf(
+            "model" to "gpt-4o-mini",
+            "messages" to listOf(mapOf("role" to "user", "content" to prompt)),
+          )
+          val result = Firebase.functions
+            .getHttpsCallable("ext-omni-model-proxy-chat")
+            .call(data)
+            .await()
+
+          // result.data is the OpenAI ChatCompletion as a Map.
+          @Suppress("UNCHECKED_CAST")
+          val body = result.data as Map<String, Any?>
+          val choices = body["choices"] as List<Map<String, Any?>>
+          val message = choices.first()["message"] as Map<String, Any?>
+          return message["content"] as? String ?: ""
+        }
+        ```
+      </Step>
+
+      <Step title="Streaming call">
+        The callable streaming API emits `StreamResponse.Message` chunks (each a
+        `chat.completion.chunk`) and a final `StreamResponse.Result` (the aggregated
+        `ChatCompletion`). Convert it to a Flow with `asFlow()`.
+
+        ```kotlin
+        import com.google.firebase.functions.StreamResponse
+        import com.google.firebase.functions.ktx.functions
+        import com.google.firebase.ktx.Firebase
+        import kotlinx.coroutines.reactive.asFlow
+        import kotlinx.coroutines.flow.collect
+
+        suspend fun stream(prompt: String, onDelta: (String) -> Unit) {
+          val data = mapOf(
+            "model" to "gpt-4o-mini",
+            "stream" to true,
+            "messages" to listOf(mapOf("role" to "user", "content" to prompt)),
+          )
+
+          Firebase.functions
+            .getHttpsCallable("ext-omni-model-proxy-chat")
+            .stream(data)
+            .asFlow()
+            .collect { response ->
+              when (response) {
+                is StreamResponse.Message -> {
+                  @Suppress("UNCHECKED_CAST")
+                  val chunk = response.message.data as Map<String, Any?>
+                  val choices = chunk["choices"] as? List<Map<String, Any?>>
+                  val delta = choices?.firstOrNull()?.get("delta") as? Map<String, Any?>
+                  (delta?.get("content") as? String)?.let(onDelta)
+                }
+                is StreamResponse.Result -> {
+                  // response.result.data — aggregated ChatCompletion (usage, finish_reason)
+                }
+              }
+            }
+        }
+        ```
+
+        <Note>
+          The callable `.stream(...)` API requires a recent `firebase-functions` SDK (24.1+) and a
+          2nd-gen callable (the Extension deploys one). On older SDKs, use the non-streaming call
+          above.
+        </Note>
+      </Step>
+
+      <Step title="Handle errors">
+        Failures surface as `FirebaseFunctionsException`; branch on `code`.
+
+        ```kotlin
+        import com.google.firebase.functions.FirebaseFunctionsException
+        import com.google.firebase.functions.FirebaseFunctionsException.Code
+
+        try {
+          val text = complete("Hello")
+        } catch (e: FirebaseFunctionsException) {
+          when (e.code) {
+            Code.UNAUTHENTICATED    -> {} // no signed-in user — prompt sign-in
+            Code.FAILED_PRECONDITION -> {} // App Check failed — device not attested
+            Code.RESOURCE_EXHAUSTED  -> {} // rate limit / token budget — back off
+            Code.INVALID_ARGUMENT    -> {} // malformed request body
+            else                     -> {}
+          }
+        }
+        ```
+      </Step>
+    </Steps>
+  </Tab>
+
+  <Tab title="Self-hosted proxy">
+    Point OkHttp at your deployed proxy. Send an `Authorization: Bearer <token>` header that matches
+    a [`security` verifier](/security/custom-jwt) in your config (JWT, Firebase Auth, or Supabase).
+    The body and responses are exactly OpenAI's.
+
+    <Steps>
+      <Step title="Non-streaming request">
+        ```kotlin
+        import okhttp3.OkHttpClient
+        import okhttp3.Request
+        import okhttp3.MediaType.Companion.toMediaType
+        import okhttp3.RequestBody.Companion.toRequestBody
+        import org.json.JSONObject
+        import org.json.JSONArray
+
+        val client = OkHttpClient()
+        val JSON = "application/json".toMediaType()
+
+        fun complete(prompt: String, token: String): String {
+          val body = JSONObject()
+            .put("model", "gpt-4o-mini")
+            .put("messages", JSONArray().put(
+              JSONObject().put("role", "user").put("content", prompt)
+            ))
+            .toString()
+            .toRequestBody(JSON)
+
+          val request = Request.Builder()
+            .url("https://proxy.example.com/v1/chat/completions")
+            .header("Authorization", "Bearer $token")
+            .post(body)
+            .build()
+
+          client.newCall(request).execute().use { resp ->
+            val text = resp.body?.string().orEmpty()
+            // On failure, text is an OpenAI-style { "error": { message, type, param, code } }.
+            if (!resp.isSuccessful) error("HTTP ${resp.code}: $text")
+            return JSONObject(text)
+              .getJSONArray("choices").getJSONObject(0)
+              .getJSONObject("message").getString("content")
+          }
+        }
+        ```
+      </Step>
+
+      <Step title="Streaming (SSE)">
+        Set `stream: true` and read the response body line by line. Each `data:` line is a
+        `chat.completion.chunk`; the stream ends with `data: [DONE]`. Run this off the main thread.
+
+        ```kotlin
+        fun stream(prompt: String, token: String, onDelta: (String) -> Unit) {
+          val body = JSONObject()
+            .put("model", "gpt-4o-mini")
+            .put("stream", true)
+            .put("messages", JSONArray().put(
+              JSONObject().put("role", "user").put("content", prompt)
+            ))
+            .toString()
+            .toRequestBody(JSON)
+
+          val request = Request.Builder()
+            .url("https://proxy.example.com/v1/chat/completions")
+            .header("Authorization", "Bearer $token")
+            .header("Accept", "text/event-stream")
+            .post(body)
+            .build()
+
+          client.newCall(request).execute().use { resp ->
+            if (!resp.isSuccessful) error("HTTP ${resp.code}")
+            val source = resp.body!!.source()
+            while (true) {
+              val line = source.readUtf8Line() ?: break
+              if (!line.startsWith("data: ")) continue
+              val payload = line.removePrefix("data: ")
+              if (payload == "[DONE]") break
+              val delta = JSONObject(payload)
+                .getJSONArray("choices").getJSONObject(0)
+                .optJSONObject("delta")?.optString("content").orEmpty()
+              if (delta.isNotEmpty()) onDelta(delta)
+            }
+          }
+        }
+        ```
+
+        <Tip>
+          For automatic reconnection and event parsing you can use OkHttp's
+          `okhttp-sse` (`EventSources.createFactory`) instead of reading lines by hand.
+        </Tip>
+      </Step>
+    </Steps>
+
+    <Tip>
+      Because the endpoint is OpenAI-compatible, you can also point a JVM OpenAI client library at
+      it: set the base URL to `https://proxy.example.com/v1` and the API key to your proxy token.
+    </Tip>
+  </Tab>
+</Tabs>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Attest the device" icon="shield-check" href="/security/app-attest">
+    Require App Check (Play Integrity) so only genuine builds of your app get through.
+  </Card>
+  <Card title="Route by policy" icon="route" href="/model-routing/routing">
+    Map a client alias like <code>"smart"</code> to different models by user tier or request shape.
+  </Card>
+</CardGroup>

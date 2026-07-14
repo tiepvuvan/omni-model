@@ -1,0 +1,184 @@
+---
+title: Firebase Extension
+description: Deploy omni-model serverless as callable Cloud Functions protected by Firebase Auth and App Check, with rate limits in Firestore.
+---
+
+The Firebase Extension runs omni-model as two **callable Cloud Functions** — no server to
+operate. Your app calls them through the Firebase client SDK, which attaches **Firebase Auth**
+and **App Check** tokens automatically. Rate limits and token budgets live in **Firestore**;
+provider API keys stay in Cloud Secret Manager.
+
+This is the serverless path. If you want an HTTP proxy with OpenAI-style headers instead, deploy
+a container (see [Cloudflare](/installation/cloudflare), [Fly.io](/installation/fly-io),
+[Cloud Run](/installation/cloud-run), or [Render](/installation/render)).
+
+<Note>
+Requires the Firebase **Blaze** plan (Cloud Functions + Secret Manager) and at least one provider
+API key. [App Check](/security/firebase-app-check) and Firebase Auth are strongly recommended —
+they are what give you genuine per-user rate limits and anti-abuse.
+</Note>
+
+## What it deploys
+
+Two 2nd-gen callable functions, named `ext-<instanceId>-chat` and `ext-<instanceId>-embeddings`
+(the instance id defaults to `omni-model-proxy`):
+
+- **`ext-<instanceId>-chat`** — OpenAI-compatible chat completions, streaming via the callable
+  `.stream()` protocol.
+- **`ext-<instanceId>-embeddings`** — OpenAI-compatible embeddings.
+
+omni-model's own HTTP auth verifiers are **not** used here — Firebase does the auth, and the
+adapter maps the callable's identity straight through. `security.providers` stays empty.
+
+## Install
+
+<Steps>
+<Step title="Install the extension">
+From a checkout of the repo:
+
+```sh
+firebase ext:install ./extensions/omni-model-proxy --project=YOUR_PROJECT
+```
+
+Once it is published to the Extensions Hub, you can instead install it by its published id:
+
+```sh
+firebase ext:install <publisher>/omni-model-proxy --project=YOUR_PROJECT
+```
+</Step>
+
+<Step title="Answer the install prompts">
+You are prompted for the [install parameters](#install-parameters) below — provider keys, limits,
+and whether Auth / App Check are required.
+</Step>
+
+<Step title="Deploy">
+Firebase deploys the two functions to your chosen `LOCATION`. From then on your app calls them
+by name through the client SDKs — see the [integration guides](/integrations/javascript).
+</Step>
+</Steps>
+
+<Warning>
+**Test in the emulator before publishing.** The 2nd-gen callable-in-Extension format is newer than
+the 1st-gen examples in Firebase's docs, and callable-in-extension behavior differs between
+generations. Run the Extensions emulator and exercise **both** callables — `chat` (streaming via
+`.stream()` and non-streaming) and `embeddings`, with a real App Check token — before
+`firebase ext:dev:upload`:
+
+```sh
+firebase ext:dev:emulators:start --test-params=test-params.env
+```
+</Warning>
+
+## Install parameters
+
+| Parameter | Default | Notes |
+| --- | --- | --- |
+| `LOCATION` | `us-central1` | Function region. **Immutable** — cannot change after install. |
+| `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` | — | Secret. Set at least one (unless you supply `ADVANCED_CONFIG_YAML`). |
+| `DEFAULT_PROVIDER` | `openai` | Provider used when no route matches. Falls back to the first configured provider if its key is absent. |
+| `REQUESTS_PER_MINUTE` | `60` | Per-user request limit per minute. Positive integer. |
+| `DAILY_TOKEN_BUDGET` | `200000` | Per-user daily token budget (prompt + completion). Positive integer. |
+| `REQUIRE_APP_CHECK` | `true` | Reject calls without a valid App Check token. |
+| `REQUIRE_AUTH` | `true` | Reject calls without a signed-in Firebase user. |
+| `CONSUME_APP_CHECK_TOKEN` | `false` | Enforce single-use App Check tokens. Enable **only** if your app requests limited-use tokens. |
+| `FIRESTORE_COLLECTION` | `omni_ratelimits` | Firestore collection for rate-limit / token-budget counters. |
+| `ADVANCED_CONFIG_YAML` | — | A full [omni.yaml](/reference/configuration) that overrides everything above (CEL routing, extra providers, tiered limits). |
+
+<Note>
+Integer and boolean parameters are strings/selects because the Firebase Extensions param system
+only supports `string`, `select`, `multiSelect`, `secret`, and `selectresource`.
+</Note>
+
+<AccordionGroup>
+<Accordion title="Advanced configuration (ADVANCED_CONFIG_YAML)">
+Set `ADVANCED_CONFIG_YAML` to a complete omni-model configuration to unlock
+[CEL-based routing](/model-routing/routing), tiered rate limits, or extra OpenAI-compatible
+upstreams. When set, it supersedes all of the individual provider / rate-limit / storage
+parameters. It supports `${ENV}` interpolation against the function environment, so you can
+reference the secret params.
+
+Use `storage: { type: firestore }` so counters live in Firestore. See the
+[configuration reference](/reference/configuration).
+</Accordion>
+
+<Accordion title="REQUIRE_AUTH=false makes per-user limits per-app">
+Without a signed-in user, a `key: user` rule falls back to the App Check app id, which every
+install shares — so all users share one bucket. Keep `REQUIRE_AUTH=true` for genuine per-user
+limits.
+</Accordion>
+
+<Accordion title="App Check replay protection">
+Baseline App Check tokens are short-lived but replayable. Set `CONSUME_APP_CHECK_TOKEN=true`
+**only** if your app requests limited-use tokens (`getLimitedUseToken()` /
+`limitedUseAppCheckTokens: true`), or valid calls will be rejected. It adds a token-verification
+round trip per call. See [App Check](/security/firebase-app-check).
+</Accordion>
+</AccordionGroup>
+
+## Calling it from your app
+
+Requests carry an OpenAI request body. Do **not** set `stream` in the body — streaming is chosen
+by calling `.stream()` on the callable. Errors arrive as a `FunctionsError` with a canonical code:
+`unauthenticated` (missing Auth), `failed-precondition` (missing App Check), `resource-exhausted`
+(rate limit / token budget), `invalid-argument` (bad payload).
+
+<CodeGroup>
+```js Web / JavaScript
+import { getFunctions, httpsCallable } from "firebase/functions";
+
+const functions = getFunctions(app, "us-central1"); // match LOCATION
+const chat = httpsCallable(functions, "ext-omni-model-proxy-chat");
+
+const { stream, data } = await chat.stream({
+  model: "gpt-4o-mini",
+  messages: [{ role: "user", content: "Say hi in five words." }],
+});
+for await (const chunk of stream) {
+  process.stdout.write(chunk.choices?.[0]?.delta?.content ?? "");
+}
+const final = await data; // aggregated chat.completion
+```
+
+```swift iOS / Swift
+import FirebaseFunctions
+
+let functions = Functions.functions(region: "us-central1")
+let chat = functions.httpsCallable("ext-omni-model-proxy-chat")
+
+let result = try await chat.call([
+  "model": "gpt-4o-mini",
+  "messages": [["role": "user", "content": "Hello!"]],
+])
+```
+
+```kotlin Android / Kotlin
+val functions = Firebase.functions("us-central1")
+val chat = functions.getHttpsCallable("ext-omni-model-proxy-chat")
+
+val data = hashMapOf(
+  "model" to "gpt-4o-mini",
+  "messages" to listOf(mapOf("role" to "user", "content" to "Hello!")),
+)
+val result = chat.call(data).await()
+```
+</CodeGroup>
+
+Full client examples, including streaming on each platform, are in the
+[integration guides](/integrations/javascript).
+
+## Updating
+
+Re-run `firebase ext:install` (or `firebase ext:update` for an installed instance) to change
+parameters or move to a newer extension version. `LOCATION` is immutable — to change region you
+must uninstall and reinstall. Rotating a provider key means updating the corresponding secret
+parameter.
+
+<CardGroup cols={2}>
+<Card title="Client integration" icon="code" href="/integrations/javascript">
+Web, iOS, and Android client code for the callables.
+</Card>
+<Card title="App Check" icon="shield-halved" href="/security/firebase-app-check">
+Lock the proxy to genuine builds of your app.
+</Card>
+</CardGroup>

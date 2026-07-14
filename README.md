@@ -33,6 +33,10 @@ Point any OpenAI SDK at your proxy URL and keep using the OpenAI wire format eve
 requests to Anthropic and Gemini are translated automatically, both directions, streaming
 included.
 
+> 📖 **Documentation** — installation, security, client integrations, and the full config
+> reference live in [`docs/`](docs/) as a [Mintlify](https://mintlify.com) site
+> (`docs/docs.json`). Run `npx mint dev` inside `docs/` to preview locally.
+
 ## Features
 
 - **OpenAI-compatible surface** — `/v1/chat/completions` (streaming SSE included), `/v1/models`,
@@ -107,7 +111,7 @@ image yourself instead: `docker build -t omni-model .`.
 - **Fly.io** — `fly launch --copy-config` (a `fly.toml` ships in the repo).
 
 Full platform walkthroughs — including Cloudflare KV vs Durable Object storage — in
-[docs/deploy.md](docs/deploy.md).
+the [installation guides](docs/installation/cloudflare.mdx).
 
 ### Serverless on Firebase (no backend)
 
@@ -115,7 +119,7 @@ For mobile/web apps with no server at all, install the **Firebase Extension**
 (`extensions/omni-model-proxy`): your app calls an OpenAI-compatible **Callable Function**, and the
 Firebase SDKs attach the caller's **Firebase Auth** and **App Check** tokens automatically —
 omni-model maps them to identities and enforces per-user limits in **Firestore**. Streaming works
-via the callable streaming API. See [docs/firebase.md](docs/firebase.md).
+via the callable streaming API. See [docs/installation/firebase.mdx](docs/installation/firebase.mdx).
 
 ```js
 const chat = httpsCallable(getFunctions(), "ext-omni-model-proxy-chat");
@@ -167,7 +171,7 @@ routing:
 
 Swap which model backs `"smart"` in config — no app release required. Every option (all six
 auth verifier types, the full CEL expression context, storage backends, provider translation
-notes) is documented in [docs/configuration.md](docs/configuration.md), with a complete annotated
+notes) is documented in [docs/reference/configuration.mdx](docs/reference/configuration.mdx), with a complete annotated
 example in [examples/omni.yaml](examples/omni.yaml).
 
 ## Using it from your app
@@ -211,7 +215,7 @@ completion = client.chat.completions.create(
 
 **iOS with App Attest** — after the one-time key registration
 (`POST /auth/app-attest/challenge` + `POST /auth/app-attest/register`, see
-[the protocol](docs/configuration.md#type-apple-app-attest)), each request carries three headers:
+[the protocol](docs/security/app-attest.mdx)), each request carries three headers:
 
 ```sh
 curl https://ai.example.com/v1/chat/completions \
@@ -235,7 +239,7 @@ Rate-limit counters, token budgets and attestation keys live in pluggable storag
 | `postgres` | exact (single-statement upsert) | yes | you already run Postgres and want no new infra |
 | `firestore` | exact (transaction, per-user keys) | yes | serverless on Firebase / Cloud Functions |
 
-Details and options per backend in [docs/configuration.md](docs/configuration.md#storage).
+Details and options per backend in [docs/reference/configuration.mdx](docs/reference/configuration.mdx).
 
 ## Extending
 
@@ -251,7 +255,7 @@ const app = await createOmniApp({ config, registry });
 
 The contracts (`AuthVerifier`, `ChatProvider`, `StorageAdapter`) and the extension recipe are
 documented in [CLAUDE.md](CLAUDE.md); an embedding example is in
-[docs/deploy.md](docs/deploy.md#bring-your-own-server-embedding).
+[docs/reference/configuration.mdx](docs/reference/configuration.mdx).
 
 ## Contributing
 

@@ -1,0 +1,208 @@
+---
+title: Apple App Attest & DeviceCheck
+description: Hardware-backed iOS attestation for the self-hosted proxy — verify requests come from a genuine, untampered build of your app.
+---
+
+The two Apple verifiers attest that a request comes from a genuine, untampered
+build of your app running on real Apple hardware. Both apply to the
+**self-hosted HTTP proxy** (configured under `security.providers`).
+
+- **`apple-app-attest`** — the strongest option. Each device registers a Secure
+  Enclave key once, then signs *every* API request. The proxy verifies the
+  signature and a strictly-increasing counter, blocking replay.
+- **`apple-device-check`** — a lighter check that validates a DeviceCheck token
+  against Apple's `validate_device_token` endpoint.
+
+<Info>
+On success the credential identity becomes `device.id` (the App Attest key id,
+or a hash of the DeviceCheck token). Neither verifier establishes a user, so
+pair it with a [JWT-family verifier](/security/custom-jwt) under `mode: all`
+when you also need `user.id`.
+</Info>
+
+For the client-side Swift implementation, see [the Swift integration
+guide](/integrations/swift).
+
+## `type: apple-app-attest`
+
+Verifies Apple App Attest hardware-backed assertions. Registration follows
+Apple's "Validating apps that connect to your server": the proxy checks the
+attestation certificate chain to Apple's App Attestation Root CA, the nonce
+binding, the key id, the App ID hash, the environment AAGUID, and the credential
+id, then stores the device's public key.
+
+```yaml
+security:
+  mode: any
+  providers:
+    - type: apple-app-attest
+      teamId: ABCDE12345
+      bundleId: com.example.app
+      environment: production
+```
+
+<ParamField path="teamId" type="string" required>
+Apple Developer team identifier. The App ID is `<teamId>.<bundleId>`.
+</ParamField>
+<ParamField path="bundleId" type="string" required>
+Your app's bundle identifier.
+</ParamField>
+<ParamField path="environment" type="production | development" default="production">
+Which App Attest environment produced the keys, checked via the attestation
+AAGUID.
+</ParamField>
+<ParamField path="challengeTtl" type="duration" default="5m">
+Lifetime of issued challenges (`5m`, `30s`, …).
+</ParamField>
+<ParamField path="keyIdHeader" type="string" default="x-appattest-keyid">
+Per-request header carrying the key id.
+</ParamField>
+<ParamField path="assertionHeader" type="string" default="x-appattest-assertion">
+Per-request header carrying the assertion.
+</ParamField>
+<ParamField path="challengeHeader" type="string" default="x-appattest-challenge">
+Per-request header carrying the challenge.
+</ParamField>
+<ParamField path="rootCaPem" type="string" default="Apple's published root">
+Trust-anchor override — for tests only.
+</ParamField>
+
+### Client protocol
+
+The verifier mounts two public endpoints (outside `/v1`, no auth required):
+`POST /auth/app-attest/challenge` and `POST /auth/app-attest/register`. A device
+registers once, then signs every request.
+
+<Steps>
+<Step title="Get a challenge">
+`POST /auth/app-attest/challenge` with an empty body returns a single-use,
+base64url challenge that expires after `challengeTtl`:
+
+```json
+{ "challenge": "base64url-string" }
+```
+</Step>
+
+<Step title="Register the key (once per install)">
+Generate a key with `DCAppAttestService.generateKey()`, attest it with
+`attestKey(keyId, clientDataHash:)` where `clientDataHash` is the **SHA-256 of
+the UTF-8 challenge string**, then `POST /auth/app-attest/register`:
+
+```json
+{
+  "keyId": "<base64 key id from generateKey>",
+  "attestation": "<base64 CBOR attestation object>",
+  "challenge": "<the challenge string from step 1>"
+}
+```
+
+The server validates the full attestation and stores the public key plus the
+attestation's counter as the baseline. Response: `{ "registered": true }`.
+</Step>
+
+<Step title="Sign each API request">
+Fetch a fresh challenge (step 1), call `generateAssertion(keyId, clientDataHash:)`
+with `clientDataHash` again the SHA-256 of the UTF-8 challenge string, and send
+three headers alongside the normal request body:
+
+| Header | Value |
+| --- | --- |
+| `X-AppAttest-KeyId` | the base64 key id |
+| `X-AppAttest-Assertion` | the base64-encoded CBOR assertion |
+| `X-AppAttest-Challenge` | the challenge string |
+
+The server verifies the ECDSA signature with the registered key, checks the App
+ID hash, requires the sign counter to **strictly increase**, and deletes the
+challenge. The key id becomes `device.id`.
+</Step>
+</Steps>
+
+### Security model
+
+App Attest gives three layers of protection:
+
+- **Hardware attestation.** The registration proves the key lives in the
+  device's Secure Enclave and that the attestation chains to Apple's App
+  Attestation Root CA, bound to your exact App ID and environment.
+- **Single-use challenges.** Each challenge is server-issued, expires after
+  `challengeTtl`, and is consumed on first successful use. The proxy atomically
+  claims the challenge before running the signature and counter checks, so
+  concurrent replays of one captured assertion cannot all pass.
+- **Monotonic counter.** Every assertion carries a sign counter that must
+  strictly increase over the last accepted value, so a captured assertion
+  cannot be replayed.
+
+<Warning>
+Strict replay protection depends on atomic storage. On eventually-consistent
+backends (like Cloudflare KV) the single-use guarantee is best-effort — use
+`durable-object`, `redis`, or `postgres` [storage](/reference/configuration) for
+strict App Attest replay protection.
+</Warning>
+
+## `type: apple-device-check`
+
+Verifies Apple DeviceCheck device tokens by calling Apple's
+`validate_device_token` endpoint, authenticated with an ES256 JWT signed by your
+DeviceCheck `.p8` key. Successful validations are cached in storage for
+`cacheTtl` so hot devices don't hit Apple on every request.
+
+```yaml
+security:
+  providers:
+    - type: apple-device-check
+      teamId: ABCDE12345
+      keyId: FGHIJ67890
+      privateKey: ${APPLE_DEVICECHECK_KEY}
+```
+
+<ParamField path="teamId" type="string" required>
+Apple Developer team identifier (the JWT `iss`).
+</ParamField>
+<ParamField path="keyId" type="string" required>
+Key id of the DeviceCheck `.p8` key (the JWT header `kid`).
+</ParamField>
+<ParamField path="privateKey" type="string" required>
+PKCS8 PEM contents of the `.p8` key — must contain
+`-----BEGIN PRIVATE KEY-----`. Typically supplied as `${APPLE_DEVICECHECK_KEY}`.
+</ParamField>
+<ParamField path="development" type="boolean" default="false">
+Use Apple's development DeviceCheck endpoint.
+</ParamField>
+<ParamField path="header" type="string" default="x-apple-device-token">
+Header carrying the device token.
+</ParamField>
+<ParamField path="cacheTtl" type="duration" default="5m">
+How long a successfully validated token is cached.
+</ParamField>
+
+Clients send the DeviceCheck token in the `X-Apple-Device-Token` header:
+
+```bash
+curl https://your-proxy.example.com/v1/chat/completions \
+  -H "X-Apple-Device-Token: $DEVICE_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"gpt-4o-mini","messages":[{"role":"user","content":"hi"}]}'
+```
+
+<Note>
+Apple 4xx responses reject the request with Apple's error text. Network failures
+and Apple 5xx responses map to a generic `device check unavailable` rejection,
+so the raw token never leaks into logs or error bodies.
+</Note>
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="Swift integration" icon="swift" href="/integrations/swift">
+    Client-side App Attest and DeviceCheck in Swift.
+  </Card>
+  <Card title="JWT-family verifiers" icon="key" href="/security/custom-jwt">
+    Add a user identity with `mode: all`.
+  </Card>
+  <Card title="Firebase App Check" icon="shield-check" href="/security/firebase-app-check">
+    Cross-platform app attestation.
+  </Card>
+  <Card title="Configuration reference" icon="gear" href="/reference/configuration">
+    The full YAML surface.
+  </Card>
+</CardGroup>

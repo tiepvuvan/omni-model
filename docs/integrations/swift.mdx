@@ -1,0 +1,224 @@
+---
+title: Swift (iOS)
+description: Call omni-model from an iOS app — via Firebase callable functions or a self-hosted HTTP proxy.
+---
+
+There are two ways an iOS app reaches omni-model. **Serverless** calls a Firebase Callable
+Function; the Firebase SDKs attach Firebase Auth + App Check tokens for you. **Self-hosted** hits a
+plain HTTPS endpoint with `URLSession` and a `Bearer` token you supply.
+
+Both speak the OpenAI wire format: requests carry `model` and `messages`, responses carry
+`choices`, and streaming emits `chat.completion.chunk` objects.
+
+<Tabs>
+  <Tab title="Serverless (Firebase)">
+    Your app calls the callable `ext-omni-model-proxy-chat` deployed by the
+    [Firebase Extension](/installation/firebase). No API keys or proxy URL live in the binary — the
+    Firebase client SDK forwards the signed-in user's Auth ID token and an App Check token on every
+    call.
+
+    <Steps>
+      <Step title="Add the SDKs and initialize App Check + Auth">
+        Add `FirebaseFunctions`, `FirebaseAppCheck`, and `FirebaseAuth` (Swift Package Manager or
+        CocoaPods). Install the App Check provider **before** `FirebaseApp.configure()` so tokens
+        are minted from the start. On device, use the [App Attest](/security/app-attest) provider.
+
+        ```swift
+        import FirebaseCore
+        import FirebaseAppCheck
+        import FirebaseAuth
+
+        final class OmniAppCheckFactory: NSObject, AppCheckProviderFactory {
+          func createProvider(with app: FirebaseApp) -> AppCheckProvider? {
+            // App Attest on iOS 14+; DeviceCheck is the fallback for older devices.
+            if #available(iOS 14.0, *) {
+              return AppAttestProvider(app: app)
+            }
+            return DeviceCheckProvider(app: app)
+          }
+        }
+
+        // In application(_:didFinishLaunchingWithOptions:)
+        AppCheck.setAppCheckProviderFactory(OmniAppCheckFactory())
+        FirebaseApp.configure()
+        ```
+
+        The proxy defaults to `REQUIRE_AUTH=true`, so make sure a user is signed in (e.g.
+        `Auth.auth().signInAnonymously()`) before calling. See
+        [Installation → Firebase](/installation/firebase) for the extension parameters.
+      </Step>
+
+      <Step title="Non-streaming call">
+        ```swift
+        import FirebaseFunctions
+
+        let functions = Functions.functions()
+
+        func complete(_ prompt: String) async throws -> String {
+          let callable = functions.httpsCallable("ext-omni-model-proxy-chat")
+          let result = try await callable.call([
+            "model": "gpt-4o-mini",
+            "messages": [["role": "user", "content": prompt]],
+          ])
+          // result.data is the OpenAI ChatCompletion as [String: Any].
+          let data = result.data as? [String: Any]
+          let choices = data?["choices"] as? [[String: Any]]
+          let message = choices?.first?["message"] as? [String: Any]
+          return message?["content"] as? String ?? ""
+        }
+        ```
+      </Step>
+
+      <Step title="Streaming call">
+        The callable streaming API yields `.message` chunks (each a `chat.completion.chunk`) and a
+        final `.result` (the aggregated `ChatCompletion`).
+
+        ```swift
+        import FirebaseFunctions
+
+        func stream(_ prompt: String, onDelta: @escaping (String) -> Void) async throws {
+          let callable = Functions.functions().httpsCallable("ext-omni-model-proxy-chat")
+          let stream = try callable.stream([
+            "model": "gpt-4o-mini",
+            "stream": true,
+            "messages": [["role": "user", "content": prompt]],
+          ])
+
+          for try await response in stream {
+            switch response {
+            case .message(let chunk):
+              // chunk.data is a chat.completion.chunk: choices[0].delta.content
+              let data = chunk.data as? [String: Any]
+              let choices = data?["choices"] as? [[String: Any]]
+              let delta = choices?.first?["delta"] as? [String: Any]
+              if let piece = delta?["content"] as? String { onDelta(piece) }
+            case .result(let final):
+              _ = final.data // aggregated ChatCompletion, if you need usage/finish_reason
+            @unknown default:
+              break
+            }
+          }
+        }
+        ```
+
+        <Note>
+          The callable `.stream(...)` API requires FirebaseFunctions 11.4+ and a 2nd-gen callable
+          (the Extension deploys one). On older SDKs, use the non-streaming call above.
+        </Note>
+      </Step>
+
+      <Step title="Handle errors">
+        Failures surface as `NSError` in `FunctionsErrorDomain`; read the
+        `FunctionsErrorCode`.
+
+        ```swift
+        do {
+          let text = try await complete("Hello")
+        } catch let error as NSError {
+          if error.domain == FunctionsErrorDomain,
+             let code = FunctionsErrorCode(rawValue: error.code) {
+            switch code {
+            case .unauthenticated:    break // no signed-in user — prompt sign-in
+            case .failedPrecondition: break // App Check failed — device not attested
+            case .resourceExhausted:  break // rate limit / token budget — back off
+            case .invalidArgument:    break // malformed request body
+            default:                  break
+            }
+          }
+        }
+        ```
+      </Step>
+    </Steps>
+  </Tab>
+
+  <Tab title="Self-hosted proxy">
+    Point `URLSession` at your deployed proxy. Send an `Authorization: Bearer <token>` header that
+    matches a [`security` verifier](/security/custom-jwt) in your config (JWT, Firebase Auth, or
+    Supabase). The body and responses are exactly OpenAI's.
+
+    <Steps>
+      <Step title="Non-streaming request">
+        ```swift
+        struct ChatRequest: Encodable {
+          let model: String
+          let messages: [[String: String]]
+        }
+
+        func complete(_ prompt: String, token: String) async throws -> String {
+          var request = URLRequest(url: URL(string: "https://proxy.example.com/v1/chat/completions")!)
+          request.httpMethod = "POST"
+          request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+          request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+          request.httpBody = try JSONEncoder().encode(ChatRequest(
+            model: "gpt-4o-mini",
+            messages: [["role": "user", "content": prompt]]
+          ))
+
+          let (data, response) = try await URLSession.shared.data(for: request)
+          guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+            // Body is an OpenAI-style { "error": { message, type, param, code } }.
+            throw URLError(.badServerResponse)
+          }
+          let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+          let choices = json?["choices"] as? [[String: Any]]
+          let message = choices?.first?["message"] as? [String: Any]
+          return message?["content"] as? String ?? ""
+        }
+        ```
+      </Step>
+
+      <Step title="Streaming (SSE)">
+        Set `stream: true` and read the response as lines with `URLSession.bytes`. Each `data:`
+        line is a `chat.completion.chunk`; the stream ends with `data: [DONE]`.
+
+        ```swift
+        func stream(_ prompt: String, token: String, onDelta: @escaping (String) -> Void) async throws {
+          var request = URLRequest(url: URL(string: "https://proxy.example.com/v1/chat/completions")!)
+          request.httpMethod = "POST"
+          request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+          request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+          request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+          request.httpBody = try JSONSerialization.data(withJSONObject: [
+            "model": "gpt-4o-mini",
+            "stream": true,
+            "messages": [["role": "user", "content": prompt]],
+          ])
+
+          let (bytes, response) = try await URLSession.shared.bytes(for: request)
+          guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+            throw URLError(.badServerResponse)
+          }
+
+          for try await line in bytes.lines {
+            guard line.hasPrefix("data: ") else { continue }
+            let payload = line.dropFirst(6)
+            if payload == "[DONE]" { break }
+            guard let data = payload.data(using: .utf8),
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let choices = json["choices"] as? [[String: Any]],
+                  let delta = choices.first?["delta"] as? [String: Any],
+                  let piece = delta["content"] as? String else { continue }
+            onDelta(piece)
+          }
+        }
+        ```
+      </Step>
+    </Steps>
+
+    <Tip>
+      Because the endpoint is OpenAI-compatible, you can also point a Swift OpenAI client library at
+      it: set the base URL to `https://proxy.example.com/v1` and the API key to your proxy token.
+    </Tip>
+  </Tab>
+</Tabs>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Attest the device" icon="shield-check" href="/security/app-attest">
+    Require Apple App Attest / DeviceCheck so only genuine builds of your app get through.
+  </Card>
+  <Card title="Route by policy" icon="route" href="/model-routing/routing">
+    Map a client alias like <code>"smart"</code> to different models by user tier or request shape.
+  </Card>
+</CardGroup>

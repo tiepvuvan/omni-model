@@ -1,0 +1,93 @@
+---
+title: Google Cloud Run
+description: Deploy omni-model to Cloud Run with the one-click button or a manual gcloud run deploy using the published GHCR image.
+---
+
+Cloud Run runs omni-model as a scale-to-many container. Use the **Run on Google Cloud** button
+(backed by `app.json` + the `Dockerfile`) for a guided deploy, or `gcloud run deploy` from a shell.
+
+<Warning>
+Cloud Run scales to many instances. Use `redis` (Memorystore) or `postgres` (Cloud SQL) storage so
+rate limits and token budgets are enforced across all of them — `memory` storage limits each
+instance independently. See [rate limits](/reference/configuration).
+</Warning>
+
+## One-click button
+
+The **Run on Google Cloud** button in the README uses `app.json`, which sets `port` to 8787,
+`memory` to 512Mi, and `allow-unauthenticated`. It prompts for optional env vars:
+`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, and `OMNI_CONFIG` (inline YAML that
+overrides the `omni.yaml` baked into the image).
+
+## Manual deploy
+
+<Steps>
+<Step title="Deploy from source">
+```sh
+gcloud run deploy omni-model \
+  --source . \
+  --port 8787 \
+  --allow-unauthenticated \
+  --set-env-vars OPENAI_API_KEY=sk-...
+```
+
+`--source .` builds the `Dockerfile`. To skip the build, deploy the published image with
+`--image ghcr.io/tiepvuvan/omni-model:latest` instead of `--source .`.
+</Step>
+
+<Step title="Provide config">
+Pass config via a committed `omni.yaml` (baked into the image), the `OMNI_CONFIG` env var, or a
+mounted file. The image resolves config at startup, first match wins: `OMNI_CONFIG` (inline YAML),
+then `OMNI_CONFIG_PATH` (a file path), then `/app/omni.yaml`.
+
+To mount a secret file and point at it:
+
+```sh
+gcloud run deploy omni-model \
+  --image ghcr.io/tiepvuvan/omni-model:latest \
+  --update-secrets /app/omni.yaml=omni-config:latest \
+  --set-env-vars OMNI_CONFIG_PATH=/app/omni.yaml
+```
+</Step>
+
+<Step title="Point storage at shared state">
+Switch the config storage block to `redis` (Memorystore) or `postgres` (Cloud SQL):
+
+```yaml
+storage:
+  type: redis
+  url: ${REDIS_URL}
+```
+</Step>
+</Steps>
+
+<Warning>
+The starter config has no [security providers](/security/custom-jwt). Since `--allow-unauthenticated`
+exposes the service publicly, add at least one auth verifier before sharing the URL.
+</Warning>
+
+## Updating
+
+Re-run `gcloud run deploy` to roll out a new revision — from source (rebuilds the `Dockerfile`) or
+by bumping the `--image` tag to a newer release. Config and key changes go through
+`--set-env-vars` / `--update-secrets`; each deploy creates a new revision you can roll back to.
+
+## Quick local check
+
+The same image runs anywhere Docker does — handy for validating your config before deploying:
+
+```sh
+docker run -p 8787:8787 \
+  -e OPENAI_API_KEY=sk-... \
+  -e OMNI_CONFIG="$(cat omni.yaml)" \
+  ghcr.io/tiepvuvan/omni-model:latest
+```
+
+<CardGroup cols={2}>
+<Card title="Configuration reference" icon="gear" href="/reference/configuration">
+The full YAML surface: storage, security, providers, routing.
+</Card>
+<Card title="Rate limits" icon="gauge" href="/reference/configuration">
+Why multi-instance deploys need shared storage.
+</Card>
+</CardGroup>

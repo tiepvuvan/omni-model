@@ -1,0 +1,99 @@
+---
+title: Render
+description: Deploy omni-model to Render with a forkless Blueprint that provisions managed Redis and runs the published GHCR image.
+---
+
+Render's `render.yaml` is a [Blueprint](https://render.com/docs/infrastructure-as-code) that stands
+up the whole stack in your Render account **from the canonical repo — no fork, no build**. It
+provisions a managed Key Value (Redis) instance, runs the published GHCR image, wires Redis into
+the proxy config, and prompts you only for provider API keys.
+
+## Deploy
+
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/tiepvuvan/omni-model)
+
+<Steps>
+<Step title="Click Deploy to Render">
+The button targets the canonical `render.yaml`. To deploy your own copy, point it at any repo that
+contains this Blueprint:
+
+```text
+https://render.com/deploy?repo=https://github.com/tiepvuvan/omni-model
+```
+</Step>
+
+<Step title="Render provisions the stack">
+It creates a managed **Key Value (Redis)** instance (`omni-model-kv`) and a **web service**
+running `ghcr.io/tiepvuvan/omni-model:latest`. Health checks hit `/healthz`.
+</Step>
+
+<Step title="Enter provider keys">
+You are prompted for `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, and `GEMINI_API_KEY` (declared
+`sync: false` — Render never stores them in the Blueprint). Provide the ones your config uses.
+</Step>
+</Steps>
+
+## What gets wired up
+
+The Key Value connection string is injected as `REDIS_URL` via `fromService`, and the bundled
+`OMNI_CONFIG` (inline YAML in `render.yaml`) references `${REDIS_URL}`. omni-model resolves the
+`${...}` placeholders at startup against the env vars — Render does **not** expand them. Because
+counters live in shared Redis, rate limits and token budgets are enforced across instances out of
+the box.
+
+The default `OMNI_CONFIG` ships a single OpenAI provider plus per-user request and daily-token
+limits. Edit the inline `OMNI_CONFIG` in `render.yaml` (or replace it from the dashboard) to change
+providers, [routing](/model-routing/routing), or [limits](/reference/configuration).
+
+<Warning>
+The Blueprint deploys with an OpenAI-only provider and no [security providers](/security/custom-jwt).
+Add at least one auth verifier before you share the URL, or anyone who finds it can spend your
+credits.
+</Warning>
+
+## Caveats
+
+<AccordionGroup>
+<Accordion title="Free Key Value plan has no persistence">
+On the **free** Key Value plan counters reset if the instance restarts — fine for ephemeral
+rate-limit windows, but use a paid plan if a token budget must survive restarts.
+</Accordion>
+
+<Accordion title="LRU eviction keeps the proxy fail-open">
+`maxmemoryPolicy: allkeys-lru` is deliberate: under memory pressure Redis evicts counters (slight
+under-counting) rather than erroring writes, so the proxy keeps serving.
+</Accordion>
+
+<Accordion title="Do not set a PORT env var">
+Render injects `$PORT` and omni-model reads it. Setting your own `PORT` breaks the health check.
+</Accordion>
+</AccordionGroup>
+
+## Postgres instead of Redis
+
+For a managed Postgres datastore, add a top-level `databases:` entry to `render.yaml` and switch
+the config storage block:
+
+```yaml
+storage:
+  type: postgres
+  url: ${DATABASE_URL}
+```
+
+Supply `DATABASE_URL` from `fromDatabase: { name: <db>, property: connectionString }`.
+
+## Updating
+
+The Blueprint sets `autoDeploy: false`, so it will not redeploy on upstream image pushes. To take a
+new release, update the `image.url` tag (or redeploy the service) from the Render dashboard.
+Config-only changes are edits to the `OMNI_CONFIG` env var. See the [deploy notes](/reference/configuration)
+for image tag conventions.
+
+<CardGroup cols={2}>
+<Card title="Configuration reference" icon="gear" href="/reference/configuration">
+The full YAML surface: storage, security, providers, routing.
+</Card>
+<Card title="Rate limits" icon="gauge" href="/reference/configuration">
+Request windows and token budgets over shared storage.
+</Card>
+</CardGroup>

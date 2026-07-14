@@ -1,0 +1,109 @@
+---
+title: Quickstart
+description: Get a working omni-model proxy and make your first request.
+---
+
+Pick the path that matches your app. Both end with an OpenAI-compatible call — the difference is
+where the proxy runs and how clients authenticate.
+
+<Tabs>
+  <Tab title="Serverless (Firebase)">
+    Best for mobile/web apps with **no backend**. Your app calls a callable function; Firebase Auth
+    and App Check tokens are attached automatically.
+
+    <Steps>
+      <Step title="Install the extension">
+        Requires the Blaze plan and at least one provider API key.
+
+        ```sh
+        firebase ext:install ./extensions/omni-model-proxy --project=YOUR_PROJECT
+        ```
+
+        You'll be prompted for your provider keys and limits. See
+        [Installation → Firebase](/installation/firebase) for every parameter.
+      </Step>
+      <Step title="Call it from your app">
+        ```js
+        import { getFunctions, httpsCallable } from "firebase/functions";
+
+        const chat = httpsCallable(getFunctions(), "ext-omni-model-proxy-chat");
+        const { stream, data } = await chat.stream({
+          model: "gpt-4o-mini",
+          messages: [{ role: "user", content: "Hello!" }],
+        });
+        for await (const chunk of stream) {
+          process.stdout.write(chunk.choices?.[0]?.delta?.content ?? "");
+        }
+        ```
+      </Step>
+    </Steps>
+
+    Continue with a client guide: [Swift](/integrations/swift), [Kotlin](/integrations/kotlin),
+    [React Native](/integrations/react-native), [Flutter](/integrations/flutter),
+    [Web](/integrations/javascript).
+  </Tab>
+
+  <Tab title="Self-hosted proxy">
+    Best when you want a standard HTTP endpoint any OpenAI SDK can hit.
+
+    <Steps>
+      <Step title="Write a config">
+        Save this as `omni.yaml`:
+
+        ```yaml
+        version: 1
+        storage:
+          type: memory
+        providers:
+          openai:
+            type: openai
+            apiKey: ${OPENAI_API_KEY}
+        rateLimits:
+          - name: per-user-requests
+            key: user
+            requests: { limit: 60, window: 1m }
+        routing:
+          defaultProvider: openai
+        ```
+
+        <Note>
+          For a public app, add a [security verifier](/security/custom-jwt) so only your app can
+          call the proxy. `memory` storage is fine for one instance — use
+          [Redis/Postgres/KV](/reference/configuration) when you scale out.
+        </Note>
+      </Step>
+      <Step title="Run it">
+        Use the prebuilt image (no clone, no build):
+
+        ```sh
+        docker run -p 8787:8787 \
+          -e OPENAI_API_KEY=sk-... \
+          -e OMNI_CONFIG="$(cat omni.yaml)" \
+          ghcr.io/tiepvuvan/omni-model:latest
+        ```
+
+        Or deploy in one click to [Render](/installation/render),
+        [Cloudflare](/installation/cloudflare), [Fly.io](/installation/fly-io), or
+        [Cloud Run](/installation/cloud-run).
+      </Step>
+      <Step title="Make a request">
+        ```sh
+        curl http://localhost:8787/v1/chat/completions \
+          -H "content-type: application/json" \
+          -d '{"model": "gpt-4o-mini", "messages": [{"role": "user", "content": "Hello!"}]}'
+        ```
+      </Step>
+    </Steps>
+  </Tab>
+</Tabs>
+
+## Where to go next
+
+<CardGroup cols={2}>
+  <Card title="Lock it down" icon="lock" href="/security/app-attest">
+    Require App Attest, App Check, or a JWT so only genuine installs of your app get through.
+  </Card>
+  <Card title="Route by policy" icon="route" href="/model-routing/routing">
+    Send a client alias to different models by user tier, request shape, or headers.
+  </Card>
+</CardGroup>

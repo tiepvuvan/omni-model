@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { parseConfig } from "../../src/config/load.js";
@@ -6,13 +6,22 @@ import { CelExpressionEngine } from "../../src/routing/cel.js";
 
 /**
  * Regression tests guarding the accuracy of the shipped documentation and
- * example configuration against the real zod schema and CEL engine. Each block
- * mirrors a confirmed doc/config-accuracy defect: a broken snippet that
- * throws/fails validation at runtime even though the docs present it as valid.
+ * example configuration against the real zod schema and CEL engine. The docs
+ * live in `docs/` as a Mintlify site (MDX); these tests scan every page so a
+ * broken CEL snippet or unparseable config example fails CI instead of the
+ * reader's runtime.
  */
 
-const repoFile = (rel: string): string =>
-  readFileSync(fileURLToPath(new URL(`../../../../${rel}`, import.meta.url)), "utf8");
+const repoUrl = (rel: string): URL => new URL(`../../../../${rel}`, import.meta.url);
+const repoFile = (rel: string): string => readFileSync(fileURLToPath(repoUrl(rel)), "utf8");
+
+/** Every `.mdx` file under `docs/`, recursively. */
+function docsPages(): string[] {
+  const root = fileURLToPath(repoUrl("docs"));
+  return readdirSync(root, { recursive: true, encoding: "utf8" })
+    .filter((name) => name.endsWith(".mdx"))
+    .map((name) => readFileSync(`${root}/${name}`, "utf8"));
+}
 
 const engine = new CelExpressionEngine();
 
@@ -37,12 +46,18 @@ const facts = {
   now: 1_700_000_000_000,
 };
 
+/** Env used when parsing doc/example configs that reference `${VAR}` secrets. */
+const TEST_ENV = {
+  OPENAI_API_KEY: "sk-test",
+  ANTHROPIC_API_KEY: "sk-test",
+  GEMINI_API_KEY: "sk-test",
+  REDIS_URL: "redis://localhost:6379",
+  DATABASE_URL: "postgres://localhost/omni",
+  SUPABASE_JWT_SECRET: "secret",
+};
+
 describe("examples/omni.yaml", () => {
-  const config = parseConfig(repoFile("examples/omni.yaml"), {
-    OPENAI_API_KEY: "sk-test",
-    ANTHROPIC_API_KEY: "sk-test",
-    GEMINI_API_KEY: "sk-test",
-  });
+  const config = parseConfig(repoFile("examples/omni.yaml"), TEST_ENV);
 
   it("parses against the real schema", () => {
     expect(config.version).toBe(1);
@@ -65,9 +80,9 @@ describe("examples/omni.yaml", () => {
   });
 });
 
-describe("inline CEL snippets in README.md and docs/configuration.md", () => {
+describe("inline CEL snippets in README.md and the docs pages", () => {
   it("every `when:`/`match:` expression evaluates without throwing for a user with no claims", () => {
-    const sources = [repoFile("README.md"), repoFile("docs/configuration.md")].join("\n");
+    const sources = [repoFile("README.md"), ...docsPages()].join("\n");
     const matches = [...sources.matchAll(/\b(?:when|match):\s*'([^']*)'/g)];
     expect(matches.length).toBeGreaterThan(0);
     for (const [, expr] of matches) {
@@ -77,12 +92,12 @@ describe("inline CEL snippets in README.md and docs/configuration.md", () => {
   });
 });
 
-describe("docs/configuration.md CEL `now` example", () => {
-  it("the documented `now` example expression evaluates to a boolean without throwing", () => {
-    const md = repoFile("docs/configuration.md");
-    const row = md.match(/\|\s*`now`\s*\|[^|]*\|[^|]*\|\s*`([^`]+)`\s*\|/);
-    expect(row, "could not find the `now` row in the CEL context table").not.toBeNull();
-    const expr = (row as RegExpMatchArray)[1];
+describe("the documented CEL `now` example", () => {
+  it("evaluates to a boolean without throwing", () => {
+    const sources = docsPages().join("\n");
+    const match = sources.match(/`(now\s*<[^`]*)`/);
+    expect(match, "could not find a documented `now < …` example").not.toBeNull();
+    const expr = (match as RegExpMatchArray)[1];
     const result = engine.compile(expr).evaluate(facts);
     expect(typeof result, `expression: ${expr}`).toBe("boolean");
   });
@@ -94,13 +109,16 @@ describe("docs/configuration.md CEL `now` example", () => {
   });
 });
 
-describe("docs/configuration.md top-level skeleton", () => {
-  it("the documented top-level skeleton parses against the real schema", () => {
-    const md = repoFile("docs/configuration.md");
-    const block = md.match(/Top-level keys:\s*```yaml\n([\s\S]*?)```/);
-    expect(block, "could not find the top-level skeleton yaml block").not.toBeNull();
-    const skeleton = (block as RegExpMatchArray)[1];
-    expect(() => parseConfig(skeleton)).not.toThrow();
+describe("full config examples in the reference page parse", () => {
+  it("every top-level YAML config block validates against the real schema", () => {
+    const md = repoFile("docs/reference/configuration.mdx");
+    const blocks = [...md.matchAll(/```ya?ml\n([\s\S]*?)```/g)].map((m) => m[1] as string);
+    // Blocks that are whole configs (declare `version:` or `storage:` at column 0).
+    const configs = blocks.filter((b) => /^version:/m.test(b) || /^storage:/m.test(b));
+    expect(configs.length).toBeGreaterThan(0);
+    for (const yaml of configs) {
+      expect(() => parseConfig(yaml, TEST_ENV), yaml.slice(0, 60)).not.toThrow();
+    }
   });
 
   it("`storage: {}` fails validation because storage needs a `type`", () => {

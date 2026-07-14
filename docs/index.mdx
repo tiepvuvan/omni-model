@@ -1,0 +1,78 @@
+---
+title: omni-model
+description: A self-hosted, OpenAI-compatible AI proxy for your mobile and web apps.
+---
+
+omni-model is an **OpenAI-compatible AI proxy you run yourself**. Your provider API keys stay on
+your infrastructure — never inside an app binary. Clients authenticate with what they already have
+(Firebase App Check, Apple App Attest / DeviceCheck, Firebase Auth, Supabase, or any JWT), and one
+YAML file configures rate limits (request windows **and** token budgets) plus CEL-expression model
+routing across OpenAI, Anthropic, Google Gemini, and any OpenAI-compatible endpoint.
+
+## Two ways to run it
+
+<CardGroup cols={2}>
+  <Card title="Serverless (Firebase)" icon="fire" href="/installation/firebase">
+    No backend at all. A Firebase Extension exposes callable functions; the Firebase SDKs attach
+    Auth + App Check tokens automatically. Rate limits live in Firestore.
+  </Card>
+  <Card title="Self-hosted proxy" icon="server" href="/installation/cloudflare">
+    A standard HTTP proxy on Cloudflare Workers, Render, Fly.io, Cloud Run, or any container.
+    Point any OpenAI SDK at it.
+  </Card>
+</CardGroup>
+
+## How it works
+
+```text
+Client (any OpenAI SDK, or Firebase callable)
+        │  { "model": "smart", "messages": [...] }
+        ▼
+┌─────────────────────────────────────────────┐
+│  omni-model — your infrastructure           │
+│   1. authenticate   App Check / App Attest / │
+│                     Firebase Auth / JWT      │
+│   2. rate limit     request windows +        │
+│                     token budgets            │
+│   3. route          CEL rules over model,    │
+│                     user claims, headers     │
+└───────────────┬─────────────────────────────┘
+                │  translated on the fly
+      ┌─────────┼───────────────┬───────────────────────┐
+      ▼         ▼               ▼                       ▼
+   OpenAI   Anthropic   Google Gemini   any OpenAI-compatible endpoint
+```
+
+Requests to Anthropic and Gemini are translated to and from the OpenAI wire format automatically —
+streaming included — so your client keeps speaking one protocol everywhere.
+
+## What you get
+
+<CardGroup cols={2}>
+  <Card title="Client attestation, not shared secrets" icon="shield-check" href="/security/app-attest">
+    Firebase App Check, Apple App Attest & DeviceCheck, Firebase Auth, Supabase, or any custom JWT.
+    Combine verifiers with <code>mode: any</code> or <code>mode: all</code>.
+  </Card>
+  <Card title="Rate limits that understand LLMs" icon="gauge-high" href="/reference/configuration">
+    Fixed-window request limits <em>and</em> token budgets, per user / device / IP / global /
+    custom expression, with conditional rules. Fail-open on storage outages.
+  </Card>
+  <Card title="CEL model routing" icon="route" href="/model-routing/routing">
+    Map a client-facing alias like <code>"smart"</code> to a concrete provider + model by user
+    tier, request shape, or headers.
+  </Card>
+  <Card title="Native client SDKs" icon="mobile" href="/integrations/swift">
+    Drop-in usage from Swift, Kotlin, React Native, Flutter, and the web.
+  </Card>
+</CardGroup>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Get a working proxy and make your first request in a few minutes.
+  </Card>
+  <Card title="Configuration reference" icon="book" href="/reference/configuration">
+    Every option in the one YAML file, with defaults and constraints.
+  </Card>
+</CardGroup>

@@ -1,0 +1,208 @@
+---
+title: Flutter
+description: Call omni-model from a Flutter app — via a Firebase callable or a self-hosted HTTP proxy.
+---
+
+Flutter reaches omni-model two ways. Pick the tab that matches how you deployed it.
+
+<Tabs>
+  <Tab title="Serverless (Firebase)">
+    Your app calls the extension's callable function with the
+    [`cloud_functions`](https://pub.dev/packages/cloud_functions) plugin. Firebase Auth and App
+    Check tokens are attached to every call by the SDK — you never handle a bearer token.
+
+    <Info>
+      Set the proxy up first: [Installation → Firebase](/installation/firebase). The callable is
+      named `ext-<instanceId>-chat` (default instance id `omni-model-proxy`).
+    </Info>
+
+    ### Install and initialize
+
+    ```sh
+    flutter pub add firebase_core cloud_functions firebase_app_check firebase_auth
+    ```
+
+    Activate App Check and sign the user in before calling the proxy. With the extension's default
+    `REQUIRE_APP_CHECK=true` / `REQUIRE_AUTH=true`, a call missing either token is rejected.
+
+    ```dart
+    import 'package:firebase_core/firebase_core.dart';
+    import 'package:firebase_app_check/firebase_app_check.dart';
+    import 'package:firebase_auth/firebase_auth.dart';
+
+    await Firebase.initializeApp();
+
+    // App Check: App Attest on iOS, Play Integrity on Android.
+    await FirebaseAppCheck.instance.activate(
+      appleProvider: AppleProvider.appAttest,
+      androidProvider: AndroidProvider.playIntegrity,
+    );
+
+    // Auth: any sign-in works; anonymous is enough to key per-user limits.
+    await FirebaseAuth.instance.signInAnonymously();
+    ```
+
+    ### Call the proxy
+
+    The request and response are the OpenAI shapes. `result.data` is the full `ChatCompletion` as a
+    decoded map.
+
+    ```dart
+    import 'package:cloud_functions/cloud_functions.dart';
+
+    final chat =
+        FirebaseFunctions.instance.httpsCallable('ext-omni-model-proxy-chat');
+
+    final result = await chat.call<Map<String, dynamic>>({
+      'model': 'gpt-4o-mini',
+      'messages': [
+        {'role': 'user', 'content': 'Write a haiku about the sea.'}
+      ],
+    });
+
+    final text = result.data['choices'][0]['message']['content'] as String;
+    ```
+
+    Embeddings use the sibling callable:
+
+    ```dart
+    final embeddings =
+        FirebaseFunctions.instance.httpsCallable('ext-omni-model-proxy-embeddings');
+
+    final result = await embeddings.call<Map<String, dynamic>>({
+      'model': 'text-embedding-3-small',
+      'input': 'hello world',
+    });
+
+    final vector = result.data['data'][0]['embedding'] as List;
+    ```
+
+    <Warning>
+      **Streaming.** The `cloud_functions` plugin does not support streaming callable functions on
+      Flutter — a callable returns the complete response. For token-by-token output, run the
+      self-hosted proxy and stream over SSE (see the other tab).
+    </Warning>
+
+    ### Handle errors
+
+    Failures throw a `FirebaseFunctionsException` whose `code` is the canonical callable error name:
+
+    ```dart
+    try {
+      final result = await chat.call<Map<String, dynamic>>({...});
+    } on FirebaseFunctionsException catch (e) {
+      switch (e.code) {
+        case 'unauthenticated':      // no signed-in user
+        case 'failed-precondition':  // missing / invalid App Check token
+        case 'resource-exhausted':   // rate limit or token budget hit
+        case 'invalid-argument':     // malformed payload
+          break;
+      }
+    }
+    ```
+
+    | `code` | Meaning |
+    | --- | --- |
+    | `unauthenticated` | No Firebase Auth user and `REQUIRE_AUTH=true`. |
+    | `failed-precondition` | App Check token missing or invalid. |
+    | `resource-exhausted` | Per-user request limit or daily token budget exceeded. |
+    | `invalid-argument` | Request body isn't a valid chat/embeddings payload. |
+  </Tab>
+
+  <Tab title="Self-hosted proxy">
+    Point the app at your deployed proxy's `POST /v1/chat/completions`. Authenticate with a bearer
+    token your app already has — a Firebase Auth ID token, Supabase session, or any JWT your
+    [security config](/security/custom-jwt) accepts.
+
+    ### Non-streaming
+
+    ```dart
+    import 'dart:convert';
+    import 'package:http/http.dart' as http;
+
+    const proxyUrl = 'https://your-proxy.example.com';
+
+    Future<String> chat(List<Map<String, String>> messages, String token) async {
+      final res = await http.post(
+        Uri.parse('$proxyUrl/v1/chat/completions'),
+        headers: {
+          'content-type': 'application/json',
+          'authorization': 'Bearer $token',
+        },
+        body: jsonEncode({'model': 'gpt-4o-mini', 'messages': messages}),
+      );
+      if (res.statusCode != 200) {
+        final error = jsonDecode(res.body)['error']; // { message, type, param, code }
+        throw Exception(error['message']);
+      }
+      return jsonDecode(res.body)['choices'][0]['message']['content'] as String;
+    }
+    ```
+
+    <Note>
+      The header depends on your verifier: `jwt` / `firebase-auth` / `supabase` use
+      `Authorization: Bearer <token>` (scheme configurable). App Check verifiers instead expect
+      `X-Firebase-AppCheck`, and DeviceCheck expects `X-Apple-Device-Token`. See
+      [Custom JWT](/security/custom-jwt) and [Firebase App Check](/security/firebase-app-check).
+    </Note>
+
+    ### Streaming (SSE)
+
+    Set `stream: true` and read the `text/event-stream` response with a streamed request. Split the
+    body into lines and parse each `data:` payload as a `chat.completion.chunk`.
+
+    ```dart
+    import 'dart:convert';
+    import 'package:http/http.dart' as http;
+
+    Future<void> streamChat(
+      List<Map<String, String>> messages,
+      String token,
+      void Function(String delta) onDelta,
+    ) async {
+      final request = http.Request('POST', Uri.parse('$proxyUrl/v1/chat/completions'))
+        ..headers['content-type'] = 'application/json'
+        ..headers['authorization'] = 'Bearer $token'
+        ..body = jsonEncode({
+          'model': 'gpt-4o-mini',
+          'messages': messages,
+          'stream': true,
+        });
+
+      final response = await http.Client().send(request);
+      final lines = response.stream
+          .transform(utf8.decoder)
+          .transform(const LineSplitter());
+
+      await for (final line in lines) {
+        if (!line.startsWith('data: ')) continue;
+        final data = line.substring(6);
+        if (data == '[DONE]') break;
+        final chunk = jsonDecode(data);
+        final delta = chunk['choices'][0]['delta']['content'];
+        if (delta != null) onDelta(delta as String);
+      }
+    }
+    ```
+
+    The stream is a sequence of `data:` lines carrying `chat.completion.chunk` JSON, terminated by
+    `data: [DONE]` — the same wire format any OpenAI SDK expects.
+  </Tab>
+</Tabs>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Install the proxy" icon="rocket" href="/installation/firebase">
+    Deploy the Firebase Extension, or self-host the container.
+  </Card>
+  <Card title="Authenticate self-hosted calls" icon="key" href="/security/custom-jwt">
+    Verify a Firebase, Supabase, or custom JWT on the HTTP proxy.
+  </Card>
+  <Card title="Route by policy" icon="route" href="/model-routing/routing">
+    Map a client alias to different models by user tier or request shape.
+  </Card>
+  <Card title="Config reference" icon="book" href="/reference/configuration">
+    Every `omni.yaml` field, storage backend, and provider.
+  </Card>
+</CardGroup>

@@ -6,7 +6,7 @@
     "useIgnoreFile": true
   },
   "files": {
-    "includes": ["**", "!**/dist", "!**/node_modules", "!pnpm-lock.yaml"]
+    "includes": ["**", "!**/dist", "!**/node_modules", "!pnpm-lock.yaml", "!docs"]
   },
   "formatter": {
     "enabled": true,

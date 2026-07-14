@@ -1,0 +1,156 @@
+---
+title: Model routing
+description: How omni-model decides which provider and upstream model serves each request.
+---
+
+Routing turns an incoming request into a `(provider, model)` decision. It lets you expose stable,
+client-facing model names — a `"smart"` alias, a `"claude-*"` family — and map them to concrete
+upstreams by user tier, request shape, headers, or time, without ever shipping that logic in your
+app. The rules live in the `routing` block of your config and are evaluated by
+`packages/core/src/routing/router.ts`.
+
+Every `when`/`match` field is a [CEL expression](/model-routing/expressions). Read that page first
+if you have not — the missing-key gotcha bites here too.
+
+## How a decision is made
+
+For each request the router walks three stages in order and stops at the **first** rule whose
+condition is exactly boolean `true`:
+
+<Steps>
+  <Step title="routes">
+    `routes[]` are evaluated top to bottom. The first route whose `when` is `true` wins. Its
+    `provider` is used, and `model` (if set) overrides the upstream model — omit `model` to pass
+    the client's requested model through unchanged.
+  </Step>
+  <Step title="modelRules">
+    If no route matched, `modelRules[]` are evaluated top to bottom with the same mechanics, using
+    `match` instead of `when`. These are the fallback "who owns this model name" mappings.
+  </Step>
+  <Step title="defaultProvider">
+    If still nothing matched and `defaultProvider` is set, it serves the request with the
+    client-requested model verbatim.
+  </Step>
+</Steps>
+
+If none of the three produce a decision, the request fails with an OpenAI-style **404
+`model_not_found`** error.
+
+<Note>
+  Provider references (`provider` / `defaultProvider`) must be keys of your
+  [`providers`](/reference/configuration) map. Unknown references are caught at startup and throw
+  a `ConfigError`, never a mid-request failure.
+</Note>
+
+### The failure policy is forgiving
+
+A condition that **throws** at evaluation time (for example an unguarded missing claim key) or
+returns a **non-boolean** counts as *no match* — evaluation simply moves to the next rule. One bad
+expression can never take the proxy down. A non-boolean result additionally logs a warning once
+per rule as a config smell, so watch your logs if a route silently never fires.
+
+## A full routing block
+
+```yaml
+routing:
+  routes:
+    - name: smart-for-pro
+      when: 'request.model == "smart" && has(user.claims.tier) && user.claims.tier == "pro"'
+      provider: anthropic
+      model: claude-sonnet-4-5
+    - name: smart-default
+      when: 'request.model == "smart"'
+      provider: openai
+      model: gpt-4o-mini
+  modelRules:
+    - match: 'request.model.startsWith("claude-")'
+      provider: anthropic
+    - match: 'request.model.startsWith("gemini-")'
+      provider: google
+  defaultProvider: openai
+```
+
+This config says: a Pro user asking for `"smart"` gets Anthropic's Sonnet; everyone else asking
+for `"smart"` gets GPT-4o mini; any `claude-*` or `gemini-*` model name is forwarded to Anthropic
+or Google under its own name; anything else falls through to OpenAI.
+
+## Worked examples
+
+### Alias one name to a provider + model by tier
+
+`routes` shine when a single client-facing name should resolve to different upstreams for
+different users. The client always sends `"model": "smart"`; the tier lives in the auth token's
+claims.
+
+```yaml
+routing:
+  routes:
+    - name: smart-pro
+      when: 'request.model == "smart" && has(user.claims.tier) && user.claims.tier == "pro"'
+      provider: anthropic
+      model: claude-sonnet-4-5
+    - name: smart-free
+      when: 'request.model == "smart"'
+      provider: openai
+      model: gpt-4o-mini
+```
+
+Order matters: the more specific `smart-pro` route comes first, because the first `true` wins. The
+`has(user.claims.tier)` guard is mandatory — without it, a user whose token has no `tier` claim
+would make the expression throw, and the route would silently be skipped.
+
+### Per-model family fallback
+
+`modelRules` map whole families of model names to the provider that owns them, keeping the client's
+exact model name. Pair this with a `defaultProvider` so unmatched names still resolve.
+
+```yaml
+routing:
+  modelRules:
+    - match: 'request.model.startsWith("claude-")'
+      provider: anthropic
+    - match: 'request.model.startsWith("gemini-")'
+      provider: google
+  defaultProvider: openai
+```
+
+Here `claude-opus-4-1` goes to the `anthropic` provider under that exact name, `gemini-2.0-flash`
+to `google`, and any other name (`gpt-4o`, `o3-mini`, ...) to `openai`.
+
+<Tip>
+  `routes` override the client's model with `model:`; `modelRules` typically keep it. Reach for
+  `routes` when you are inventing an alias, and `modelRules` when you are dispatching real model
+  names to their owning provider.
+</Tip>
+
+## Reference
+
+<CardGroup cols={2}>
+  <Card title="CEL expressions" icon="code" href="/model-routing/expressions">
+    The full context reference, operators, and the missing-key guard idiom.
+  </Card>
+  <Card title="Configuration reference" icon="book" href="/reference/configuration">
+    Every `routing`, `providers`, and `rateLimits` field with defaults and constraints.
+  </Card>
+</CardGroup>
+
+### Field summary
+
+| `routes[]` | Type | Required | Description |
+| --- | --- | --- | --- |
+| `name` | string | yes | Route name, shown in logs. |
+| `when` | CEL expression | yes | Must evaluate to exactly `true` to match. |
+| `provider` | string | yes | A key of `providers`. Checked at startup. |
+| `model` | string | no | Upstream model override; omit to keep the client's model. |
+
+| `modelRules[]` | Type | Required | Description |
+| --- | --- | --- | --- |
+| `match` | CEL expression | yes | Must evaluate to exactly `true` to match. |
+| `provider` | string | yes | A key of `providers`. Checked at startup. |
+| `model` | string | no | Upstream model override; omit to keep the client's model. |
+
+| `routing` | Type | Required | Description |
+| --- | --- | --- | --- |
+| `routes` | array | no (default `[]`) | Evaluated first, in order. |
+| `modelRules` | array | no (default `[]`) | Evaluated after routes, in order. |
+| `defaultProvider` | string | no | Last-resort provider; a 404 `model_not_found` results if unset and nothing matched. |

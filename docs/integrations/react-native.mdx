@@ -1,0 +1,202 @@
+---
+title: React Native
+description: Call omni-model from a React Native app — via a Firebase callable or a self-hosted HTTP proxy.
+---
+
+React Native reaches omni-model two ways. Pick the tab that matches how you deployed it.
+
+<Tabs>
+  <Tab title="Serverless (Firebase)">
+    Your app calls the extension's callable function with
+    [`@react-native-firebase/functions`](https://rnfirebase.io/functions/usage). Firebase Auth and
+    App Check tokens are attached to every call by the native SDK — you never handle a bearer token.
+
+    <Info>
+      Set the proxy up first: [Installation → Firebase](/installation/firebase). The callable is
+      named `ext-<instanceId>-chat` (default instance id `omni-model-proxy`).
+    </Info>
+
+    ### Install and initialize
+
+    ```sh
+    npm install @react-native-firebase/app \
+      @react-native-firebase/functions \
+      @react-native-firebase/app-check \
+      @react-native-firebase/auth
+    ```
+
+    Initialize App Check and sign the user in before calling the proxy. If the extension was
+    installed with `REQUIRE_APP_CHECK=true` / `REQUIRE_AUTH=true` (the defaults), a call missing
+    either token is rejected.
+
+    ```js
+    import { getApp } from "@react-native-firebase/app";
+    import { getAppCheck, initializeAppCheck } from "@react-native-firebase/app-check";
+    import { getAuth, signInAnonymously } from "@react-native-firebase/auth";
+
+    // App Check: use the platform provider (App Attest on iOS, Play Integrity on Android).
+    const rnfbProvider = getAppCheck().newReactNativeFirebaseAppCheckProvider();
+    rnfbProvider.configure({
+      apple: { provider: "appAttest" },
+      android: { provider: "playIntegrity" },
+    });
+    await initializeAppCheck(getApp(), { provider: rnfbProvider, isTokenAutoRefreshEnabled: true });
+
+    // Auth: any sign-in works; anonymous is enough to key per-user limits.
+    await signInAnonymously(getAuth());
+    ```
+
+    ### Call the proxy
+
+    The request and response are the OpenAI shapes. A callable returns the full
+    `ChatCompletion` — read the message off `data`.
+
+    ```js
+    import { getApp } from "@react-native-firebase/app";
+    import { getFunctions, httpsCallable } from "@react-native-firebase/functions";
+
+    const functions = getFunctions(getApp());
+    const chat = httpsCallable(functions, "ext-omni-model-proxy-chat");
+
+    const res = await chat({
+      model: "gpt-4o-mini",
+      messages: [{ role: "user", content: "Write a haiku about the sea." }],
+    });
+    const text = res.data.choices[0].message.content;
+    ```
+
+    Embeddings use the sibling callable:
+
+    ```js
+    const embeddings = httpsCallable(functions, "ext-omni-model-proxy-embeddings");
+    const res = await embeddings({ model: "text-embedding-3-small", input: "hello world" });
+    const vector = res.data.data[0].embedding;
+    ```
+
+    <Warning>
+      **Streaming.** Callable-function streaming (`.stream()`) is not consistently available across
+      `@react-native-firebase/functions` versions. If you need token-by-token output on React
+      Native, run the self-hosted proxy and stream over SSE (see the other tab), or check your
+      installed package version for `stream` support before relying on it.
+    </Warning>
+
+    ### Handle errors
+
+    Failures arrive as a `FunctionsError` (from `@react-native-firebase/functions`) with a canonical
+    `code`:
+
+    ```js
+    import { FunctionsErrorCode } from "@react-native-firebase/functions";
+
+    try {
+      const res = await chat({ model: "gpt-4o-mini", messages });
+      // ...
+    } catch (e) {
+      switch (e.code) {
+        case "unauthenticated":       // no signed-in user
+        case "failed-precondition":   // missing / invalid App Check token
+        case "resource-exhausted":    // rate limit or token budget hit
+        case "invalid-argument":      // malformed payload
+          break;
+      }
+    }
+    ```
+
+    | `code` | Meaning |
+    | --- | --- |
+    | `unauthenticated` | No Firebase Auth user and `REQUIRE_AUTH=true`. |
+    | `failed-precondition` | App Check token missing or invalid. |
+    | `resource-exhausted` | Per-user request limit or daily token budget exceeded. |
+    | `invalid-argument` | Request body isn't a valid chat/embeddings payload. |
+  </Tab>
+
+  <Tab title="Self-hosted proxy">
+    Point the app at your deployed proxy's `POST /v1/chat/completions`. Authenticate with a bearer
+    token your app already has — a Firebase Auth ID token, Supabase session, or any JWT your
+    [security config](/security/custom-jwt) accepts.
+
+    ### Non-streaming
+
+    ```js
+    const PROXY_URL = "https://your-proxy.example.com";
+
+    async function chat(messages, token) {
+      const res = await fetch(`${PROXY_URL}/v1/chat/completions`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ model: "gpt-4o-mini", messages }),
+      });
+      if (!res.ok) {
+        const { error } = await res.json(); // { message, type, param, code }
+        throw new Error(error.message);
+      }
+      const data = await res.json();
+      return data.choices[0].message.content;
+    }
+    ```
+
+    <Note>
+      The header depends on your verifier: `jwt` / `firebase-auth` / `supabase` use
+      `Authorization: Bearer <token>` (scheme configurable). App Check verifiers instead expect
+      `X-Firebase-AppCheck`, and DeviceCheck expects `X-Apple-Device-Token`. See
+      [Custom JWT](/security/custom-jwt) and [Firebase App Check](/security/firebase-app-check).
+    </Note>
+
+    ### Streaming (SSE)
+
+    Set `stream: true` and read the `text/event-stream` response. React Native's built-in `fetch`
+    doesn't expose a byte stream, so use an SSE client that can issue a `POST` with headers — for
+    example [`react-native-sse`](https://github.com/binaryminds/react-native-sse):
+
+    ```js
+    import EventSource from "react-native-sse";
+
+    function streamChat(messages, token, onDelta) {
+      const es = new EventSource(`${PROXY_URL}/v1/chat/completions`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ model: "gpt-4o-mini", messages, stream: true }),
+      });
+
+      es.addEventListener("message", (event) => {
+        if (event.data === "[DONE]") {
+          es.close();
+          return;
+        }
+        const chunk = JSON.parse(event.data); // chat.completion.chunk
+        const delta = chunk.choices?.[0]?.delta?.content;
+        if (delta) onDelta(delta);
+      });
+
+      es.addEventListener("error", () => es.close());
+      return es;
+    }
+    ```
+
+    The stream is a sequence of `data:` lines carrying `chat.completion.chunk` JSON, terminated by
+    `data: [DONE]` — the same wire format any OpenAI SDK expects.
+  </Tab>
+</Tabs>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Install the proxy" icon="rocket" href="/installation/firebase">
+    Deploy the Firebase Extension, or self-host the container.
+  </Card>
+  <Card title="Authenticate self-hosted calls" icon="key" href="/security/custom-jwt">
+    Verify a Firebase, Supabase, or custom JWT on the HTTP proxy.
+  </Card>
+  <Card title="Route by policy" icon="route" href="/model-routing/routing">
+    Map a client alias to different models by user tier or request shape.
+  </Card>
+  <Card title="Config reference" icon="book" href="/reference/configuration">
+    Every `omni.yaml` field, storage backend, and provider.
+  </Card>
+</CardGroup>

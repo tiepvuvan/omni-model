@@ -1,0 +1,73 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "theme": "mint",
+  "name": "omni-model",
+  "colors": {
+    "primary": "#6366F1",
+    "light": "#818CF8",
+    "dark": "#4F46E5"
+  },
+  "favicon": "/favicon.svg",
+  "navigation": {
+    "groups": [
+      {
+        "group": "Get started",
+        "pages": ["index", "quickstart"]
+      },
+      {
+        "group": "Installation",
+        "pages": [
+          "installation/firebase",
+          "installation/cloudflare",
+          "installation/render",
+          "installation/fly-io",
+          "installation/cloud-run"
+        ]
+      },
+      {
+        "group": "Security",
+        "pages": [
+          "security/app-attest",
+          "security/firebase-app-check",
+          "security/custom-jwt"
+        ]
+      },
+      {
+        "group": "Integrations",
+        "pages": [
+          "integrations/swift",
+          "integrations/kotlin",
+          "integrations/react-native",
+          "integrations/flutter",
+          "integrations/javascript"
+        ]
+      },
+      {
+        "group": "Model routing",
+        "pages": ["model-routing/expressions", "model-routing/routing"]
+      },
+      {
+        "group": "Reference",
+        "pages": ["reference/configuration"]
+      }
+    ]
+  },
+  "navbar": {
+    "links": [
+      {
+        "label": "GitHub",
+        "href": "https://github.com/tiepvuvan/omni-model"
+      }
+    ],
+    "primary": {
+      "type": "button",
+      "label": "Get started",
+      "href": "https://github.com/tiepvuvan/omni-model"
+    }
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/tiepvuvan/omni-model"
+    }
+  }
+}

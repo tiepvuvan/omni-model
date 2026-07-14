@@ -32,8 +32,13 @@ packages/node              Node server + CLI (Docker/Fly/Cloud Run entry)
 apps/cloudflare            Deployable worker (root wrangler.jsonc points here)
 extensions/omni-model-proxy  One-click Firebase Extension (callable functions)
 examples/                  Example configs
-docs/                      Configuration reference
+docs/                      Mintlify docs site (docs.json + MDX): installation,
+                           security, integrations, model routing, reference
 ```
+
+> Docs are a Mintlify site. A test (`packages/core/test/docs/`) validates every CEL snippet and
+> config example in `docs/**/*.mdx` + `README.md` against the real schema/engine — keep them
+> accurate. `has()`-guard optional-claim access in any `when:`/`match:` example.
 
 ## Architecture rules (the ones that matter)
 
@@ -109,7 +114,7 @@ on success. Need extra endpoints (challenge flows)? Use `routes`.
 `upstreamErrorToResult`; honor `options.signal`; guarantee the stream `usage` promise contract.
 
 Then: add the factory to `createDefaultRegistry` (`core/src/registry.ts`), export it from the
-package barrel, add tests, and document its YAML options in `docs/configuration.md` and
+package barrel, add tests, and document its YAML options in `docs/reference/configuration.mdx` and
 `examples/omni.yaml`.
 
 ## Style
@@ -126,6 +131,6 @@ package barrel, add tests, and document its YAML options in `docs/configuration.
 
 1. `pnpm ci` green.
 2. New/changed behavior covered by tests (including failure paths).
-3. Config surface changes reflected in `examples/omni.yaml` + `docs/configuration.md`.
+3. Config surface changes reflected in `examples/omni.yaml` + `docs/reference/configuration.mdx`.
 4. No edits to contract files (`*/types.ts`, `config/schema.ts`) without calling it out
    prominently in the PR description — downstream embedders depend on them.

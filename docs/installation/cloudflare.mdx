@@ -1,0 +1,118 @@
+---
+title: Cloudflare Workers
+description: Deploy omni-model to the edge on Cloudflare Workers, with either Durable Object or KV storage for rate limits.
+---
+
+The deployable worker lives in `apps/cloudflare` and is driven by the root `wrangler.jsonc`. It
+adds the two Workers storage backends from `@omni-model/cloudflare` on top of the default registry,
+so rate-limit counters can live in a **Durable Object** (exact) or **Workers KV** (approximate).
+
+<Note>
+The one-click **Deploy to Cloudflare** button in the README forks the repository into your GitHub
+account — Workers bindings and Workers Builds live there. Point the button at your fork so your
+config and secrets stay yours. The steps below cover a CLI deploy from a fork.
+</Note>
+
+## Storage backends
+
+<Tabs>
+<Tab title="Durable Object (default)">
+`durable-object` (`OmniStorageDurableObject`) serializes each key through its own Durable Object,
+so counters are **exact**. Choose this when token budgets and quotas must not overshoot. Slightly
+higher latency/cost. This is the default in the bundled `wrangler.jsonc` and `apps/cloudflare/omni.yaml`:
+
+```yaml
+storage:
+  type: durable-object
+  binding: OMNI_DO
+```
+
+The migration in `wrangler.jsonc` uses SQLite-backed Durable Objects — the kind available on the
+Workers **free** plan.
+</Tab>
+
+<Tab title="Workers KV">
+`cloudflare-kv` is cheap and global, but `increment` is a non-atomic read-modify-write on an
+eventually consistent store, so rate-limit counts are **approximate**. Fine for best-effort
+limiting.
+
+Create a namespace, uncomment the `kv_namespaces` binding in `wrangler.jsonc` and paste the id,
+then switch the config:
+
+```sh
+pnpm --filter omni-model-cloudflare exec wrangler kv namespace create OMNI_KV
+```
+
+```yaml
+storage:
+  type: cloudflare-kv
+  binding: OMNI_KV
+```
+</Tab>
+</Tabs>
+
+## Deploy
+
+<Steps>
+<Step title="Fork, install, and build">
+```sh
+pnpm install
+pnpm build
+```
+
+The build is **required**: wrangler bundles the compiled workspace packages
+(`@omni-model/core`, `@omni-model/cloudflare`), whose `dist/` output does not exist on a fresh
+clone until you build.
+</Step>
+
+<Step title="Edit the worker config">
+Edit `apps/cloudflare/omni.yaml`. Pick your storage backend and match the binding name in
+`wrangler.jsonc`. Add at least one [security provider](/security/custom-jwt) — an empty
+`security.providers` is an **open proxy** that anyone who finds the URL can spend your credits on.
+</Step>
+
+<Step title="Set provider secrets">
+Provider keys go in Worker secrets — they are exposed to `${...}` interpolation as env vars.
+`wrangler` is a dependency of `apps/cloudflare` (not the repo root), so invoke it through that
+package:
+
+```sh
+pnpm --filter omni-model-cloudflare exec wrangler secret put OPENAI_API_KEY
+pnpm --filter omni-model-cloudflare exec wrangler secret put ANTHROPIC_API_KEY
+```
+</Step>
+
+<Step title="Deploy">
+```sh
+cd apps/cloudflare
+pnpm run deploy   # wrangler deploy --config ../../wrangler.jsonc
+```
+
+`pnpm run dev` starts a local `wrangler dev` session.
+</Step>
+</Steps>
+
+## Config without a redeploy
+
+The `apps/cloudflare/omni.yaml` file is bundled into the worker at deploy time. To change
+configuration without rebuilding, set the entire YAML document as the `OMNI_CONFIG` secret — it
+overrides the bundled file:
+
+```sh
+pnpm --filter omni-model-cloudflare exec wrangler secret put OMNI_CONFIG < my-omni.yaml
+```
+
+## Updating
+
+Pull upstream changes into your fork, then `pnpm build` and `pnpm run deploy` again. Provider key
+rotation is a `wrangler secret put`; config-only changes can go through the `OMNI_CONFIG` secret
+with no rebuild.
+
+<CardGroup cols={2}>
+<Card title="Configuration reference" icon="gear" href="/reference/configuration">
+Every YAML block: storage, security, providers, routing.
+</Card>
+<Card title="Model routing" icon="route" href="/model-routing/routing">
+CEL rules for choosing an upstream per request.
+</Card>
+</CardGroup>

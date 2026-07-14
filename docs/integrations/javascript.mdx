@@ -1,0 +1,280 @@
+---
+title: JavaScript & Web
+description: Call omni-model from browsers and Node — the Firebase callable in serverless mode, or the OpenAI SDK against a self-hosted proxy.
+---
+
+omni-model presents the same OpenAI shapes in both deployment modes. What changes is **where the
+proxy runs** and **how the client authenticates**:
+
+- **Serverless (Firebase)** — your app calls a callable function. Firebase Auth and App Check tokens
+  are attached automatically by the client SDKs, so there is nothing to wire into headers.
+- **Self-hosted proxy** — you point the official `openai` SDK (or plain `fetch`) at your proxy origin
+  and send the end user's JWT as the bearer token.
+
+Both work identically in the browser and in Node.
+
+<Warning>
+  Never put a provider API key (OpenAI, Anthropic, Gemini) in browser or mobile code. Keeping those
+  keys server-side is the entire reason the proxy exists — clients authenticate with **their own**
+  identity token, and the proxy holds the provider keys.
+</Warning>
+
+<Tabs>
+  <Tab title="Serverless (Firebase)">
+    The app calls the extension's callable functions `ext-<instanceId>-chat` and
+    `ext-<instanceId>-embeddings` (the `instanceId` defaults to `omni-model-proxy`). See
+    [Firebase](/installation/firebase) for the extension install and parameters.
+
+    ### Initialize Auth and App Check first
+
+    The callable SDK only attaches identity tokens if Auth and App Check are initialized in the same
+    app instance. Do this once at startup — the tokens then ride along on every call automatically.
+
+    ```js
+    import { initializeApp } from "firebase/app";
+    import { initializeAppCheck, ReCaptchaV3Provider } from "firebase/app-check";
+    import { getAuth, signInAnonymously } from "firebase/auth";
+
+    const app = initializeApp({ /* your Firebase web config */ });
+
+    // App Check — proves the call came from a genuine build of your app.
+    initializeAppCheck(app, {
+      provider: new ReCaptchaV3Provider("YOUR_RECAPTCHA_V3_SITE_KEY"),
+      isTokenAutoRefreshEnabled: true,
+    });
+
+    // Auth — omni-model keys per-user rate limits on the signed-in uid.
+    await signInAnonymously(getAuth(app)); // or any Firebase sign-in method
+    ```
+
+    <Note>
+      If the extension was installed with `REQUIRE_APP_CHECK=true` or `REQUIRE_AUTH=true` (both
+      default `true`), a call that is missing either token is rejected before it reaches an upstream.
+    </Note>
+
+    ### Streaming chat
+
+    `chat.stream(payload)` resolves to `{ stream, data }`. Iterate `stream` for
+    `chat.completion.chunk` objects as they arrive, then `await data` for the aggregated
+    `ChatCompletion`.
+
+    ```js
+    import { getFunctions, httpsCallable } from "firebase/functions";
+
+    const functions = getFunctions(app);
+    const chat = httpsCallable(functions, "ext-omni-model-proxy-chat");
+
+    const { stream, data } = await chat.stream({
+      model: "gpt-4o-mini",
+      messages: [{ role: "user", content: "Write a haiku about the sea." }],
+    });
+
+    let text = "";
+    for await (const chunk of stream) {
+      text += chunk.choices?.[0]?.delta?.content ?? "";
+    }
+
+    const final = await data; // the aggregated ChatCompletion
+    console.log(final.usage, text);
+    ```
+
+    ### Non-streaming chat
+
+    Call the callable directly. The result is a `HttpsCallableResult` whose `.data` is the
+    `ChatCompletion`.
+
+    ```js
+    const res = await chat({
+      model: "gpt-4o-mini",
+      messages: [{ role: "user", content: "Hi" }],
+    });
+    console.log(res.data.choices[0].message.content);
+    ```
+
+    ### Embeddings
+
+    ```js
+    const embeddings = httpsCallable(functions, "ext-omni-model-proxy-embeddings");
+    const res = await embeddings({
+      model: "text-embedding-3-small",
+      input: "The quick brown fox.",
+    });
+    console.log(res.data.data[0].embedding);
+    ```
+
+    ### Handling errors
+
+    Failures surface as a `FunctionsError` with a canonical code — check `error.code`:
+
+    ```js
+    import { FunctionsError } from "firebase/functions";
+
+    try {
+      await chat({ model: "gpt-4o-mini", messages: [{ role: "user", content: "Hi" }] });
+    } catch (err) {
+      if (err instanceof FunctionsError) {
+        switch (err.code) {
+          case "unauthenticated":     // no signed-in user
+          case "failed-precondition": // missing / invalid App Check token
+          case "resource-exhausted":  // rate limit or token budget exceeded
+          case "invalid-argument":    // malformed payload
+          default:
+            console.error(err.code, err.message);
+        }
+      }
+    }
+    ```
+
+    <Tip>
+      The same function names work from the Swift (`FirebaseFunctions`) and Kotlin/Java client SDKs —
+      App Check and Auth tokens are attached by those SDKs too.
+    </Tip>
+  </Tab>
+
+  <Tab title="Self-hosted proxy">
+    A self-hosted proxy exposes standard OpenAI HTTP endpoints, so the official `openai` SDK works
+    unchanged — you only override the base URL and supply the caller's token as the API key.
+
+    - Base URL: your proxy origin plus `/v1` (e.g. `https://proxy.example.com/v1`).
+    - API key: the end user's JWT. How the proxy validates it is set by `security.providers` — see
+      [Custom JWT](/security/custom-jwt) and the other verifiers.
+
+    The token is sent as `Authorization: Bearer <token>` for the `jwt`, `firebase-auth`, and
+    `supabase` verifiers. Other verifiers use their own headers (`X-Firebase-AppCheck`,
+    `X-Apple-Device-Token`, App Attest headers) — the OpenAI SDK's `defaultHeaders` option lets you
+    set those instead.
+
+    ### OpenAI SDK
+
+    <CodeGroup>
+    ```js Streaming
+    import OpenAI from "openai";
+
+    const client = new OpenAI({
+      baseURL: "https://proxy.example.com/v1",
+      apiKey: userJwt, // the signed-in user's token, NOT a provider key
+    });
+
+    const stream = await client.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: [{ role: "user", content: "Write a haiku about the sea." }],
+      stream: true,
+    });
+
+    for await (const chunk of stream) {
+      process.stdout.write(chunk.choices?.[0]?.delta?.content ?? "");
+    }
+    ```
+
+    ```js Non-streaming
+    import OpenAI from "openai";
+
+    const client = new OpenAI({
+      baseURL: "https://proxy.example.com/v1",
+      apiKey: userJwt,
+    });
+
+    const res = await client.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: [{ role: "user", content: "Hi" }],
+    });
+    console.log(res.choices[0].message.content);
+    ```
+
+    ```js Embeddings
+    import OpenAI from "openai";
+
+    const client = new OpenAI({
+      baseURL: "https://proxy.example.com/v1",
+      apiKey: userJwt,
+    });
+
+    const res = await client.embeddings.create({
+      model: "text-embedding-3-small",
+      input: "The quick brown fox.",
+    });
+    console.log(res.data[0].embedding);
+    ```
+    </CodeGroup>
+
+    <Warning>
+      In a browser, `openai` requires `dangerouslyAllowBrowser: true`. That is only safe here because
+      `apiKey` is the **user's own JWT**, not a provider secret — never ship a provider key to the
+      client.
+    </Warning>
+
+    ### Raw fetch + SSE
+
+    No SDK needed. `POST /v1/chat/completions` with `stream: true` returns Server-Sent Events: lines
+    of `data: <json>` carrying `chat.completion.chunk` objects, terminated by `data: [DONE]`.
+
+    ```js
+    const res = await fetch("https://proxy.example.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${userJwt}`,
+      },
+      body: JSON.stringify({
+        model: "gpt-4o-mini",
+        messages: [{ role: "user", content: "Write a haiku about the sea." }],
+        stream: true,
+      }),
+    });
+
+    if (!res.ok) {
+      const { error } = await res.json(); // { message, type, param, code }
+      throw new Error(error.message);
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? ""; // keep the incomplete trailing line
+
+      for (const line of lines) {
+        if (!line.startsWith("data: ")) continue;
+        const payload = line.slice(6).trim();
+        if (payload === "[DONE]") continue;
+        const chunk = JSON.parse(payload);
+        process.stdout.write(chunk.choices?.[0]?.delta?.content ?? "");
+      }
+    }
+    ```
+
+    ### Errors
+
+    Non-2xx responses carry an OpenAI-style body — an `error` object with `message`, `type`, `param`,
+    and `code`. The OpenAI SDK throws these as `APIError` subclasses; with raw `fetch`, read the body
+    as shown above. A `429` means a rate-limit window or token budget was exceeded.
+  </Tab>
+</Tabs>
+
+## Which mode am I in?
+
+<CardGroup cols={2}>
+  <Card title="Serverless (Firebase)" icon="fire" href="/installation/firebase">
+    No backend to run. Callable functions, Firebase Auth + App Check, Firestore rate limits.
+  </Card>
+  <Card title="Self-hosted proxy" icon="server" href="/quickstart">
+    You run the container or Worker. OpenAI SDK against `/v1`, your own JWT auth.
+  </Card>
+</CardGroup>
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="Custom JWT auth" icon="key" href="/security/custom-jwt">
+    Configure how the proxy validates the bearer token your client sends.
+  </Card>
+  <Card title="Configuration reference" icon="gear" href="/reference/configuration">
+    The full `omni.yaml` — providers, routing, rate limits, storage.
+  </Card>
+</CardGroup>

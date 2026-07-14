@@ -1,0 +1,175 @@
+---
+title: CEL expressions
+description: The Common Expression Language dialect that drives omni-model routing and conditional rate-limit rules.
+---
+
+Every `when`, `match`, and `keyExpression` field in your config is a
+[CEL](https://github.com/google/cel-spec) (Common Expression Language) expression. The same
+language and the same request facts drive both [model routing](/model-routing/routing) and
+[conditional rate-limit rules](/reference/configuration) — learn it once, use it everywhere.
+
+Expressions are parsed once at startup. A syntax error is a `ConfigError` that fails the process
+before it serves a single request, so a typo can never surface mid-request. The engine is CEL via
+`@marcbachmann/cel-js` (see `packages/core/src/routing/cel.ts`).
+
+<Note>
+  Only the boolean `true` counts as a match. Write comparisons (`request.model == "smart"`), not
+  bare values — a non-boolean result is treated as *no match*.
+</Note>
+
+## The context reference
+
+Expressions evaluate against a fixed set of facts derived from the request, its authenticated
+identity, and the clock. The shape is defined by `RequestFacts` in
+`packages/core/src/routing/types.ts`.
+
+| Fact | Type | Meaning |
+| --- | --- | --- |
+| `request.model` | string | Client-requested model (`""` if absent). |
+| `request.stream` | bool | Whether the client asked for a streamed response. |
+| `request.messageCount` | int | Number of entries in `messages`. |
+| `request.maxTokens` | number \| null | `max_completion_tokens` ?? `max_tokens`. |
+| `request.temperature` | number \| null | The request temperature. |
+| `request.user` | string \| null | The OpenAI `user` field. |
+| `user.id` | string \| null | Authenticated user id (verifier-dependent). |
+| `user.authenticated` | bool | Whether any verifier accepted the request. |
+| `user.provider` | string \| null | The auth verifier type that authenticated the request. |
+| `user.claims` | map | Claims from the accepted credential(s). Keys vary by verifier. |
+| `device.id` | string \| null | Device identity (App Check app id, App Attest key id, DeviceCheck token id). |
+| `http.method` | string | Request method. |
+| `http.path` | string | Request path, e.g. `/v1/chat/completions`. |
+| `http.ip` | string \| null | Best-effort client IP (see the note below). |
+| `http.headers` | map | Lowercased header names. `authorization`, `cookie`, `set-cookie`, and `x-api-key` values are redacted to `"<redacted>"`. |
+| `now` | int | Epoch **milliseconds** (a plain number). |
+
+<Warning>
+  `http.ip` is derived from forwarding headers (`cf-connecting-ip`, first `x-forwarded-for` entry,
+  `x-real-ip`) **only** when [`server.trustProxyHeaders`](/reference/configuration) is `true`.
+  Otherwise it comes from the connection socket where the platform exposes it, or is `null`. A
+  client connecting directly to the proxy can forge these headers, so leave `trustProxyHeaders`
+  off unless a trusted CDN or reverse proxy overwrites them.
+</Warning>
+
+## Missing map keys throw — guard them
+
+This is the single most important rule when writing expressions.
+
+In CEL, accessing a map key that does not exist **throws** at evaluation time — it does not yield
+`null`. A token without a `tier` claim makes `user.claims.tier` throw. In routing and rate-limit
+conditions a throw is treated as *no match*, so the symptom is a rule that silently never fires.
+
+Always guard optional claims and optional headers with `has()` or the `in` operator:
+
+<CodeGroup>
+```text has() macro
+has(user.claims.tier) && user.claims.tier == "pro"
+```
+
+```text in operator
+"tier" in user.claims && user.claims["tier"] == "pro"
+```
+</CodeGroup>
+
+Because `&&` short-circuits, the guard on the left prevents the throwing access on the right from
+ever running when the key is absent.
+
+<Warning>
+  Every expression that touches an optional claim (anything under `user.claims`) or an optional
+  header **must** be guarded. `request.*`, `user.id`, `user.authenticated`, `device.id`, and
+  `http.method`/`http.path` are always present and need no guard.
+</Warning>
+
+## Operators and macros
+
+<AccordionGroup>
+  <Accordion title="Comparison and logic">
+    `==`, `!=`, `<`, `<=`, `>`, `>=`, `&&`, `||`, `!`. `&&` and `||` short-circuit, which is what
+    makes the `has()`-guard idiom safe.
+
+    ```text
+    request.maxTokens != null && request.maxTokens > 4096
+    ```
+  </Accordion>
+  <Accordion title="String methods">
+    Call methods on string values:
+
+    ```text
+    request.model.startsWith("claude-")
+    request.model.endsWith("-mini")
+    request.model.contains("gpt")
+    ```
+  </Accordion>
+  <Accordion title="Membership — in">
+    `in` tests set/map membership. On a map it checks for a key, which doubles as a
+    missing-key guard:
+
+    ```text
+    "x-canary" in http.headers
+    "tier" in user.claims
+    ```
+  </Accordion>
+  <Accordion title="Presence — has()">
+    The `has()` macro returns whether a field or map key is present, without throwing:
+
+    ```text
+    has(user.claims.tier)
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Working with `now`
+
+`now` is epoch **milliseconds** as a plain integer. CEL here has **no timestamp type**, and its
+`%` operator rejects `now`, so compare against a millisecond constant instead of doing date math:
+
+```text
+now < 1893456000000
+```
+
+That constant is `2030-01-01T00:00:00Z`, so the expression reads "before 2030." To gate a route to
+a window, combine two comparisons: `now >= 1704067200000 && now < 1735689600000`.
+
+## Examples
+
+Every example below compiles and evaluates safely for an authenticated user with **no** claims,
+because each optional-claim access is guarded.
+
+```text
+# Streaming requests only
+request.stream
+
+# Large conversations
+request.messageCount > 20
+
+# Pro-tier users (guarded)
+has(user.claims.tier) && user.claims.tier == "pro"
+
+# A specific model alias for a specific auth provider
+request.model == "smart" && user.provider == "firebase-auth"
+
+# Presence of a canary header
+"x-canary" in http.headers
+
+# A time-boxed rule (before 2030)
+now < 1893456000000
+```
+
+## Same language, two jobs
+
+These expressions do double duty:
+
+<CardGroup cols={2}>
+  <Card title="Model routing" icon="route" href="/model-routing/routing">
+    `routes[].when` and `modelRules[].match` decide which provider and upstream model serves the
+    request.
+  </Card>
+  <Card title="Conditional rate limits" icon="gauge-high" href="/reference/configuration">
+    `rateLimits[].when` decides whether a rule applies; `keyExpression` produces the counter key
+    for `key: expression`.
+  </Card>
+</CardGroup>
+
+The evaluation-failure policy is shared: a condition that throws (e.g. an unguarded missing key)
+or returns a non-boolean counts as *no match* / *does not apply*, so one bad expression can never
+take the proxy down. Non-boolean routing results additionally log a warning once per rule as a
+config smell.
