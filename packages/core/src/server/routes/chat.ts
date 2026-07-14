@@ -1,19 +1,14 @@
 import type { Context } from "hono";
-import { badRequest, OmniError, rateLimited } from "../../errors.js";
+import { badRequest, OmniError } from "../../errors.js";
 import type { ChatCompletionRequest } from "../../openai/types.js";
-import type { ChatProvider } from "../../providers/types.js";
-import type { RateLimitDecision, RateLimiter } from "../../ratelimit/types.js";
-import type { RequestFacts, Router } from "../../routing/types.js";
-import type { Logger, RuntimeContext } from "../../types.js";
+import type { RequestFacts } from "../../routing/types.js";
+import type { RuntimeContext } from "../../types.js";
 import { buildRequestFacts } from "../facts.js";
+import { executeChat, type PipelineDeps } from "../pipeline.js";
 import type { AppEnv } from "../types.js";
 
 /** Dependencies shared by every `/v1` route handler. */
-export interface RouteDeps {
-  providers: ReadonlyMap<string, ChatProvider>;
-  router: Router;
-  limiter: RateLimiter;
-  log: Logger;
+export interface RouteDeps extends PipelineDeps {
   /** Per-request runtime: `waitUntil` bound to the platform execution context. */
   runtimeFor: (c: Context<AppEnv>) => RuntimeContext;
   /** Resolve the client IP (gated on `server.trustProxyHeaders`, or socket-based). */
@@ -83,34 +78,6 @@ export function factsFor(
   return facts;
 }
 
-/** Map a rate-limit violation to a 429 with limit metadata headers. */
-export function rateLimitError(decision: RateLimitDecision): OmniError {
-  const rule = decision.rule ?? "unknown";
-  const message =
-    decision.kind === "tokens"
-      ? `Token budget exceeded for rate limit rule "${rule}". Please try again later.`
-      : `Rate limit exceeded for rule "${rule}". Please try again later.`;
-  const error = rateLimited(message, decision.retryAfterSeconds ?? undefined);
-  if (decision.limit !== null) error.headers["x-ratelimit-limit"] = String(decision.limit);
-  if (decision.rule !== null) error.headers["x-ratelimit-rule"] = decision.rule;
-  return error;
-}
-
-/** Run the limiter and throw the 429 `OmniError` on a violation. */
-export async function enforceRateLimit(limiter: RateLimiter, facts: RequestFacts): Promise<void> {
-  const decision = await limiter.check(facts);
-  if (!decision.allowed) throw rateLimitError(decision);
-}
-
-/** Look up the resolved provider; the router already validated the id. */
-export function requireProvider(deps: RouteDeps, providerId: string): ChatProvider {
-  const provider = deps.providers.get(providerId);
-  if (provider === undefined) {
-    throw new OmniError(500, `provider "${providerId}" is not configured`);
-  }
-  return provider;
-}
-
 const STREAM_RESPONSE_HEADERS = {
   "content-type": "text/event-stream; charset=utf-8",
   "cache-control": "no-cache",
@@ -139,17 +106,8 @@ export function createChatHandler(deps: RouteDeps): (c: Context<AppEnv>) => Prom
 
     const runtime = deps.runtimeFor(c);
     const facts = factsFor(c, request, runtime.now(), deps.clientIp(c));
-    await enforceRateLimit(deps.limiter, facts);
 
-    const decision = deps.router.resolve(facts);
-    deps.log.info("request routed", {
-      provider: decision.providerId,
-      model: decision.model,
-      route: decision.routeName,
-    });
-    const provider = requireProvider(deps, decision.providerId);
-
-    const result = await provider.chat({ ...request, model: decision.model }, runtime, {
+    const result = await executeChat(deps, facts, request, runtime, {
       signal: c.req.raw.signal,
     });
 

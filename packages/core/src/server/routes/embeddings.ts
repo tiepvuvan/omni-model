@@ -1,14 +1,9 @@
 import type { Context } from "hono";
-import { badRequest, notFound } from "../../errors.js";
+import { badRequest } from "../../errors.js";
 import type { EmbeddingsRequest } from "../../openai/types.js";
+import { embeddingsUsage, executeEmbeddings } from "../pipeline.js";
 import type { AppEnv } from "../types.js";
-import {
-  enforceRateLimit,
-  factsFor,
-  type RouteDeps,
-  readJsonObject,
-  requireProvider,
-} from "./chat.js";
+import { factsFor, type RouteDeps, readJsonObject } from "./chat.js";
 
 /**
  * POST /v1/embeddings — same pipeline as chat (validate, rate-limit, route)
@@ -30,23 +25,8 @@ export function createEmbeddingsHandler(
 
     const runtime = deps.runtimeFor(c);
     const facts = factsFor(c, request, runtime.now(), deps.clientIp(c));
-    await enforceRateLimit(deps.limiter, facts);
 
-    const decision = deps.router.resolve(facts);
-    deps.log.info("request routed", {
-      provider: decision.providerId,
-      model: decision.model,
-      route: decision.routeName,
-    });
-    const provider = requireProvider(deps, decision.providerId);
-    const embed = provider.embeddings?.bind(provider);
-    if (embed === undefined) {
-      throw notFound(`provider "${provider.id}" does not support embeddings`, {
-        code: "unsupported_endpoint",
-      });
-    }
-
-    const result = await embed({ ...request, model: decision.model }, runtime, {
+    const result = await executeEmbeddings(deps, facts, request, runtime, {
       signal: c.req.raw.signal,
     });
     if (result.kind === "error") {
@@ -55,13 +35,7 @@ export function createEmbeddingsHandler(
 
     const usage = result.response.usage;
     if (usage !== undefined) {
-      runtime.waitUntil(
-        deps.limiter.recordUsage(facts, {
-          prompt_tokens: usage.prompt_tokens,
-          completion_tokens: 0,
-          total_tokens: usage.total_tokens,
-        }),
-      );
+      runtime.waitUntil(deps.limiter.recordUsage(facts, embeddingsUsage(usage)));
     }
     return c.json(result.response);
   };

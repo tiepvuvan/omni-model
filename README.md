@@ -109,6 +109,20 @@ image yourself instead: `docker build -t omni-model .`.
 Full platform walkthroughs — including Cloudflare KV vs Durable Object storage — in
 [docs/deploy.md](docs/deploy.md).
 
+### Serverless on Firebase (no backend)
+
+For mobile/web apps with no server at all, install the **Firebase Extension**
+(`extensions/omni-model-proxy`): your app calls an OpenAI-compatible **Callable Function**, and the
+Firebase SDKs attach the caller's **Firebase Auth** and **App Check** tokens automatically —
+omni-model maps them to identities and enforces per-user limits in **Firestore**. Streaming works
+via the callable streaming API. See [docs/firebase.md](docs/firebase.md).
+
+```js
+const chat = httpsCallable(getFunctions(), "ext-omni-model-proxy-chat");
+const { stream, data } = await chat.stream({ model: "gpt-4o-mini", messages });
+for await (const c of stream) render(c.choices?.[0]?.delta?.content ?? "");
+```
+
 ## Configuration
 
 One YAML file. The interesting parts:
@@ -219,6 +233,7 @@ Rate-limit counters, token budgets and attestation keys live in pluggable storag
 | `durable-object` | exact (serialized per key) | yes | Workers; limits and budgets must be exact |
 | `redis` | exact (server-side Lua) | yes | containers with more than one instance |
 | `postgres` | exact (single-statement upsert) | yes | you already run Postgres and want no new infra |
+| `firestore` | exact (transaction, per-user keys) | yes | serverless on Firebase / Cloud Functions |
 
 Details and options per backend in [docs/configuration.md](docs/configuration.md#storage).
 

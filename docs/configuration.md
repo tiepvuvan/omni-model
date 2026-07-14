@@ -164,6 +164,25 @@ Atomicity: every storage key routes to its own Durable Object, and the runtime s
 operations per object — counters are **exact**. Slightly higher latency and cost than KV; the right
 choice when token budgets must not overshoot.
 
+### `type: firestore` (`@omni-model/storage-firestore`)
+
+```yaml
+storage:
+  type: firestore
+  collection: omni_ratelimits   # optional
+```
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `collection` | string | `omni_ratelimits` | Firestore collection holding the counter documents. |
+
+The Firestore client is injected by the embedder (it carries credentials, so it can't come from
+YAML) — the Firebase Extension and `createOmniCallables` register it for you; a bare setup calls
+`createFirestoreStorageFactory(getFirestore())`. Atomicity: `increment` runs in a `runTransaction`
+and is **exact**; window expiry is computed on read (Firestore TTL is best-effort cleanup only). A
+single document sustains ~1 write/sec, so this backend suits **per-user** keys — see
+[docs/firebase.md](firebase.md) for the serverless, no-backend setup.
+
 ## `security`
 
 Client authentication for everything under `/v1/*`. `/healthz` and verifier-contributed routes

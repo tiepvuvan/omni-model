@@ -19,6 +19,7 @@ export * from "./routing/router.js";
 export * from "./routing/types.js";
 export * from "./server/app.js";
 export * from "./server/facts.js";
+export * from "./server/pipeline.js";
 export * from "./server/types.js";
 export * from "./storage/memory.js";
 export * from "./storage/types.js";

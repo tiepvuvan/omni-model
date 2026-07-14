@@ -18,14 +18,19 @@ packages/core              Runtime-agnostic engine. No Node APIs, no platform AP
   src/providers/           ChatProvider contract + openai / anthropic / google adapters
   src/routing/             CEL expression engine + router
   src/ratelimit/           Request windows + token budgets over StorageAdapter
-  src/server/              Hono app factory: the request pipeline
+  src/server/              Hono app factory + pipeline.ts (transport-agnostic
+                           executeChat/executeEmbeddings, shared by HTTP + callable)
   src/storage/             StorageAdapter contract + memory backend
   src/util/                SSE parsing/encoding, duration parsing
 packages/storage-redis     Redis StorageAdapter (ioredis)
 packages/storage-postgres  Postgres StorageAdapter (pg)
+packages/storage-firestore Firestore StorageAdapter (serverless rate limits)
 packages/cloudflare        Workers KV + Durable Object adapters, worker factory
+packages/firebase          Callable-function adapter: Auth/App Check identity,
+                           streaming chat + embeddings over the pipeline
 packages/node              Node server + CLI (Docker/Fly/Cloud Run entry)
 apps/cloudflare            Deployable worker (root wrangler.jsonc points here)
+extensions/omni-model-proxy  One-click Firebase Extension (callable functions)
 examples/                  Example configs
 docs/                      Configuration reference
 ```

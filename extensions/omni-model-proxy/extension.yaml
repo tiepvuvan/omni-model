@@ -1,0 +1,218 @@
+name: omni-model-proxy
+version: 0.1.0
+specVersion: v1beta
+
+displayName: omni-model AI proxy
+description: >-
+  Call OpenAI, Anthropic, and Google Gemini from your app with no backend, over
+  an OpenAI-compatible callable protected by Firebase Auth and App Check, with
+  per-user request and token rate limits backed by Firestore.
+
+license: Apache-2.0
+billingRequired: true
+
+sourceUrl: https://github.com/tiepvuvan/omni-model
+author:
+  authorName: omni-model
+  url: https://github.com/tiepvuvan/omni-model
+
+apis:
+  - apiName: firestore.googleapis.com
+    reason: Stores per-user rate-limit and token-budget counters.
+
+roles:
+  - role: datastore.user
+    reason: Reads and writes the rate-limit counters in Firestore.
+
+params:
+  - param: LOCATION
+    label: Cloud Functions location
+    description: >-
+      Region to deploy the callable functions to. Choose a region close to your
+      users. This value is immutable — it cannot be changed after installation.
+    type: select
+    default: us-central1
+    required: true
+    immutable: true
+    options:
+      - label: Iowa (us-central1)
+        value: us-central1
+      - label: South Carolina (us-east1)
+        value: us-east1
+      - label: Oregon (us-west1)
+        value: us-west1
+      - label: Belgium (europe-west1)
+        value: europe-west1
+      - label: London (europe-west2)
+        value: europe-west2
+      - label: Frankfurt (europe-west3)
+        value: europe-west3
+      - label: Mumbai (asia-south1)
+        value: asia-south1
+      - label: Singapore (asia-southeast1)
+        value: asia-southeast1
+      - label: Tokyo (asia-northeast1)
+        value: asia-northeast1
+      - label: Sydney (australia-southeast1)
+        value: australia-southeast1
+
+  - param: OPENAI_API_KEY
+    label: OpenAI API key
+    description: >-
+      API key for OpenAI. Leave blank if you do not use OpenAI. At least one of
+      the three provider keys must be set (unless you supply an advanced config).
+    type: secret
+    required: false
+
+  - param: ANTHROPIC_API_KEY
+    label: Anthropic API key
+    description: >-
+      API key for Anthropic (Claude). Leave blank if you do not use Anthropic.
+    type: secret
+    required: false
+
+  - param: GEMINI_API_KEY
+    label: Google Gemini API key
+    description: >-
+      API key for Google Gemini. Leave blank if you do not use Gemini.
+    type: secret
+    required: false
+
+  - param: DEFAULT_PROVIDER
+    label: Default provider
+    description: >-
+      Provider used when no routing rule matches the requested model. If the
+      selected provider has no API key configured, the first configured provider
+      is used instead.
+    type: select
+    default: openai
+    required: true
+    options:
+      - label: OpenAI
+        value: openai
+      - label: Anthropic
+        value: anthropic
+      - label: Google Gemini
+        value: google
+
+  - param: REQUESTS_PER_MINUTE
+    label: Requests per minute (per user)
+    description: >-
+      Maximum chat/embeddings requests allowed per authenticated user per
+      minute. Must be a positive integer.
+    type: string
+    default: "60"
+    required: true
+    validationRegex: ^[0-9]+$
+    validationErrorMessage: Must be a positive integer.
+
+  - param: DAILY_TOKEN_BUDGET
+    label: Daily token budget (per user)
+    description: >-
+      Maximum tokens (prompt + completion) an authenticated user may consume per
+      day. Must be a positive integer.
+    type: string
+    default: "200000"
+    required: true
+    validationRegex: ^[0-9]+$
+    validationErrorMessage: Must be a positive integer.
+
+  - param: REQUIRE_APP_CHECK
+    label: Require App Check
+    description: >-
+      Reject calls that do not carry a valid Firebase App Check token. Strongly
+      recommended for public apps to block abuse from outside your app.
+    type: select
+    default: "true"
+    required: true
+    options:
+      - label: "Yes — require App Check"
+        value: "true"
+      - label: "No — do not require App Check"
+        value: "false"
+
+  - param: CONSUME_APP_CHECK_TOKEN
+    label: Consume App Check tokens (replay protection)
+    description: >-
+      Enforce single-use App Check tokens so a captured token cannot be replayed.
+      Only enable this if your app requests **limited-use** App Check tokens
+      (`getLimitedUseToken()` / `limitedUseAppCheckTokens: true`); otherwise valid
+      calls will be rejected. Adds a token-verification round trip per call.
+    type: select
+    default: "false"
+    required: true
+    options:
+      - label: "No — standard App Check (recommended)"
+        value: "false"
+      - label: "Yes — require limited-use tokens"
+        value: "true"
+
+  - param: REQUIRE_AUTH
+    label: Require Firebase Auth
+    description: >-
+      Reject calls that do not carry a valid Firebase Auth ID token. Required for
+      the per-user rate limits to key on a stable user id.
+    type: select
+    default: "true"
+    required: true
+    options:
+      - label: "Yes — require sign-in"
+        value: "true"
+      - label: "No — allow anonymous calls"
+        value: "false"
+
+  - param: FIRESTORE_COLLECTION
+    label: Firestore collection for rate-limit counters
+    description: >-
+      Name of the Firestore collection used to store rate-limit and token-budget
+      counters.
+    type: string
+    default: omni_ratelimits
+    required: true
+
+  - param: ADVANCED_CONFIG_YAML
+    label: Advanced configuration (omni.yaml)
+    description: >-
+      Optional. A full omni-model YAML configuration that overrides all of the
+      individual settings above (providers, routing, rate limits, storage). Use
+      this for custom routing rules or additional OpenAI-compatible providers.
+      Supports ${ENV} interpolation against the function environment.
+    type: string
+    required: false
+
+# The functions are bundled from ./functions (see functions/package.json). Each
+# resource name (chat / embeddings) maps to the same-named export. Secret params
+# (the provider API keys) are auto-injected as env vars by the Extensions runtime
+# only when set, so single-provider installs work without listing them here.
+resources:
+  - name: chat
+    type: firebaseextensions.v1beta.v2function
+    description: >-
+      OpenAI-compatible chat completions callable. Supports streaming responses.
+    properties:
+      location: ${LOCATION}
+      sourceDirectory: functions
+      buildConfig:
+        runtime: nodejs20
+      serviceConfig:
+        availableMemory: 512M
+        timeoutSeconds: 300
+        minInstanceCount: 0
+        maxInstanceCount: 100
+      httpsTrigger: {}
+
+  - name: embeddings
+    type: firebaseextensions.v1beta.v2function
+    description: >-
+      OpenAI-compatible embeddings callable.
+    properties:
+      location: ${LOCATION}
+      sourceDirectory: functions
+      buildConfig:
+        runtime: nodejs20
+      serviceConfig:
+        availableMemory: 512M
+        timeoutSeconds: 300
+        minInstanceCount: 0
+        maxInstanceCount: 100
+      httpsTrigger: {}
