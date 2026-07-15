@@ -29,7 +29,8 @@
         "pages": [
           "security/app-attest",
           "security/firebase-app-check",
-          "security/custom-jwt"
+          "security/custom-jwt",
+          "security/verify-on-device"
         ]
       },
       {

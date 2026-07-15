@@ -1,0 +1,141 @@
+---
+title: Verify auth on a real device
+description: Prove Firebase Auth, Firebase App Check, Apple App Attest, and Apple DeviceCheck all work end-to-end — on both the Cloudflare Worker and the Node container.
+---
+
+omni-model ships four client-attestation verifiers. This page shows how to prove each one actually
+accepts a **real** credential (and rejects a forged one) against a **running** proxy — on both
+deploy targets, the Cloudflare Worker and the Node container.
+
+The verification splits in two, because two of the four can only be produced by a physical device:
+
+| Method | Verifier | How it's verified | Device? |
+| --- | --- | --- | --- |
+| Firebase Auth | `firebase-auth` | Automated e2e mints a real ID token via Google's Identity Toolkit | No |
+| Firebase App Check | `firebase-app-check` | Automated e2e exchanges a registered **debug token** for a real App Check token | No |
+| Apple App Attest | `apple-app-attest` | The example iOS app runs the challenge → attest → assert flow on device | **Yes** |
+| Apple DeviceCheck | `apple-device-check` | The example iOS app generates a DeviceCheck token on device | **Yes** |
+
+<Note>
+App Attest and DeviceCheck use the Secure Enclave — `DCAppAttestService`/`DCDevice` report
+`isSupported == false` on the simulator. There is no REST shortcut; a real device is required.
+</Note>
+
+## The config
+
+One config enables all four. `mode: any` means each request authenticates with exactly one method
+(each verifier reads a distinct header and returns "not mine" when its header is absent), so you can
+test them independently. This is [`e2e/omni.device-auth.yaml`](https://github.com/tiepvuvan/omni-model/blob/main/e2e/omni.device-auth.yaml):
+
+```yaml
+security:
+  mode: any
+  providers:
+    - type: firebase-auth
+      projectId: ${FIREBASE_PROJECT_ID}          # plist PROJECT_ID
+    - type: firebase-app-check
+      projectNumber: "${FIREBASE_PROJECT_NUMBER}" # plist GCM_SENDER_ID
+    - type: apple-app-attest
+      teamId: ${APPLE_TEAM_ID}
+      bundleId: ${APPLE_BUNDLE_ID}               # e.g. co.unstatic.polyplan
+      environment: development                    # dev build → development; TestFlight/App Store → production
+    - type: apple-device-check
+      teamId: ${APPLE_TEAM_ID}
+      keyId: ${APPLE_DEVICECHECK_KEY_ID}
+      privateKey: ${APPLE_DEVICECHECK_KEY}       # .p8 PKCS8 PEM; a Worker/container secret
+      development: true                           # dev-provisioned app → Apple's development host
+```
+
+<Warning>
+Two settings must match your **build**, or a genuine token is rejected:
+- **App Attest `environment`** — a debug build run from Xcode produces *development*-environment
+  attestations; `environment: development` (the default here) accepts them. A TestFlight/App Store
+  build produces *production* — flip both `environment` and DeviceCheck's `development` to match.
+- **Worker storage must be `durable-object`.** App Attest registers a key on one request and
+  verifies an assertion on another; on the Worker those can run in different isolates, so the
+  registered key must live in a Durable Object, not in-memory. (The Node container is a single
+  process, so `memory` is fine there.)
+</Warning>
+
+## Prerequisites
+
+- The app's **`GoogleService-Info.plist`** (its `PROJECT_ID`, `GCM_SENDER_ID`, `BUNDLE_ID`).
+- Your **Apple Team ID** (10 chars) — for both Apple verifiers.
+- A **DeviceCheck key**: the `.p8` file + its **Key ID**, from App Store Connect → Users and
+  Access → Integrations → Keys → DeviceCheck.
+- For the automated App Check test: a registered **App Check debug token** (Firebase console →
+  App Check → your app → Manage debug tokens) and the app's `GOOGLE_APP_ID` + Web `API_KEY`.
+
+## Part 1 — automated (Firebase Auth + App Check), no device
+
+The live e2e suite stands up the proxy on **both** targets (Node via `startServer`, the Worker in
+`workerd` via `wrangler dev`) and checks each Firebase credential against a real project. Run it
+from [`e2e/`](https://github.com/tiepvuvan/omni-model/tree/main/e2e):
+
+```sh
+export OPENROUTER_API_KEY=sk-or-...
+export FIREBASE_API_KEY=...          # plist API_KEY
+export FIREBASE_PROJECT_ID=...       # plist PROJECT_ID
+export FIREBASE_PROJECT_NUMBER=...   # plist GCM_SENDER_ID
+export FIREBASE_APP_ID=...           # plist GOOGLE_APP_ID          (App Check)
+export FIREBASE_APPCHECK_DEBUG_TOKEN=...  #                          (App Check)
+pnpm test:e2e
+```
+
+It asserts, on each target: no credential → **401**, a real Firebase ID token → **200** (and a chat
+completes), a forged token → **401**; and — when the debug token is set — a real App Check token →
+**200**, a bogus one → **401**.
+
+## Part 2 — on device (all four), against a deployed proxy
+
+A phone can't reach your Mac's `localhost`, so deploy the proxy first (or expose it with a tunnel).
+
+<Steps>
+<Step title="Deploy both targets">
+Deploy the [Cloudflare Worker](/installation/cloudflare) (use `storage: durable-object`) and a
+[container](/installation/fly-io) with this config, and set the secrets. On the Worker, the multi-line
+`.p8` goes in as a secret, not a `--var`:
+
+```sh
+# Worker
+pnpm --filter omni-model-cloudflare exec wrangler secret put OMNI_CONFIG < e2e/omni.device-auth.yaml
+pnpm --filter omni-model-cloudflare exec wrangler secret put APPLE_DEVICECHECK_KEY < AuthKey_XXXX.p8
+pnpm --filter omni-model-cloudflare exec wrangler secret put OPENROUTER_API_KEY
+# ...plus FIREBASE_PROJECT_ID, FIREBASE_PROJECT_NUMBER, APPLE_TEAM_ID, APPLE_BUNDLE_ID,
+#         APPLE_DEVICECHECK_KEY_ID as vars/secrets
+```
+
+Note both public URLs — you'll paste them into the app.
+</Step>
+
+<Step title="Configure the example app">
+In [`examples/ios-app`](https://github.com/tiepvuvan/omni-model/tree/main/examples/ios-app):
+- Replace `Resources/GoogleService-Info.plist` with your project's (don't commit it).
+- Generate the project with your identifiers (kept out of the repo):
+
+```sh
+cd examples/ios-app
+TUIST_OMNI_BUNDLE_ID=co.unstatic.polyplan TUIST_OMNI_DEVELOPMENT_TEAM=ABCDE12345 tuist generate
+```
+
+The bundle id must match `apple-app-attest.bundleId` and the Firebase-registered app; the Team must
+own the DeviceCheck key. The App Attest entitlement (`appattest-environment: development`) is already
+wired in `Project.swift`.
+</Step>
+
+<Step title="Run on a real device">
+Open the workspace, select your device, and run. The **Auth verification** screen has a URL field for
+the Worker and the container and a segmented target switch. Paste both URLs, then tap **Run all** —
+each method reports **PASS** (the proxy accepted the credential and completed a chat) or **FAIL**
+(with the reason). Flip the target and run again to prove both runtimes behave identically.
+</Step>
+</Steps>
+
+Under the hood each row refreshes an `OmniAuthBox` from one `OmniAuthProvider`
+(`FirebaseIDTokenAuth` / `FirebaseAppCheckAuth` / `DeviceCheckAuth` / `AppAttestAuth`) and sends a
+real request through the MacPaw/OpenAI client — the same [Swift integration](/integrations/swift)
+your app uses.
+
+<Card title="Auth providers reference" icon="key" href="/integrations/swift">
+  The `OmniModelClient.swift` providers and how each maps to a proxy verifier.
+</Card>

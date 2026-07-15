@@ -1,34 +1,49 @@
 # omni-model — example iOS app
 
-A minimal SwiftUI app that streams a chat completion from a self-hosted omni-model
-proxy using the real [MacPaw/OpenAI](https://github.com/MacPaw/OpenAI) client plus the
-`OmniAuthMiddleware` from [`../ios/OmniModelClient.swift`](../ios/OmniModelClient.swift)
-(symlinked into `Sources/` so this app builds the exact shipped file).
+A SwiftUI app that verifies **every** omni-model auth method against a running proxy, using the real
+[MacPaw/OpenAI](https://github.com/MacPaw/OpenAI) client plus the `OmniAuthMiddleware` from
+[`../ios/OmniModelClient.swift`](../ios/OmniModelClient.swift) (symlinked into `Sources/` so this app
+builds the exact shipped file).
 
-The project is generated with [Tuist](https://tuist.dev) and pulls its dependencies
-(Firebase, MacPaw/OpenAI) via Swift Package Manager.
+The **Auth verification** screen (`Sources/ContentView.swift`) has one row per method — Firebase
+Auth, Firebase App Check, DeviceCheck, App Attest — and a Worker/container target switch. Each row
+refreshes an `OmniAuthBox` from that provider, sends a real chat, and reports **PASS**/**FAIL**. Point
+it at your deployed Worker and container URLs and tap **Run all** to prove both runtimes enforce auth
+identically.
 
-## Run it
+> App Attest and DeviceCheck use the Secure Enclave — they only work on a **real device** (they
+> report "unsupported" on the simulator). See [Verify auth on a real device](../../docs/security/verify-on-device.mdx)
+> for the full flow, including the matching proxy config.
+
+The project is generated with [Tuist](https://tuist.dev) and pulls Firebase + MacPaw/OpenAI via SPM.
+
+## Run it on a device
 
 ```sh
 cd examples/ios-app
-tuist install      # resolve Firebase + MacPaw/OpenAI
-tuist generate     # create OmniModelExample.xcworkspace
+tuist install                                   # resolve Firebase + MacPaw/OpenAI
+
+# Your identifiers are read from the environment so they're never committed. The
+# bundle id must match apple-app-attest.bundleId on the proxy and the Firebase app;
+# the team must own the DeviceCheck key.
+TUIST_OMNI_BUNDLE_ID=co.unstatic.polyplan \
+TUIST_OMNI_DEVELOPMENT_TEAM=ABCDE12345 \
+  tuist generate
+
 open OmniModelExample.xcworkspace
 ```
 
-Then, before it does anything real:
+Then:
 
-1. **Point it at your proxy** — edit `OmniEndpoint.production` in
-   [`../ios/OmniModelClient.swift`](../ios/OmniModelClient.swift).
-2. **Pick your auth** — `Sources/ContentView.swift` uses `FirebaseAppCheckAuth()` by
-   default. Swap it for `FirebaseIDTokenAuth()`, `BearerTokenAuth { … }`,
-   `AppAttestAuth()`, or `DeviceCheckAuth()` to match your proxy's `security.providers`.
-3. **Add Firebase config** — replace `Resources/GoogleService-Info.plist` with your own
-   from the Firebase console. (The bundled one is a build-only placeholder.) If you use
-   `BearerTokenAuth`, remove the Firebase bits from `Sources/App.swift` instead.
+1. **Replace `Resources/GoogleService-Info.plist`** with your project's (the bundled one is a
+   build-only placeholder — don't commit yours).
+2. **Run on a real device**, paste your Worker + container URLs into the screen, and **Run all**.
 
-## Build from the command line
+The App Attest entitlement (`appattest-environment: development`) is already wired in `Project.swift`;
+flip it (and the proxy's `apple-app-attest.environment`) to `production` for a TestFlight/App Store
+build.
+
+## Build from the command line (compile check)
 
 ```sh
 tuist generate --no-open
@@ -37,16 +52,17 @@ xcodebuild -workspace OmniModelExample.xcworkspace -scheme OmniModelExample \
   CODE_SIGNING_ALLOWED=NO build
 ```
 
-This is what CI/verification runs — it compiles `OmniModelClient.swift` against the real
-MacPaw/OpenAI + Firebase SDKs.
+This is what verification runs — it compiles the screen + all four providers against the real
+MacPaw/OpenAI + Firebase + DeviceCheck SDKs. (It can't *run* App Attest/DeviceCheck — that needs a
+device.)
 
 ## Layout
 
 ```
-Project.swift            Tuist target (app + external deps)
+Project.swift            Tuist target — bundle id/team from TUIST_OMNI_* env; App Attest entitlement
 Tuist/Package.swift      SPM dependencies (firebase-ios-sdk, MacPaw/OpenAI)
-Sources/App.swift        @main app; installs the App Check provider factory
-Sources/ContentView.swift  streaming chat screen
+Sources/App.swift        @main app; installs the App Check provider factory + Firebase.configure()
+Sources/ContentView.swift  the Auth verification matrix (all four methods, two targets)
 Sources/OmniModelClient.swift  → symlink to ../ios/OmniModelClient.swift
 Resources/GoogleService-Info.plist  placeholder — replace with yours
 ```
