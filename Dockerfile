@@ -24,6 +24,7 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY packages/core/package.json packages/core/
 COPY packages/storage-redis/package.json packages/storage-redis/
 COPY packages/storage-postgres/package.json packages/storage-postgres/
+COPY packages/storage-firestore/package.json packages/storage-firestore/
 COPY packages/cloudflare/package.json packages/cloudflare/
 COPY packages/node/package.json packages/node/
 COPY apps/cloudflare/package.json apps/cloudflare/
@@ -42,6 +43,7 @@ COPY --from=prod-deps /repo /app
 COPY --from=build /repo/packages/core/dist /app/packages/core/dist
 COPY --from=build /repo/packages/storage-redis/dist /app/packages/storage-redis/dist
 COPY --from=build /repo/packages/storage-postgres/dist /app/packages/storage-postgres/dist
+COPY --from=build /repo/packages/storage-firestore/dist /app/packages/storage-firestore/dist
 COPY --from=build /repo/packages/cloudflare/dist /app/packages/cloudflare/dist
 COPY --from=build /repo/packages/node/dist /app/packages/node/dist
 # A root-level omni.yaml (if the deployer committed one) becomes the default config.

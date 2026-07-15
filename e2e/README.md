@@ -42,6 +42,7 @@ export APPLE_DEVICECHECK_KEY="$(cat AuthKey_XXXX.p8)"  # the .p8 PKCS8 PEM conte
 | **Cloudflare Worker** | `pnpm test:e2e` | The real worker running in **workerd** (`wrangler dev`) → OpenRouter: boots + parses config, chat, **SSE streaming through workerd**, and **Durable Object** rate limiting (a burst trips a 429). |
 | **Firebase auth** | `pnpm test:e2e` | **Firebase Auth** (and **App Check**) verified on BOTH targets (Node + workerd): a REAL ID token minted from the project via Identity Toolkit is accepted (200); no/forged credential is rejected (401). Needs Firebase env (below). |
 | **Apple auth** | `pnpm test:e2e` | **DeviceCheck** server side (the proxy's ES256 JWT is accepted by Apple → Team/Key/`.p8` valid) and the **App Attest** challenge route, on both targets. Needs Apple env (below). Device-signed tokens themselves are verified via the example iOS app's on-device screen. |
+| **Firestore storage** | Firestore emulator (below) | The Node server (the Cloud Run backend) with `storage: firestore`: boots via firebase-admin and enforces rate limits from **Firestore counters** (a burst trips a 429). Runs against the local Firestore emulator, so no GCP needed. |
 | **MacPaw** | `swift test` in `swift/OmniModelClientKit` (macOS) | MacPaw/OpenAI client + `OmniAuthMiddleware` → proxy: chat + streaming. |
 | **Foundation Models** | `xcodebuild test` in `swift/OmniModelFoundation` (iOS 27 sim) | `LanguageModelSession` → `OmniProxyExecutor` → proxy: `respond` + streaming. |
 
@@ -51,6 +52,22 @@ ephemeral server, and the Worker suite (`cloudflare-worker.e2e.test.ts`) starts 
 from `e2e/cloudflare/` (requires a prior `pnpm build`), passing the key via `--var` so it never
 touches disk, and tearing the process group down on exit. The Swift suites talk to a proxy the script
 starts on `http://localhost:8788` (the iOS simulator reaches the host's `localhost`).
+
+## Firestore storage (emulator)
+
+The Firestore-storage test runs the Node server (the Cloud Run backend) against the local Firestore
+emulator — no GCP account needed (just the [Firebase CLI](https://firebase.google.com/docs/cli) and a
+JRE):
+
+```sh
+firebase emulators:start --only firestore --project omni-e2e &   # start it (default port 8080)
+FIRESTORE_EMULATOR_HOST=localhost:8080 GOOGLE_CLOUD_PROJECT=omni-e2e OPENROUTER_API_KEY=sk-or-... \
+  pnpm exec vitest run --config vitest.e2e.config.ts e2e/storage-firestore.e2e.test.ts
+```
+
+`@omni-model/node` builds a credentialed Firestore admin instance from the environment
+(`FIRESTORE_EMULATOR_HOST` for the emulator; Application Default Credentials + `GOOGLE_CLOUD_PROJECT`
+on Cloud Run), so the same config verified here deploys unchanged.
 
 ## Self-guarding
 
@@ -62,6 +79,8 @@ starts on `http://localhost:8788` (the iOS simulator reaches the host's `localho
   `FIREBASE_APPCHECK_DEBUG_TOKEN`.
 - The Apple-auth test **skips itself** without `APPLE_TEAM_ID` + `APPLE_DEVICECHECK_KEY` (+ key id,
   bundle id, Firebase project ids).
+- The Firestore-storage test **skips itself** without `FIRESTORE_EMULATOR_HOST`, so it's a no-op in
+  `pnpm test:e2e` unless the emulator is running.
 - The Swift E2E tests **skip themselves** when no proxy is reachable on `:8788`, so `swift test` /
   `xcodebuild test` stay green offline (only the fast unit tests run).
 

@@ -1,0 +1,35 @@
+# omni-model config for the Firestore-storage e2e (the Cloud Run backend).
+#
+# storage.type: firestore makes rate-limit counters + token budgets live in
+# Firestore — serverless, no connection string. The Node server builds the
+# credentialed admin instance from the environment:
+#   FIRESTORE_EMULATOR_HOST  -> talk to a local emulator (set by `firebase emulators:exec`)
+#   GOOGLE_CLOUD_PROJECT      -> project id (Cloud Run sets it; any value works for the emulator)
+#
+# A deliberately low request limit so a short burst trips a 429 — which can only
+# happen if the Firestore counter actually increments and persists.
+version: 1
+
+server:
+  logLevel: warn
+
+storage:
+  type: firestore
+  collection: omni_ratelimits_e2e
+
+security:
+  providers: []
+
+rateLimits:
+  - name: per-ip-requests
+    key: ip
+    requests: { limit: 3, window: 1m }
+
+providers:
+  openrouter:
+    type: openai-compatible
+    baseUrl: https://openrouter.ai/api/v1
+    apiKey: ${OPENROUTER_API_KEY}
+
+routing:
+  defaultProvider: openrouter

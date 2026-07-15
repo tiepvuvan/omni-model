@@ -25,8 +25,10 @@
   "dependencies": {
     "@hono/node-server": "^2.0.0",
     "@omni-model/core": "workspace:*",
+    "@omni-model/storage-firestore": "workspace:*",
     "@omni-model/storage-postgres": "workspace:*",
     "@omni-model/storage-redis": "workspace:*",
+    "firebase-admin": "^12.7.0",
     "hono": "^4.12.0"
   }
 }

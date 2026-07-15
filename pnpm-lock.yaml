@@ -115,12 +115,18 @@ importers:
       '@omni-model/core':
         specifier: workspace:*
         version: link:../core
+      '@omni-model/storage-firestore':
+        specifier: workspace:*
+        version: link:../storage-firestore
       '@omni-model/storage-postgres':
         specifier: workspace:*
         version: link:../storage-postgres
       '@omni-model/storage-redis':
         specifier: workspace:*
         version: link:../storage-redis
+      firebase-admin:
+        specifier: ^12.7.0
+        version: 12.7.0
       hono:
         specifier: ^4.12.0
         version: 4.12.30

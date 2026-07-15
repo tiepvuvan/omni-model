@@ -11,9 +11,33 @@ import {
   parseConfig,
   type RuntimeContext,
   type StorageAdapter,
+  type StorageFactory,
 } from "@omni-model/core";
+import type { FirestoreLike } from "@omni-model/storage-firestore";
 import { postgresStorageFactory } from "@omni-model/storage-postgres";
 import { redisStorageFactory } from "@omni-model/storage-redis";
+
+/**
+ * Build the Firestore storage factory (serverless rate limits for Cloud Run /
+ * GCE / Firebase). Firestore auth uses Application Default Credentials — the
+ * service account on Cloud Run, `GOOGLE_APPLICATION_CREDENTIALS` locally, or a
+ * local emulator via `FIRESTORE_EMULATOR_HOST`. The project id comes from
+ * `GOOGLE_CLOUD_PROJECT` (Cloud Run sets it) or `FIREBASE_PROJECT_ID`;
+ * `FIRESTORE_DATABASE_ID` selects a non-default database. firebase-admin is
+ * imported lazily so only Firestore deployments load it.
+ */
+async function firestoreStorageFactory(
+  env: Record<string, string | undefined>,
+): Promise<StorageFactory> {
+  const { getApps, initializeApp } = await import("firebase-admin/app");
+  const { getFirestore } = await import("firebase-admin/firestore");
+  const { createFirestoreStorageFactory } = await import("@omni-model/storage-firestore");
+  const projectId = env.GOOGLE_CLOUD_PROJECT ?? env.FIREBASE_PROJECT_ID ?? env.GCLOUD_PROJECT;
+  const app = getApps()[0] ?? initializeApp(projectId ? { projectId } : undefined);
+  const databaseId = env.FIRESTORE_DATABASE_ID;
+  const firestore = databaseId ? getFirestore(app, databaseId) : getFirestore(app);
+  return createFirestoreStorageFactory(firestore as unknown as FirestoreLike);
+}
 
 /** Options for {@link startServer}. */
 export interface StartOptions {
@@ -63,7 +87,7 @@ async function closeStorage(storage: StorageAdapter): Promise<void> {
 
 /**
  * Parse the YAML config, construct storage from the registry (built-ins plus
- * the Redis and Postgres backends), build the omni app and serve it over
+ * the Redis, Postgres and Firestore backends), build the omni app and serve it over
  * HTTP. The returned handle owns the storage lifecycle: `close()` stops the
  * HTTP server first, then closes the storage adapter.
  */
@@ -75,6 +99,11 @@ export async function startServer(options: StartOptions): Promise<RunningServer>
   const registry = createDefaultRegistry();
   registry.storage.set(redisStorageFactory.type, redisStorageFactory);
   registry.storage.set(postgresStorageFactory.type, postgresStorageFactory);
+  // Firestore needs a credentialed admin instance (not a URL), so it is wired
+  // in on demand — only when selected, so non-Firestore deploys skip firebase-admin.
+  if (config.storage.type === "firestore") {
+    registry.storage.set("firestore", await firestoreStorageFactory(env));
+  }
 
   const runtime: RuntimeContext = {
     env,
