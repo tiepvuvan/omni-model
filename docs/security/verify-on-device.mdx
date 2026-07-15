@@ -57,6 +57,16 @@ Two settings must match your **build**, or a genuine token is rejected:
   process, so `memory` is fine there.)
 </Warning>
 
+<Note>
+**DeviceCheck under local `wrangler dev`.** Apple's DeviceCheck edge (Akamai) fingerprint-blocks the
+local workerd HTTP client with a `403`, so `apple-device-check` can't be exercised against a
+*locally* running Worker — verify it against the **deployed** Worker (whose egress is Cloudflare's
+production fetch path) or the Node container. The config itself is verified either way: a bogus token
+returns Apple's `HTTP 400` ("device token payload"), which means Apple **accepted** the ES256 JWT the
+proxy signed with your `.p8` — i.e. the Team ID, Key ID, and key are correct. The other three methods
+work from local workerd (Google's JWKS fetches aren't blocked; App Attest verifies certs locally).
+</Note>
+
 ## Prerequisites
 
 - The app's **`GoogleService-Info.plist`** (its `PROJECT_ID`, `GCM_SENDER_ID`, `BUNDLE_ID`).

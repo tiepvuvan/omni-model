@@ -23,6 +23,16 @@ export FIREBASE_APP_ID=...           # plist GOOGLE_APP_ID   (App Check only)
 export FIREBASE_APPCHECK_DEBUG_TOKEN=...  #                  (App Check only)
 ```
 
+To also verify the **Apple** verifiers' server side (DeviceCheck config + App Attest route), add your
+Apple Team + DeviceCheck key:
+
+```sh
+export APPLE_TEAM_ID=...              # 10-char Apple Developer team id
+export APPLE_BUNDLE_ID=...           # app bundle id (apple-app-attest.bundleId)
+export APPLE_DEVICECHECK_KEY_ID=...  # App Store Connect DeviceCheck key id
+export APPLE_DEVICECHECK_KEY="$(cat AuthKey_XXXX.p8)"  # the .p8 PKCS8 PEM contents
+```
+
 
 ## What runs
 
@@ -30,7 +40,8 @@ export FIREBASE_APPCHECK_DEBUG_TOKEN=...  #                  (App Check only)
 | --- | --- | --- |
 | **Node** | `pnpm test:e2e` | Real `@omni-model/node` server → OpenRouter: chat, **streaming**, a **tool-calling round-trip**, usage, and an upstream-error case. |
 | **Cloudflare Worker** | `pnpm test:e2e` | The real worker running in **workerd** (`wrangler dev`) → OpenRouter: boots + parses config, chat, **SSE streaming through workerd**, and **Durable Object** rate limiting (a burst trips a 429). |
-| **Firebase auth** | `pnpm test:e2e` | **Firebase Auth** (and **App Check**) verified on BOTH targets (Node + workerd): a REAL ID token minted from the project via Identity Toolkit is accepted (200); no/forged credential is rejected (401). Needs Firebase env (below). App Attest / DeviceCheck are device-only, verified via the example iOS app's on-device screen. |
+| **Firebase auth** | `pnpm test:e2e` | **Firebase Auth** (and **App Check**) verified on BOTH targets (Node + workerd): a REAL ID token minted from the project via Identity Toolkit is accepted (200); no/forged credential is rejected (401). Needs Firebase env (below). |
+| **Apple auth** | `pnpm test:e2e` | **DeviceCheck** server side (the proxy's ES256 JWT is accepted by Apple → Team/Key/`.p8` valid) and the **App Attest** challenge route, on both targets. Needs Apple env (below). Device-signed tokens themselves are verified via the example iOS app's on-device screen. |
 | **MacPaw** | `swift test` in `swift/OmniModelClientKit` (macOS) | MacPaw/OpenAI client + `OmniAuthMiddleware` → proxy: chat + streaming. |
 | **Foundation Models** | `xcodebuild test` in `swift/OmniModelFoundation` (iOS 27 sim) | `LanguageModelSession` → `OmniProxyExecutor` → proxy: `respond` + streaming. |
 
@@ -49,6 +60,8 @@ starts on `http://localhost:8788` (the iOS simulator reaches the host's `localho
 - The Firebase-auth test **skips itself** without `FIREBASE_API_KEY`/`FIREBASE_PROJECT_ID`/
   `FIREBASE_PROJECT_NUMBER`; its App Check cases skip without `FIREBASE_APP_ID` +
   `FIREBASE_APPCHECK_DEBUG_TOKEN`.
+- The Apple-auth test **skips itself** without `APPLE_TEAM_ID` + `APPLE_DEVICECHECK_KEY` (+ key id,
+  bundle id, Firebase project ids).
 - The Swift E2E tests **skip themselves** when no proxy is reachable on `:8788`, so `swift test` /
   `xcodebuild test` stay green offline (only the fast unit tests run).
 
