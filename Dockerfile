@@ -47,8 +47,12 @@ COPY --from=build /repo/packages/storage-firestore/dist /app/packages/storage-fi
 COPY --from=build /repo/packages/cloudflare/dist /app/packages/cloudflare/dist
 COPY --from=build /repo/packages/node/dist /app/packages/node/dist
 # A root-level omni.yaml (if the deployer committed one) becomes the default config.
-# The glob keeps this optional — no root config is fine when OMNI_CONFIG(_PATH) is set.
-COPY omni.yaml* /app/
+# `package.json` is always present, so this COPY always has a source — that keeps
+# the classic Docker builder (e.g. Cloud Build without BuildKit) from erroring
+# with "no source files were specified" when no root omni.yaml exists. The
+# omni.yaml* glob stays optional; /app/package.json is simply rewritten with the
+# identical file it already has.
+COPY package.json omni.yaml* /app/
 EXPOSE 8787
 USER node
 CMD ["node", "packages/node/dist/cli.js"]

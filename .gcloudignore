@@ -1,0 +1,26 @@
+# What NOT to upload to Cloud Build for `gcloud run deploy --source .`.
+# The container image (see Dockerfile) only needs `packages/`, `apps/` and the
+# root workspace files — exclude everything else so the upload is small and the
+# build doesn't choke on non-container artifacts (e.g. Tuist/Xcode build output).
+#
+# Note: a `.gcloudignore` DISABLES gcloud's default .gitignore fallback, so this
+# list is authoritative — keep the build inputs above included.
+.git/
+.github/
+**/node_modules/
+**/dist/
+**/.build/
+**/.wrangler/
+
+# Non-container members of the monorepo.
+examples/
+swift/
+docs/
+e2e/
+extensions/
+
+# Local/dev cruft.
+*.log
+.DS_Store
+.vscode/
+.idea/
