@@ -1,4 +1,4 @@
-import OpenAI
+import Foundation
 import SwiftUI
 
 #if canImport(FirebaseAuth)
@@ -6,10 +6,17 @@ import SwiftUI
 #endif
 
 /// On-device verification of every auth method omni-model supports, against a
-/// running proxy. Each row refreshes an `OmniAuthBox` from one `OmniAuthProvider`
-/// (Firebase Auth / App Check / DeviceCheck / App Attest), sends a real chat
-/// through the MacPaw/OpenAI client, and reports PASS (the proxy accepted the
-/// credential and completed the request) or FAIL (with the reason).
+/// running proxy. Each row obtains a credential from one `OmniAuthProvider`
+/// (Firebase Auth / App Check / DeviceCheck / App Attest — the same providers
+/// the MacPaw `OmniAuthMiddleware` injects in production) and sends a request to
+/// `/v1/chat/completions`, then classifies the proxy's HTTP status:
+///
+///   200  → PASS     the credential was accepted and the chat completed
+///   401  → FAIL     the proxy rejected the credential
+///   else → AUTH OK  the credential was accepted (the request passed auth and
+///                   reached the upstream); the upstream itself errored — e.g.
+///                   OpenRouter's "model not available in your region", which is
+///                   unrelated to auth.
 ///
 /// Point it at your deployed **Worker** and **container** URLs and flip the
 /// target to prove both runtimes enforce auth identically. App Attest and
@@ -69,8 +76,9 @@ struct ContentView: View {
           .disabled(running)
         } footer: {
           Text(
-            "Sends one tiny chat per method to \(activeURL). App Attest & DeviceCheck "
-              + "require a real device. Firebase Auth signs in anonymously."
+            "Green = credential accepted and chat completed. Amber = credential accepted, "
+              + "upstream errored (e.g. model unavailable in region — not an auth failure). "
+              + "Red = the proxy rejected the credential. App Attest & DeviceCheck need a real device."
           )
         }
       }
@@ -80,23 +88,39 @@ struct ContentView: View {
 
   private func run(_ method: AuthMethod) async {
     states[method] = .running
+    guard let endpoint = endpoint() else {
+      states[method] = .fail("Set a valid \(target.rawValue) URL first")
+      return
+    }
     do {
-      guard let endpoint = endpoint() else {
-        states[method] = .fail("Set a valid \(target.rawValue) URL first")
-        return
-      }
       let provider = try await provider(for: method, endpoint: endpoint)
-      let box = OmniAuthBox()
-      try await box.refresh(from: provider)
-      let client = OmniModel.makeOpenAI(endpoint: endpoint, box: box)
-      let result = try await client.chats(
-        query: ChatQuery(
-          messages: [.user(.init(content: .string("Reply with exactly the word: pong")))],
-          model: model
-        )
-      )
-      let content = result.choices.first?.message.content ?? ""
-      states[method] = .pass(content.isEmpty ? "200 OK" : content.trimmingCharacters(in: .whitespacesAndNewlines))
+      // The exact headers the MacPaw OmniAuthMiddleware would inject.
+      let headers = try await provider.headers()
+
+      var request = URLRequest(url: endpoint.rootURL(path: "/v1/chat/completions"))
+      request.httpMethod = "POST"
+      request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+      for (name, value) in headers { request.setValue(value, forHTTPHeaderField: name) }
+      request.httpBody = try JSONSerialization.data(withJSONObject: [
+        "model": model,
+        "messages": [["role": "user", "content": "Reply with exactly the word: pong"]],
+        "max_tokens": 5,
+        "temperature": 0,
+      ])
+
+      let (data, response) = try await URLSession.shared.data(for: request)
+      let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+      let decoded = decode(data)
+
+      switch status {
+      case 200:
+        states[method] = .pass(decoded.content?.isEmpty == false ? decoded.content! : "200 OK")
+      case 401:
+        states[method] = .fail("401 rejected — \(decoded.error ?? "unauthorized")")
+      default:
+        // Passed auth (not 401) but the upstream errored — the credential is fine.
+        states[method] = .authOnly("upstream \(status): \(decoded.error ?? "error")")
+      }
     } catch {
       states[method] = .fail(describe(error))
     }
@@ -105,9 +129,7 @@ struct ContentView: View {
   private func runAll() async {
     running = true
     defer { running = false }
-    for method in AuthMethod.allCases {
-      await run(method)
-    }
+    for method in AuthMethod.allCases { await run(method) }
   }
 
   private func endpoint() -> OmniEndpoint? {
@@ -148,6 +170,23 @@ struct ContentView: View {
     }
   }
 
+  /// Pull the assistant text or the error message out of a chat-completions body.
+  private func decode(_ data: Data) -> (content: String?, error: String?) {
+    guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+      return (nil, nil)
+    }
+    if let error = obj["error"] as? [String: Any], let message = error["message"] as? String {
+      return (nil, message)
+    }
+    if let choices = obj["choices"] as? [[String: Any]],
+      let message = choices.first?["message"] as? [String: Any],
+      let content = message["content"] as? String
+    {
+      return (content.trimmingCharacters(in: .whitespacesAndNewlines), nil)
+    }
+    return (nil, nil)
+  }
+
   private func describe(_ error: Error) -> String {
     switch error {
     case OmniAuthError.deviceCheckUnsupported:
@@ -157,7 +196,7 @@ struct ContentView: View {
     case OmniAuthError.notSignedIn:
       return "Not signed in"
     case let OmniAuthError.httpError(status, body):
-      return "HTTP \(status): \(body.prefix(140))"
+      return "handshake HTTP \(status): \(body.prefix(120))"
     default:
       return String(describing: error).prefix(200).description
     }
@@ -167,7 +206,7 @@ struct ContentView: View {
 private enum VerificationError: LocalizedError {
   case unavailable(String)
   var errorDescription: String? {
-    switch self { case let .unavailable(m): return m }
+    switch self { case let .unavailable(message): return message }
   }
 }
 
@@ -194,6 +233,7 @@ private enum RunState {
   case idle
   case running
   case pass(String)
+  case authOnly(String)
   case fail(String)
 }
 
@@ -214,7 +254,7 @@ private struct MethodRow: View {
         Button("Run", action: action).buttonStyle(.bordered).disabled(isRunning)
       }
       if let detail {
-        Text(detail).font(.caption).foregroundStyle(isFail ? .red : .secondary)
+        Text(detail).font(.caption).foregroundStyle(detailColor)
           .frame(maxWidth: .infinity, alignment: .leading)
       }
     }
@@ -226,16 +266,26 @@ private struct MethodRow: View {
     case .idle: Image(systemName: "circle").foregroundStyle(.secondary)
     case .running: ProgressView()
     case .pass: Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+    case .authOnly: Image(systemName: "checkmark.seal.fill").foregroundStyle(.orange)
     case .fail: Image(systemName: "xmark.circle.fill").foregroundStyle(.red)
     }
   }
 
   private var isRunning: Bool { if case .running = state { return true }; return false }
-  private var isFail: Bool { if case .fail = state { return true }; return false }
+
+  private var detailColor: Color {
+    switch state {
+    case .fail: return .red
+    case .authOnly: return .orange
+    default: return .secondary
+    }
+  }
+
   private var detail: String? {
     switch state {
     case .idle, .running: return nil
     case let .pass(text): return "PASS — \(text)"
+    case let .authOnly(text): return "AUTH OK — \(text)"
     case let .fail(text): return "FAIL — \(text)"
     }
   }

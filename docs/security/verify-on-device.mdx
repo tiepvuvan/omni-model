@@ -60,11 +60,21 @@ Two settings must match your **build**, or a genuine token is rejected:
 <Note>
 **DeviceCheck under local `wrangler dev`.** Apple's DeviceCheck edge (Akamai) fingerprint-blocks the
 local workerd HTTP client with a `403`, so `apple-device-check` can't be exercised against a
-*locally* running Worker — verify it against the **deployed** Worker (whose egress is Cloudflare's
-production fetch path) or the Node container. The config itself is verified either way: a bogus token
-returns Apple's `HTTP 400` ("device token payload"), which means Apple **accepted** the ES256 JWT the
-proxy signed with your `.p8` — i.e. the Team ID, Key ID, and key are correct. The other three methods
-work from local workerd (Google's JWKS fetches aren't blocked; App Attest verifies certs locally).
+*locally* running Worker. This is **local-dev only** — verified against a **deployed** Worker, Apple
+returns `HTTP 400` ("device token payload") for a bogus token, meaning it **accepted** the ES256 JWT
+the proxy signed with your `.p8` (i.e. Team ID, Key ID, and key are all correct). So DeviceCheck works
+on both the Node container and deployed Cloudflare Workers; only local `wrangler dev` can't reach
+Apple. (The other three methods work even from local workerd — Google's JWKS fetches aren't blocked
+and App Attest verifies certs locally.)
+</Note>
+
+<Note>
+**Upstream region blocks are not auth failures.** Some upstreams geo-restrict models — OpenRouter
+returns `403 "This model is not available in your region"` for requests egressing from certain
+Cloudflare edge datacenters, for example. When that happens the credential was still **accepted**
+(the request passed auth and reached the upstream); the on-device screen shows this as an amber
+**AUTH OK** (not a red FAIL). Pick a model your upstream serves in your region, or use a direct
+provider (OpenAI/Anthropic/Gemini), to get a green PASS.
 </Note>
 
 ## Prerequisites
