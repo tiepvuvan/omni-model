@@ -7,9 +7,10 @@ Cloud Run runs omni-model as a scale-to-many container. Use the **Run on Google 
 (backed by `app.json` + the `Dockerfile`) for a guided deploy, or `gcloud run deploy` from a shell.
 
 <Warning>
-Cloud Run scales to many instances. Use `redis` (Memorystore) or `postgres` (Cloud SQL) storage so
-rate limits and token budgets are enforced across all of them — `memory` storage limits each
-instance independently. See [rate limits](/reference/configuration).
+Cloud Run scales to many instances. Use **`firestore`** (serverless, no provisioning), `redis`
+(Memorystore) or `postgres` (Cloud SQL) storage so rate limits and token budgets are enforced across
+all of them — `memory` storage limits each instance independently. See
+[rate limits](/reference/configuration).
 </Warning>
 
 ## One-click button
@@ -51,13 +52,27 @@ gcloud run deploy omni-model \
 </Step>
 
 <Step title="Point storage at shared state">
-Switch the config storage block to `redis` (Memorystore) or `postgres` (Cloud SQL):
+The serverless pick — **Firestore** — needs nothing provisioned; the container authenticates with
+the service account's Application Default Credentials (the project id comes from `GOOGLE_CLOUD_PROJECT`,
+which Cloud Run sets automatically):
 
 ```yaml
 storage:
-  type: redis
-  url: ${REDIS_URL}
+  type: firestore
+  collection: omni_ratelimits
 ```
+
+Grant the Cloud Run service account Firestore access once:
+
+```sh
+PROJECT=$(gcloud config get-value project)
+SA="$(gcloud iam service-accounts list --filter='displayName:Default compute' --format='value(email)')"
+gcloud projects add-iam-policy-binding "$PROJECT" \
+  --member="serviceAccount:$SA" --role=roles/datastore.user
+```
+
+(Or use `redis` (Memorystore) / `postgres` (Cloud SQL) with a `url:` if you prefer a managed
+database.)
 </Step>
 </Steps>
 
