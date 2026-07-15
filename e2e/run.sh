@@ -2,9 +2,11 @@
 #
 # End-to-end verification of the whole chain against a real upstream (OpenRouter):
 #
-#   1. Node E2E     omni-model proxy -> OpenRouter: chat, streaming, tool calling
-#   2. MacPaw E2E   MacPaw/OpenAI client + OmniAuthMiddleware -> proxy (macOS)
-#   3. Foundation   FoundationModels LanguageModelSession -> proxy (iOS 27 sim)
+#   1. Node + Worker E2E  omni-model proxy (Node) AND the Cloudflare worker in
+#                         workerd -> OpenRouter: chat, streaming, tool calling,
+#                         Durable Object rate limiting (`pnpm test:e2e`)
+#   2. MacPaw E2E         MacPaw/OpenAI client + OmniAuthMiddleware -> proxy (macOS)
+#   3. Foundation         FoundationModels LanguageModelSession -> proxy (iOS 27 sim)
 #
 # Usage:
 #   OPENROUTER_API_KEY=sk-or-... e2e/run.sh
@@ -23,7 +25,8 @@ SIM="${OMNI_E2E_SIMULATOR:-platform=iOS Simulator,name=iPhone 17 Pro,OS=27.0}"
 echo "==> Building packages"
 pnpm build >/dev/null
 
-echo "==> [1/3] Node E2E — proxy -> OpenRouter (chat, streaming, tools)"
+echo "==> [1/3] Node + Cloudflare Worker E2E — proxy & workerd -> OpenRouter"
+echo "         (chat, streaming, tool calling, Durable Object rate limiting)"
 pnpm test:e2e
 
 echo "==> Starting the proxy on :8788 for the Swift suites"

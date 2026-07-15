@@ -1,0 +1,17 @@
+// Wrangler config for the Cloudflare Worker end-to-end suite (NOT a deploy
+// target — it mirrors the root wrangler.jsonc so `wrangler dev` runs the real
+// worker in workerd against OpenRouter). Driven by e2e/cloudflare-worker.e2e.test.ts,
+// which starts `wrangler dev` and passes OPENROUTER_API_KEY via --var.
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "omni-model-e2e",
+  "main": "worker.ts",
+  "compatibility_date": "2025-06-01",
+  // Bundle the YAML config as a plain-text module (matches apps/cloudflare).
+  "rules": [{ "type": "Text", "globs": ["**/*.yaml"], "fallthrough": true }],
+  // Durable Object storage — the worker-specific path the suite verifies.
+  "durable_objects": {
+    "bindings": [{ "name": "OMNI_DO", "class_name": "OmniStorageDurableObject" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["OmniStorageDurableObject"] }]
+}

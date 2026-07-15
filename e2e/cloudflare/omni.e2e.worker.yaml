@@ -1,0 +1,40 @@
+# omni-model config for the Cloudflare Worker end-to-end suite.
+#
+# Same OpenRouter upstream as e2e/omni.e2e.yaml, but storage is a Durable
+# Object — so the suite exercises the worker-specific surface: the workerd
+# runtime, outbound fetch to a real upstream, SSE streaming through workerd,
+# and DO-backed rate-limit counters. The API key comes from the
+# OPENROUTER_API_KEY var (passed to `wrangler dev --var`); never commit a key.
+version: 1
+
+server:
+  logLevel: warn
+
+# Exact rate-limit counters in a Durable Object (bound as OMNI_DO in
+# wrangler.jsonc). This is the whole point of the Worker suite: prove DO
+# storage persists counts across requests inside workerd.
+storage:
+  type: durable-object
+  binding: OMNI_DO
+
+security:
+  providers: []
+
+# A low limit so a short burst deterministically trips a 429 — which can only
+# happen if the DO counter actually increments and persists between requests.
+rateLimits:
+  - name: per-ip-requests
+    key: ip
+    requests: { limit: 5, window: 1m }
+
+providers:
+  openrouter:
+    type: openai-compatible
+    baseUrl: https://openrouter.ai/api/v1
+    apiKey: ${OPENROUTER_API_KEY}
+    headers:
+      HTTP-Referer: https://github.com/tiepvuvan/omni-model
+      X-Title: omni-model e2e (worker)
+
+routing:
+  defaultProvider: openrouter

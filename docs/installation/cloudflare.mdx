@@ -108,6 +108,14 @@ Pull upstream changes into your fork, then `pnpm build` and `pnpm run deploy` ag
 rotation is a `wrangler secret put`; config-only changes can go through the `OMNI_CONFIG` secret
 with no rebuild.
 
+<Note>
+A live [end-to-end suite](https://github.com/tiepvuvan/omni-model/tree/main/e2e) runs the **real
+worker in `workerd`** via `wrangler dev` against an upstream model — asserting the runtime boots,
+outbound `fetch` reaches the provider, **SSE streaming** survives workerd, and the **Durable
+Object** rate limiter counts across requests. It's opt-in (`OPENROUTER_API_KEY=... pnpm test:e2e`),
+so the edge path stays verified, not just assumed.
+</Note>
+
 <CardGroup cols={2}>
 <Card title="Configuration reference" icon="gear" href="/reference/configuration">
 Every YAML block: storage, security, providers, routing.
