@@ -114,6 +114,17 @@ image yourself instead: `docker build -t omni-model .`.
 - **Cloud Run** — no fork; paste your config into the `OMNI_CONFIG` prompt.
 - **Fly.io** — `fly launch --copy-config` (a `fly.toml` ships in the repo).
 
+**Cloudflare without a fork.** Every release also ships a **prebuilt worker** — the edge counterpart
+of the container image. Download it, supply config at runtime, done:
+
+```sh
+curl -LO https://github.com/tiepvuvan/omni-model/releases/latest/download/worker.js
+curl -LO https://github.com/tiepvuvan/omni-model/releases/latest/download/wrangler.jsonc
+npx wrangler deploy --var OMNI_CONFIG:"$(cat omni.yaml)"
+```
+
+No fork, no clone, no build. You trade push-to-deploy CI for a `curl` + redeploy on updates.
+
 Full platform walkthroughs — including Cloudflare KV vs Durable Object storage — in
 the [installation guides](docs/installation/cloudflare.mdx).
 

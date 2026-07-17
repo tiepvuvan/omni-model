@@ -1,0 +1,28 @@
+// omni-model — forkless Cloudflare deploy.
+//
+// Download this file and `worker.js` from a release, drop your config in
+// `omni.yaml` next to them, then:
+//
+//   wrangler deploy --var OMNI_CONFIG:"$(cat omni.yaml)"
+//   wrangler secret put OPENAI_API_KEY        # any ${...} your config references
+//
+// No fork, no clone, no build — `worker.js` is a prebuilt, self-contained
+// script. Updating is a re-download + redeploy.
+//
+// Everything below is yours to edit; `name` becomes your *.workers.dev subdomain.
+{
+  "name": "omni-model",
+  // The prebuilt bundle. `no_bundle` tells wrangler to upload it as-is rather
+  // than re-running esbuild over already-bundled code.
+  "main": "worker.js",
+  "no_bundle": true,
+  "compatibility_date": "2025-06-01",
+  // Rate-limit + App Attest storage. SQLite Durable Objects are available on
+  // the Workers free plan. The class name and migration tag are a contract with
+  // the prebuilt bundle — don't rename them, or existing counters are orphaned.
+  "durable_objects": {
+    "bindings": [{ "name": "OMNI_DO", "class_name": "OmniStorageDurableObject" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["OmniStorageDurableObject"] }],
+  "observability": { "enabled": true }
+}

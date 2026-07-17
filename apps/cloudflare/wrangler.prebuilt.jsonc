@@ -1,0 +1,24 @@
+// BUILD-ONLY config: emits the prebuilt worker artifact shipped on each release.
+// This is not a deploy target — `release-worker.yml` runs:
+//
+//   pnpm build
+//   wrangler deploy --dry-run --outdir dist-prebuilt --config apps/cloudflare/wrangler.prebuilt.jsonc
+//
+// and attaches the emitted single `worker.js` to the GitHub release. Deployers
+// use `apps/cloudflare/prebuilt/wrangler.jsonc` instead (the template they
+// download alongside it).
+//
+// Deliberately no `rules` block: the prebuilt entry imports no .yaml, which is
+// what keeps the artifact a single self-contained file.
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "omni-model",
+  "main": "src/prebuilt.ts",
+  "compatibility_date": "2025-06-01",
+  // Mirrors the template so the dry-run validates the same bindings the
+  // deployer will declare.
+  "durable_objects": {
+    "bindings": [{ "name": "OMNI_DO", "class_name": "OmniStorageDurableObject" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["OmniStorageDurableObject"] }]
+}

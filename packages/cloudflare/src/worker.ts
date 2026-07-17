@@ -100,9 +100,15 @@ export function createWorker(options: CreateWorkerOptions = {}): OmniWorker {
         : undefined;
     const yaml = inlineYaml ?? options.configYaml;
     if (yaml === undefined) {
+      // For a prebuilt-bundle deploy this is the first thing the operator sees,
+      // so it carries the literal fix rather than a description of one.
       throw new ConfigError(
-        "no configuration found: set the OMNI_CONFIG var/secret to your YAML config " +
-          "or bundle one at build time via createWorker({ configYaml })",
+        "no configuration found: this worker has no bundled config, so it reads " +
+          "the OMNI_CONFIG var. Set it to your YAML config and redeploy:\n" +
+          '  wrangler deploy --var OMNI_CONFIG:"$(cat omni.yaml)"\n' +
+          "(or add OMNI_CONFIG under `vars` in wrangler.jsonc, or paste it in the " +
+          "dashboard under Settings -> Variables). Embedders can instead bundle one " +
+          "at build time via createWorker({ configYaml }).",
       );
     }
 

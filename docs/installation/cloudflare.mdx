@@ -37,6 +37,51 @@ Then add a [security provider](/security/custom-jwt) — an empty `security.prov
 unauthenticated.
 </Warning>
 
+## Forkless deploy (prebuilt bundle)
+
+Don't want a fork? Every release ships a **prebuilt worker** — the Cloudflare counterpart of the
+[container image](/installation/cloud-run): download an immutable artifact, supply config at runtime,
+update with a re-download. No fork, no clone, no build, no `node_modules`.
+
+<Steps>
+<Step title="Grab the two files">
+```sh
+V=v1.2.3   # a release tag
+curl -LO https://github.com/tiepvuvan/omni-model/releases/download/$V/worker.js
+curl -LO https://github.com/tiepvuvan/omni-model/releases/download/$V/wrangler.jsonc
+# optional: verify
+curl -LO https://github.com/tiepvuvan/omni-model/releases/download/$V/SHA256SUMS && sha256sum -c SHA256SUMS
+```
+</Step>
+
+<Step title="Write your config">
+Put your [configuration](/reference/configuration) in `omni.yaml` next to them. The bundle has **no
+baked config** — it reads the `OMNI_CONFIG` var, exactly like the image reads `OMNI_CONFIG`.
+</Step>
+
+<Step title="Deploy">
+```sh
+npx wrangler deploy --var OMNI_CONFIG:"$(cat omni.yaml)"
+npx wrangler secret put OPENAI_API_KEY     # any ${...} your config references
+```
+
+That's the whole deploy. `wrangler.jsonc` already sets `no_bundle` (the script is prebuilt) and
+declares the `OMNI_DO` Durable Object, so the rate-limit store is provisioned for you.
+</Step>
+</Steps>
+
+<Note>
+Config is a **var**, not a secret, on purpose: `${...}` interpolation means the config holds no
+secret *values* — only references — so keeping it readable makes it auditable, dashboard-editable,
+and part of the version snapshot you can roll back to. The referenced secrets stay secrets.
+</Note>
+
+**What you trade away:** push-to-deploy CI. With the button, editing `omni.yaml` in your fork
+redeploys automatically; here, updating is `curl` + `wrangler deploy`. Pick the fork if you want CI,
+the bundle if you want no fork.
+
+## Deploy from a fork (CLI)
+
 The steps below cover a CLI deploy from a fork.
 
 ## Storage backends

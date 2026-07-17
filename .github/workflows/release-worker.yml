@@ -1,0 +1,90 @@
+name: Publish worker bundle
+
+# Builds the prebuilt Cloudflare Worker artifact and attaches it to the release.
+#   - push a semver tag (v1.2.3) -> uploads to the v1.2.3 GitHub Release
+#   - manual run (workflow_dispatch) -> uploads as a build artifact only
+#
+# This is the Cloudflare counterpart of release-image.yml: consumers download
+# `worker.js` + `wrangler.jsonc` and `wrangler deploy` them — no fork, no clone,
+# no build — and updates are a re-download + redeploy. Like the image, the
+# bundle ships no baked config; provide it at runtime via the OMNI_CONFIG var.
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write # attach assets to the release
+
+concurrency:
+  group: publish-worker-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref_type != 'tag' }}
+
+jobs:
+  build-and-attach:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # The prebuilt entry imports the workspace packages, which resolve to
+      # their compiled dist/.
+      - run: pnpm --filter @omni-model/cloudflare... run build
+
+      - name: Bundle the worker
+        working-directory: apps/cloudflare
+        run: |
+          pnpm exec wrangler deploy --dry-run \
+            --outdir "$RUNNER_TEMP/out" \
+            --config wrangler.prebuilt.jsonc
+
+      # The release is a single self-contained script. A stray .yaml import
+      # would make wrangler emit a second (hashed) file and quietly turn the
+      # artifact into two coupled assets — fail loudly instead.
+      - name: Verify the artifact is a single self-contained file
+        run: |
+          cd "$RUNNER_TEMP/out"
+          count=$(find . -maxdepth 1 -name '*.js' ! -name '*.map' | wc -l | tr -d ' ')
+          if [ "$count" != "1" ]; then
+            echo "::error::expected exactly 1 .js, found $count:"; ls -la; exit 1
+          fi
+          if grep -qE '^\s*import\s+.*\sfrom\s+["'"'"']' prebuilt.js; then
+            echo "::error::bundle has unresolved top-level imports"; exit 1
+          fi
+          if grep -qE '["'"'"']node:[a-z_/]+["'"'"']' prebuilt.js; then
+            echo "::error::bundle imports node: builtins — it cannot run on workerd"; exit 1
+          fi
+
+      - name: Stage release assets
+        run: |
+          mkdir -p "$RUNNER_TEMP/assets"
+          cp "$RUNNER_TEMP/out/prebuilt.js" "$RUNNER_TEMP/assets/worker.js"
+          cp "$RUNNER_TEMP/out/prebuilt.js.map" "$RUNNER_TEMP/assets/worker.js.map" || true
+          cp apps/cloudflare/prebuilt/wrangler.jsonc "$RUNNER_TEMP/assets/wrangler.jsonc"
+          cd "$RUNNER_TEMP/assets" && sha256sum * > SHA256SUMS
+          ls -la
+
+      - name: Attach to the release
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ${{ runner.temp }}/assets/worker.js
+            ${{ runner.temp }}/assets/worker.js.map
+            ${{ runner.temp }}/assets/wrangler.jsonc
+            ${{ runner.temp }}/assets/SHA256SUMS
+
+      - name: Upload as a build artifact (manual runs)
+        if: github.ref_type != 'tag'
+        uses: actions/upload-artifact@v4
+        with:
+          name: omni-model-worker
+          path: ${{ runner.temp }}/assets
