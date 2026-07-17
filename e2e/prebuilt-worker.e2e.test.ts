@@ -35,6 +35,7 @@ storage:
   type: durable-object
   binding: OMNI_DO
 security:
+  allowUnauthenticated: true
   providers: []
 rateLimits:
   - name: per-ip

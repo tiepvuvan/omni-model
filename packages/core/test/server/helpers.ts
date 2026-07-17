@@ -245,6 +245,13 @@ export interface TestAppOptions {
   now?: () => number;
   env?: Record<string, string | undefined>;
   initOverrides?: Partial<OmniAppInit>;
+  /**
+   * A config with no verifiers refuses to start unless it opts in. Most suites
+   * here exercise routing/limits/streaming rather than auth, so they default to
+   * opting in and keep the auth flag out of every unrelated fixture. Set false
+   * to assert the guard itself (see auth.test.ts).
+   */
+  allowUnauthenticated?: boolean;
 }
 
 /**
@@ -259,6 +266,9 @@ export async function createTestApp(options: TestAppOptions) {
   registry.auth.set("fake-auth", createFakeAuthFactory());
   const collector = createWaitUntilCollector();
   const config = parseConfig(options.yaml, options.env ?? {});
+  if (config.security.providers.length === 0 && (options.allowUnauthenticated ?? true)) {
+    config.security.allowUnauthenticated = true;
+  }
   const app = await createOmniApp({
     config,
     registry,

@@ -249,10 +249,23 @@ security:
 | `mode` | `any` \| `all` | `any` | How multiple verifiers combine (below). |
 | `publicPaths` | `string[]` | `[]` | Paths that bypass authentication: exact match, or prefix match when the pattern ends with `*` (e.g. `/v1/models*`). |
 | `providers` | array | `[]` | Verifier blocks, discriminated by `type`. |
+| `allowUnauthenticated` | boolean | `false` | Serve `/v1/*` with no verifier. Startup fails without it. |
 
 <Warning>
-With **no providers configured**, the proxy accepts unauthenticated requests on `/v1/*` and logs a
-warning at startup.
+**At least one verifier is required.** With `providers: []` the proxy **refuses to start** — a proxy
+that authenticates nobody is an open relay on your provider credits, and offers a caller nothing that
+calling the upstream API directly wouldn't. Since that's the whole reason omni-model exists, it is
+never the default.
+
+For local development or a genuinely private network, opt in explicitly:
+
+```yaml
+security:
+  allowUnauthenticated: true
+```
+
+It logs a warning on every start, and `${...}` provider keys still apply — so an "open" proxy is
+still spending real credits.
 </Warning>
 
 Each verifier inspects the request for its own credential and returns one of three outcomes:

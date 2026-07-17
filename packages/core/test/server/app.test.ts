@@ -67,11 +67,24 @@ routing:
   });
 
   it("applies defaults to a minimal programmatic config", async () => {
-    // memory storage, empty security/providers/routing all defaulted in.
-    const config = { version: 1 } as unknown as OmniConfig;
+    // memory storage, empty providers/routing all defaulted in. Security is the
+    // one block with no safe default — with no verifier the app refuses to
+    // start unless it is told to run open (see auth.test.ts), so a truly
+    // minimal config has to make that call.
+    const config = {
+      version: 1,
+      security: { allowUnauthenticated: true },
+    } as unknown as OmniConfig;
     const app = await createOmniApp({ config, logger: silentLogger, now: () => FIXED_NOW });
     const health = await app.fetch(new Request("http://local/healthz"));
     expect(health.status).toBe(200);
+  });
+
+  it("refuses a config that would serve /v1 with no verifier", async () => {
+    const config = { version: 1 } as unknown as OmniConfig;
+    await expect(
+      createOmniApp({ config, logger: silentLogger, now: () => FIXED_NOW }),
+    ).rejects.toThrowError(ConfigError);
   });
 });
 

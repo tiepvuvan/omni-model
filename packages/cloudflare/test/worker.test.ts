@@ -18,6 +18,8 @@ import { createWorker, type WorkerEnv } from "../src/worker.js";
 
 const MEMORY_YAML = `
 version: 1
+security:
+  allowUnauthenticated: true
 storage:
   type: memory
 providers:
@@ -32,6 +34,8 @@ routing:
 // injectable clock (createWorker uses the platform clock).
 const DO_YAML = `
 version: 1
+security:
+  allowUnauthenticated: true
 storage:
   type: durable-object
   binding: OMNI_DO
@@ -55,6 +59,8 @@ const FAKE_USAGE_TOTAL = 7;
 // the counter the post-response usage recording wrote.
 const STREAM_DO_YAML = `
 version: 1
+security:
+  allowUnauthenticated: true
 storage:
   type: durable-object
   binding: OMNI_DO
@@ -316,6 +322,8 @@ describe("createWorker", () => {
   it("serves requests with cloudflare-kv storage under a custom binding name", async () => {
     const yaml = `
 version: 1
+security:
+  allowUnauthenticated: true
 storage:
   type: cloudflare-kv
   binding: MY_KV
@@ -337,6 +345,8 @@ routing:
     try {
       const yaml = `
 version: 1
+security:
+  allowUnauthenticated: true
 storage:
   type: durable-object
 providers:
@@ -373,6 +383,8 @@ routing:
     try {
       const yaml = `
 version: 1
+security:
+  allowUnauthenticated: true
 storage:
   type: cloudflare-kv
 providers:

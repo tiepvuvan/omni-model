@@ -33,8 +33,8 @@ with:
 pnpm --filter omni-model-cloudflare exec wrangler secret put OPENAI_API_KEY
 ```
 
-Then add a [security provider](/security/custom-jwt) — an empty `security.providers` serves `/v1/*`
-unauthenticated.
+Then add a [security provider](/security/custom-jwt) — with an empty `security.providers` the proxy
+**refuses to start**, because a proxy that authenticates nobody is an open relay on your credits.
 </Warning>
 
 ## Forkless deploy (prebuilt bundle)
@@ -138,8 +138,9 @@ clone until you build.
 
 <Step title="Edit the worker config">
 Edit `apps/cloudflare/omni.yaml`. Pick your storage backend and match the binding name in
-`wrangler.jsonc`. Add at least one [security provider](/security/custom-jwt) — an empty
-`security.providers` is an **open proxy** that anyone who finds the URL can spend your credits on.
+`wrangler.jsonc`. Add at least one [security provider](/security/custom-jwt): with an empty
+`security.providers` the proxy **refuses to start** rather than serve as an open relay on your
+credits.
 </Step>
 
 <Step title="Set provider secrets">

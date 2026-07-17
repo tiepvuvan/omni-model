@@ -54,6 +54,19 @@ export const securityConfigSchema = z.strictObject({
   /** Paths (exact or trailing-`*` prefix) that bypass authentication. */
   publicPaths: z.array(z.string()).default([]),
   providers: z.array(securityProviderConfigSchema).default([]),
+  /**
+   * Serve `/v1/*` with no verifier configured. **Off by default, and startup
+   * fails without it.**
+   *
+   * A proxy that authenticates nobody is an open relay on your provider
+   * credits: anyone who finds the URL spends your money, and it offers a caller
+   * nothing the upstream API doesn't — which is the entire reason this exists.
+   * So "no auth" must be a deliberate, greppable choice, not the result of
+   * omitting a block.
+   *
+   * Only reasonable for local development or a genuinely private network.
+   */
+  allowUnauthenticated: z.boolean().default(false),
 });
 
 export const rateLimitRuleSchema = z

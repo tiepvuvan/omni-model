@@ -17,14 +17,19 @@ storage:
   type: durable-object
   binding: OMNI_DO
 
-# No security providers = OPEN PROXY: anyone who finds the URL can spend
-# your API credits. Add at least one verifier before sharing the URL.
+# >>> REQUIRED <<< Add a verifier — the proxy refuses to start without one.
+# A proxy that authenticates nobody is an open relay on your API credits, and
+# gives callers nothing the upstream API doesn't. Uncomment one (see
+# https://github.com/tiepvuvan/omni-model#security) and redeploy:
 security:
   providers: []
-  # Example: only requests carrying a valid Firebase App Check token pass.
+  # Only requests carrying a valid Firebase App Check token pass:
   # providers:
   #   - type: firebase-app-check
   #     projectNumber: "1234567890"
+  #
+  # Running locally, or on a private network, and really want no auth?
+  # allowUnauthenticated: true
 
 rateLimits:
   - name: per-user-requests

@@ -153,9 +153,7 @@ routing:
     expect(chat.status).toBe(401);
   });
 
-  it("warns once at startup and serves openly when no verifiers are configured", async () => {
-    const { logger, entries } = createRecordingLogger();
-    const yaml = `
+  const NO_VERIFIER_YAML = `
 version: 1
 providers:
   fake:
@@ -163,10 +161,31 @@ providers:
 routing:
   defaultProvider: fake
 `;
+
+  it("refuses to start when no verifier is configured", async () => {
+    // A proxy that authenticates nobody is an open relay on the operator's
+    // provider credits, and gives a caller nothing the upstream API doesn't.
+    // Omitting `security` must not silently produce one.
+    await expect(
+      createTestApp({ yaml: NO_VERIFIER_YAML, allowUnauthenticated: false }),
+    ).rejects.toThrow(/security\.providers is empty/);
+  });
+
+  it("names the way out in the startup error", async () => {
+    await expect(
+      createTestApp({ yaml: NO_VERIFIER_YAML, allowUnauthenticated: false }),
+    ).rejects.toThrow(/security\.allowUnauthenticated: true/);
+  });
+
+  it("serves openly only when allowUnauthenticated is set, and warns loudly", async () => {
+    const { logger, entries } = createRecordingLogger();
+    const yaml = `${NO_VERIFIER_YAML}security:
+  allowUnauthenticated: true
+`;
     const { app } = await createTestApp({ yaml, logger });
     const warnings = entries.filter((entry) => entry.level === "warn");
     expect(warnings).toHaveLength(1);
-    expect(warnings[0]?.message).toContain("no security providers configured");
+    expect(warnings[0]?.message).toContain("allowUnauthenticated");
 
     const response = await app.fetch(chatRequest(CHAT_BODY));
     expect(response.status).toBe(200);

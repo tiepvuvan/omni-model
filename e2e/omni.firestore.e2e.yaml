@@ -18,6 +18,9 @@ storage:
   collection: omni_ratelimits_e2e
 
 security:
+  # This suite exercises chat/streaming/limits, not auth. A proxy with no
+  # verifier refuses to start unless it says so outright.
+  allowUnauthenticated: true
   providers: []
 
 rateLimits:

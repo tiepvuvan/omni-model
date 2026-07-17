@@ -137,10 +137,15 @@ function rateLimits(a: Answers): Record<string, unknown>[] {
 
 /** Build the config document (plain data — stringify separately). */
 export function buildConfig(a: Answers): Record<string, unknown> {
+  const security: Record<string, unknown> = { mode: "any", providers: securityProviders(a) };
+  // With no verifier the proxy refuses to start unless it is told to run open.
+  // The wizard makes you confirm that, and `--auth none` states it outright, so
+  // emit the opt-in rather than a config that won't boot.
+  if (a.auth.length === 0) security.allowUnauthenticated = true;
   return {
     version: 1,
     storage: storageBlock(a.storage),
-    security: { mode: "any", providers: securityProviders(a) },
+    security,
     rateLimits: rateLimits(a),
     providers: { [a.provider.name]: providerBlock(a.provider) },
     routing: { defaultProvider: a.provider.name },

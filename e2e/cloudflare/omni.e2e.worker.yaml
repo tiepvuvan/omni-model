@@ -18,6 +18,9 @@ storage:
   binding: OMNI_DO
 
 security:
+  # This suite exercises chat/streaming/limits, not auth. A proxy with no
+  # verifier refuses to start unless it says so outright.
+  allowUnauthenticated: true
   providers: []
 
 # A low limit so a short burst deterministically trips a 429 — which can only
