@@ -7,11 +7,37 @@ The deployable worker lives in `apps/cloudflare` and is driven by the root `wran
 adds the two Workers storage backends from `@omni-model/cloudflare` on top of the default registry,
 so rate-limit counters can live in a **Durable Object** (exact) or **Workers KV** (approximate).
 
-<Note>
-The one-click **Deploy to Cloudflare** button in the README forks the repository into your GitHub
-account — Workers bindings and Workers Builds live there. Point the button at your fork so your
-config and secrets stay yours. The steps below cover a CLI deploy from a fork.
-</Note>
+## One-click deploy
+
+The **Deploy to Cloudflare** button in the README forks the repo into your GitHub account and sets
+up [Workers Builds](https://developers.cloudflare.com/workers/ci-cd/builds/), which runs
+`wrangler deploy` on each push to `main`. Bindings and secrets live in your account, so point the
+button at your own fork.
+
+Two things are handled for you:
+
+- **The build.** The worker imports the workspace packages, which resolve to their compiled `dist/`
+  — absent on a fresh clone. `wrangler.jsonc` declares a `build.command`, so wrangler compiles them
+  before bundling. Without it the deploy fails with `Could not resolve "@omni-model/cloudflare"`.
+- **The Durable Object.** The `OMNI_DO` binding and its SQLite migration are declared in
+  `wrangler.jsonc`, so the deploy provisions the rate-limit store (free-plan friendly).
+
+<Warning>
+**One step is left, and the proxy tells you so.** The bundled `apps/cloudflare/omni.yaml` references
+`${OPENAI_API_KEY}`; until that secret exists, every request answers `missing environment variable
+"OPENAI_API_KEY" referenced at $.providers.openai.apiKey`. That's deliberate — it fails fast with the
+fix in the message instead of booting with an empty key and returning an opaque upstream 401. Finish
+with:
+
+```sh
+pnpm --filter omni-model-cloudflare exec wrangler secret put OPENAI_API_KEY
+```
+
+Then add a [security provider](/security/custom-jwt) — an empty `security.providers` serves `/v1/*`
+unauthenticated.
+</Warning>
+
+The steps below cover a CLI deploy from a fork.
 
 ## Storage backends
 

@@ -1,6 +1,6 @@
 // Cloudflare Workers deployment for omni-model.
 //
-//   pnpm --filter omni-model-cloudflare deploy      # build first: pnpm build
+//   pnpm --filter omni-model-cloudflare deploy      # `build.command` below compiles first
 //
 // wrangler is a dependency of apps/cloudflare (not the repo root), so run it
 // through that package (or `cd apps/cloudflare` first).
@@ -14,6 +14,13 @@
   "name": "omni-model",
   "main": "apps/cloudflare/src/index.ts",
   "compatibility_date": "2025-06-01",
+  // The worker imports the workspace packages, which resolve to their built
+  // `dist/`. wrangler runs this before bundling, so a FRESH CLONE deploys with
+  // nothing but `wrangler deploy` — which is exactly what the one-click
+  // "Deploy to Cloudflare" button (Workers Builds) runs. Without it the deploy
+  // fails with `Could not resolve "@omni-model/cloudflare"`.
+  // Filtered to the two packages the worker needs (`...` pulls in core).
+  "build": { "command": "pnpm --filter @omni-model/cloudflare... run build" },
   // Bundle the YAML config as a plain-text module (see apps/cloudflare/src/yaml.d.ts).
   "rules": [{ "type": "Text", "globs": ["**/*.yaml"], "fallthrough": true }],
   // Default storage: a Durable Object (exact rate-limit counters). The class

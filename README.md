@@ -106,7 +106,11 @@ image yourself instead: `docker build -t omni-model .`.
   provisions a managed Key Value (Redis) datastore for rate limits, and prompts you for your
   provider API keys.
 - **Cloudflare Workers** — the button forks the repo into your account (Workers bindings + secrets
-  live there); edit `apps/cloudflare/omni.yaml`, then `wrangler secret put OPENAI_API_KEY`.
+  live there), compiles the workspace packages and provisions the `OMNI_DO` Durable Object for you.
+  One step is left, and the proxy tells you so: until you run
+  `wrangler secret put OPENAI_API_KEY`, every request answers `missing environment variable
+  "OPENAI_API_KEY"` — set it and you're live. Edit `apps/cloudflare/omni.yaml` to change the
+  config (or set the `OMNI_CONFIG` secret to reconfigure without a rebuild).
 - **Cloud Run** — no fork; paste your config into the `OMNI_CONFIG` prompt.
 - **Fly.io** — `fly launch --copy-config` (a `fly.toml` ships in the repo).
 
