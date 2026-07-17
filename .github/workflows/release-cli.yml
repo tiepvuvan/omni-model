@@ -1,0 +1,50 @@
+name: Publish CLI to npm
+
+# Publishes the `omni-model` deploy CLI on a semver tag.
+#   npx omni-model deploy
+#
+# This is the ONLY package published to npm. The library packages
+# (@omni-model/core et al.) are deliberately not published: the CLI is a leaf
+# that shells out to wrangler/gcloud and downloads release artifacts, so it
+# carries no library API surface, no lockstep versioning, and no workspace:
+# rewrite hazard.
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write # npm provenance
+
+concurrency:
+  group: publish-cli-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+
+      - run: pnpm install --frozen-lockfile
+
+      # The CLI's own gate: its tests assert every config the wizard can emit
+      # parses AND builds a real app.
+      - run: pnpm run ci
+
+      - name: Publish
+        working-directory: packages/cli
+        # --provenance ties the tarball to this workflow run; publishConfig
+        # already sets access + provenance, so this is belt and braces.
+        run: pnpm publish --no-git-checks --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

@@ -7,6 +7,14 @@ JWT), and one YAML file configures rate limits (request windows **and** token bu
 CEL-expression model routing across OpenAI, Anthropic, Google Gemini and any OpenAI-compatible
 endpoint. Deploy it to Cloudflare Workers or any container platform.
 
+```sh
+npx omni-model deploy
+```
+
+Picks your platform, storage, auth and limits, writes an `omni.yaml`, and ships it — no fork, no
+clone, no build. Your API keys never enter the config: it emits `${ENV}` references and tells you
+which secrets to set.
+
 ## How it works
 
 ```text

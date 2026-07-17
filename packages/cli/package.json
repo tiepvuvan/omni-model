@@ -1,0 +1,45 @@
+{
+  "name": "omni-model",
+  "version": "0.1.0",
+  "description": "Deploy a self-hosted, OpenAI-compatible AI proxy in one command: npx omni-model deploy.",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "omni-model": "./dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "keywords": [
+    "openai",
+    "ai-proxy",
+    "cloudflare-workers",
+    "cloud-run",
+    "rate-limiting",
+    "deploy",
+    "cli"
+  ],
+  "homepage": "https://github.com/tiepvuvan/omni-model#readme",
+  "bugs": "https://github.com/tiepvuvan/omni-model/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tiepvuvan/omni-model.git",
+    "directory": "packages/cli"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "prepublishOnly": "pnpm run build"
+  },
+  "dependencies": {
+    "@clack/prompts": "^1.7.0",
+    "commander": "^15.0.0",
+    "yaml": "^2.9.0"
+  }
+}
