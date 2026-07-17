@@ -24,6 +24,46 @@ what the limits are; writes an `omni.yaml`; and ships it.
 ◆  Token budget per caller per day?   200000
 ```
 
+## Non-interactive (CI, scripts, Dockerfiles)
+
+Pass `--target` and the wizard is skipped entirely — no prompts, no TTY needed:
+
+```sh
+npx omni-model deploy \
+  --target cloudflare \
+  --storage durable-object \
+  --provider openai \
+  --auth firebase-app-check --firebase-project-number 499566808294 \
+  --requests-per-minute 60 --tokens-per-day 200000 \
+  --name my-proxy --yes
+```
+
+Add `--dry-run` to print the deploy command instead of running it.
+
+Two deliberate behaviours:
+
+- **`--auth` is required.** There is no default, because defaulting to "no auth" would silently
+  publish an open proxy anyone can spend your credits on. Say `--auth none` if that's what you want.
+- **It never prompts without a TTY.** Piping stdin (as CI does) and omitting `--target` fails with
+  the flags you need, rather than hanging forever waiting on a prompt.
+
+Exit codes: `0` success, `2` a flag problem (message names the valid values), `1` bad usage.
+
+| Flag | Default |
+| --- | --- |
+| `-t, --target` | *required for non-interactive* — `cloudflare`, `cloud-run`, `fly`, `render`, `docker` |
+| `-s, --storage` | the best one for the target (e.g. `durable-object` on Cloudflare, `firestore` on Cloud Run) |
+| `--provider` | `openai` (or `anthropic`, `google`, `openai-compatible`) |
+| `--base-url` | *required* for `openai-compatible` |
+| `--provider-name` · `--api-key-env` | derived from the provider |
+| `--auth` | *required* — comma-separated verifiers, or `none` |
+| `--firebase-project-id` · `--firebase-project-number` · `--apple-team-id` · `--apple-bundle-id` | omitted → the config emits a `${VAR}` reference to read at runtime |
+| `--requests-per-minute` · `--tokens-per-day` | `60` · `200000` (`0` disables) |
+| `-c, --config` · `--name` · `-y, --yes` · `--dry-run` | `omni.yaml` · `omni-model` · off · off |
+
+Invalid combinations are refused up front — `--target cloudflare --storage firestore` tells you
+Cloudflare can't run Firestore instead of shipping a config that dies on the first request.
+
 ## What it does
 
 | Target | How it deploys |
