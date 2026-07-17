@@ -62,13 +62,20 @@ program
   .description("Interactively configure and deploy the proxy")
   .option("-c, --config <path>", "config file to write", "omni.yaml")
   .option("-y, --yes", "skip confirmations (uses defaults)", false)
-  .action(async (opts: { config: string; yes: boolean }) => {
+  .option("--dry-run", "show what would happen without deploying", false)
+  .action(async (opts: { config: string; yes: boolean; dryRun: boolean }) => {
     intro("omni-model — deploy an AI proxy you own");
     const answers = await runWizard();
     const yaml = toYaml(answers);
     await writeConfig(opts.config, yaml, opts.yes);
     const serviceName = await askServiceName("omni-model", opts.yes);
-    await deploy({ answers, configPath: opts.config, serviceName, yes: opts.yes });
+    await deploy({
+      answers,
+      configPath: opts.config,
+      serviceName,
+      yes: opts.yes,
+      dryRun: opts.dryRun,
+    });
     outro("Done. Edit omni.yaml and re-run to change anything.");
   });
 

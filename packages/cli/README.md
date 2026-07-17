@@ -57,6 +57,56 @@ npx omni-model deploy -c my.yaml
 
 Nothing is deployed without showing you the command first.
 
+## Test it locally
+
+The wizard itself deploys nothing — run it and inspect the config it writes:
+
+```sh
+pnpm build
+node packages/cli/dist/index.js init        # wizard → writes omni.yaml, stops
+```
+
+`--dry-run` walks the whole deploy path and prints the command instead of running it:
+
+```sh
+node packages/cli/dist/index.js deploy --dry-run
+```
+
+To exercise the **Cloudflare** path before any release exists, build the artifacts a release would
+ship and point the CLI at them:
+
+```sh
+pnpm --filter omni-model-cloudflare run artifacts   # → .artifacts/{worker.js,wrangler.jsonc}
+OMNI_MODEL_ARTIFACTS="$PWD/.artifacts" \
+  node packages/cli/dist/index.js deploy --dry-run
+```
+
+As a real command on your PATH:
+
+```sh
+cd packages/cli && npm link && omni-model init
+```
+
+Exactly what npm users will get:
+
+```sh
+cd packages/cli && npm pack                  # → omni-model-0.1.0.tgz
+cd "$(mktemp -d)" && npm i /path/to/omni-model-0.1.0.tgz && npx omni-model --help
+```
+
+### Development overrides
+
+| Variable | Effect |
+| --- | --- |
+| `OMNI_MODEL_ARTIFACTS` | Use a directory holding `worker.js` + `wrangler.jsonc` instead of downloading a release. |
+| `OMNI_MODEL_IMAGE` | Use a specific container image (e.g. a local build). |
+| `OMNI_MODEL_REPO` | Point at your fork. |
+
+<!-- prettier-ignore -->
+> **Note:** the published image tags `:latest` only on a version tag; pushes to `main` publish
+> `:edge`. Before the first release, use `OMNI_MODEL_IMAGE=ghcr.io/tiepvuvan/omni-model:edge` for the
+> Docker target.
+
 ## Learn more
 
 Full configuration reference, security providers (Firebase Auth / App Check / App Attest /

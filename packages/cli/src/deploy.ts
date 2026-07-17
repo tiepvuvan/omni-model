@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { confirm, isCancel, log, note, spinner } from "@clack/prompts";
 import type { Answers } from "./config.js";
@@ -16,8 +16,17 @@ import { TARGETS } from "./targets.js";
  */
 
 const REPO = process.env.OMNI_MODEL_REPO ?? "tiepvuvan/omni-model";
-const IMAGE = `ghcr.io/${REPO}:latest`;
-/** Where downloaded release artifacts land — not the user's working tree. */
+/**
+ * Overrides for developing the CLI itself, before (or instead of) a release:
+ *   OMNI_MODEL_ARTIFACTS  a directory holding worker.js + wrangler.jsonc, used
+ *                         instead of downloading them from a release
+ *   OMNI_MODEL_IMAGE      a container image ref, e.g. a locally built one
+ *   OMNI_MODEL_REPO       point at your fork
+ * See packages/cli/README.md.
+ */
+const LOCAL_ARTIFACTS = process.env.OMNI_MODEL_ARTIFACTS;
+const IMAGE = process.env.OMNI_MODEL_IMAGE ?? `ghcr.io/${REPO}:latest`;
+/** Where release artifacts land — not the user's working tree. */
 const ARTIFACT_DIR = ".omni-model";
 
 export interface DeployOptions {
@@ -26,6 +35,8 @@ export interface DeployOptions {
   serviceName: string;
   /** Skip the confirmation prompt. */
   yes: boolean;
+  /** Stage everything and print the command, but don't run it. */
+  dryRun: boolean;
 }
 
 /** Run a command, streaming its output. Resolves with the exit code. */
@@ -37,8 +48,13 @@ function run(cmd: string, args: string[]): Promise<number> {
   });
 }
 
-async function confirmRun(what: string, yes: boolean): Promise<boolean> {
-  if (yes) return true;
+/** Decide whether to actually execute a command: never on a dry run. */
+async function confirmRun(what: string, o: DeployOptions): Promise<boolean> {
+  if (o.dryRun) {
+    log.info(`[dry run] would run: ${what}`);
+    return false;
+  }
+  if (o.yes) return true;
   const ok = await confirm({ message: `Run: ${what}` });
   return !isCancel(ok) && ok === true;
 }
@@ -59,22 +75,42 @@ function envReminder(a: Answers): void {
  */
 async function deployCloudflare(o: DeployOptions): Promise<void> {
   const s = spinner();
-  s.start(`Downloading the prebuilt worker from ${REPO}`);
   mkdirSync(ARTIFACT_DIR, { recursive: true });
-  const base = `https://github.com/${REPO}/releases/latest/download`;
-  try {
-    for (const file of ["worker.js", "wrangler.jsonc"]) {
-      const res = await fetch(`${base}/${file}`);
-      if (!res.ok) throw new Error(`${file}: HTTP ${res.status}`);
-      writeFileSync(join(ARTIFACT_DIR, file), Buffer.from(await res.arrayBuffer()));
+  if (LOCAL_ARTIFACTS !== undefined) {
+    // Developing the CLI: use a locally built bundle instead of a release.
+    s.start(`Using local artifacts from ${LOCAL_ARTIFACTS}`);
+    try {
+      for (const file of ["worker.js", "wrangler.jsonc"]) {
+        cpSync(join(LOCAL_ARTIFACTS, file), join(ARTIFACT_DIR, file));
+      }
+    } catch (error) {
+      s.stop("Local artifacts unusable");
+      log.error(
+        `OMNI_MODEL_ARTIFACTS=${LOCAL_ARTIFACTS} must hold worker.js + wrangler.jsonc (${String(error)})`,
+      );
+      return;
     }
-  } catch (error) {
-    s.stop("Download failed");
-    log.error(
-      `Could not fetch the prebuilt worker (${String(error)}).\n` +
-        `Releases: https://github.com/${REPO}/releases`,
-    );
-    return;
+    s.stop("Local artifacts staged");
+  } else {
+    s.start(`Downloading the prebuilt worker from ${REPO}`);
+    const base = `https://github.com/${REPO}/releases/latest/download`;
+    try {
+      for (const file of ["worker.js", "wrangler.jsonc"]) {
+        const res = await fetch(`${base}/${file}`);
+        if (!res.ok) throw new Error(`${file}: HTTP ${res.status}`);
+        writeFileSync(join(ARTIFACT_DIR, file), Buffer.from(await res.arrayBuffer()));
+      }
+    } catch (error) {
+      s.stop("Download failed");
+      log.error(
+        `Could not fetch the prebuilt worker (${String(error)}).\n` +
+          `That release may not exist yet — see https://github.com/${REPO}/releases\n` +
+          "To deploy a locally built bundle instead, set OMNI_MODEL_ARTIFACTS to a\n" +
+          "directory holding worker.js + wrangler.jsonc.",
+      );
+      return;
+    }
+    s.stop("Prebuilt worker ready");
   }
   // Point the template at the user's chosen service name.
   const cfgPath = join(ARTIFACT_DIR, "wrangler.jsonc");
@@ -82,12 +118,11 @@ async function deployCloudflare(o: DeployOptions): Promise<void> {
     cfgPath,
     readFileSync(cfgPath, "utf8").replace(/"name":\s*"[^"]*"/, `"name": "${o.serviceName}"`),
   );
-  s.stop("Prebuilt worker ready");
 
   envReminder(o.answers);
   const omniConfig = readFileSync(o.configPath, "utf8");
   const args = ["wrangler", "deploy", "--config", cfgPath, "--var", `OMNI_CONFIG:${omniConfig}`];
-  if (!(await confirmRun(`npx ${args.join(" ").slice(0, 60)}…`, o.yes))) {
+  if (!(await confirmRun(`npx ${args.join(" ").slice(0, 60)}…`, o))) {
     log.info("Skipped. To deploy later:");
     log.message(
       `  npx wrangler deploy --config ${cfgPath} --var OMNI_CONFIG:"$(cat ${o.configPath})"`,
@@ -118,7 +153,7 @@ async function deployDocker(o: DeployOptions): Promise<void> {
     ...envVarsFor(o.answers).flatMap((v) => ["-e", v]), // forwarded from your shell
     IMAGE,
   ];
-  if (!(await confirmRun(`docker run … ${IMAGE}`, o.yes))) {
+  if (!(await confirmRun(`docker run … ${IMAGE}`, o))) {
     log.info(
       `To run later:\n  docker run -p 8787:8787 -e OMNI_CONFIG="$(cat ${o.configPath})" ${IMAGE}`,
     );
