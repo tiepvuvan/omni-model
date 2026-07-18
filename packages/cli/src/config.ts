@@ -119,8 +119,8 @@ function securityProviders(a: Answers): Record<string, unknown>[] {
 }
 
 function rateLimits(a: Answers): Record<string, unknown>[] {
-  // With no verifier there is no identity to key on, so limits fall back to IP.
-  const key = a.auth.length > 0 ? "user" : "ip";
+  // A verifier is always configured, so there is always an identity to key on.
+  const key = "user";
   const rules: Record<string, unknown>[] = [];
   if (a.requestsPerMinute && a.requestsPerMinute > 0) {
     rules.push({
@@ -137,15 +137,12 @@ function rateLimits(a: Answers): Record<string, unknown>[] {
 
 /** Build the config document (plain data — stringify separately). */
 export function buildConfig(a: Answers): Record<string, unknown> {
-  const security: Record<string, unknown> = { mode: "any", providers: securityProviders(a) };
-  // With no verifier the proxy refuses to start unless it is told to run open.
-  // The wizard makes you confirm that, and `--auth none` states it outright, so
-  // emit the opt-in rather than a config that won't boot.
-  if (a.auth.length === 0) security.allowUnauthenticated = true;
   return {
     version: 1,
     storage: storageBlock(a.storage),
-    security,
+    // At least one verifier is mandatory — the proxy refuses to start without
+    // one, so the wizard and --auth both require a choice.
+    security: { mode: "any", providers: securityProviders(a) },
     rateLimits: rateLimits(a),
     providers: { [a.provider.name]: providerBlock(a.provider) },
     routing: { defaultProvider: a.provider.name },

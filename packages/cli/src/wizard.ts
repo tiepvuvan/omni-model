@@ -1,4 +1,4 @@
-import { cancel, confirm, isCancel, multiselect, note, select, text } from "@clack/prompts";
+import { cancel, isCancel, multiselect, note, select, text } from "@clack/prompts";
 import { type Answers, type AuthId, envRef, type ProviderChoice } from "./config.js";
 import { type StorageId, storagesFor, TARGETS, type TargetId } from "./targets.js";
 
@@ -110,26 +110,15 @@ export async function runWizard(): Promise<Answers> {
     );
   }
 
+  // At least one is mandatory: the proxy refuses to start without a verifier,
+  // because one that authenticates nobody is an open relay on your credits.
   const auth = stopIfCancelled(
     await multiselect<AuthId>({
       message: "How should clients authenticate? (space to select, enter to confirm)",
       options: AUTH_OPTIONS,
-      required: false,
+      required: true,
     }),
   );
-
-  if (auth.length === 0) {
-    const ok = stopIfCancelled(
-      await confirm({
-        message: "No auth means anyone who finds the URL can spend your API credits. Continue?",
-        initialValue: false,
-      }),
-    );
-    if (!ok) {
-      cancel("Cancelled — re-run and pick a verifier.");
-      process.exit(0);
-    }
-  }
 
   const answers: Answers = { target, storage, provider: chosen, auth };
 

@@ -46,8 +46,8 @@ const PROVIDERS: ProviderChoice[] = [
   },
 ];
 
+// No empty set: a verifier is mandatory, so the wizard can't produce one.
 const AUTH_SETS: AuthId[][] = [
-  [],
   ["firebase-auth"],
   ["firebase-app-check"],
   ["apple-app-attest"],
@@ -126,11 +126,18 @@ describe("generated config", () => {
     }
   });
 
-  it("keys limits on the identity when authenticated, and on ip when open", () => {
-    const open = toYaml({ ...(answers[0] as Answers), auth: [] });
-    expect(open).toContain("key: ip");
+  it("keys limits on the caller identity", () => {
     const secured = toYaml({ ...(answers[0] as Answers), auth: ["firebase-auth"] });
     expect(secured).toContain("key: user");
+  });
+
+  it("always emits at least one verifier", () => {
+    for (const a of answers) {
+      const cfg = parseConfig(toYaml(a), TEST_ENV) as unknown as {
+        security: { providers: unknown[] };
+      };
+      expect(cfg.security.providers.length).toBeGreaterThan(0);
+    }
   });
 
   it("omits a limit rule when the user asks for none", () => {

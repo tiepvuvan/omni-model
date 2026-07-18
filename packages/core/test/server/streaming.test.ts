@@ -58,7 +58,7 @@ describe("streaming chat completions", () => {
     expect(collector.count).toBe(1);
     await collector.flush();
     const counter = await storage.getCounter(
-      tokenCounterKey("daily-tokens", "anonymous", 3_600_000),
+      tokenCounterKey("daily-tokens", "test-user", 3_600_000),
     );
     expect(counter).toBe(10);
   });
@@ -76,7 +76,7 @@ describe("streaming chat completions", () => {
     await response.text();
     await collector.flush();
     const counter = await storage.getCounter(
-      tokenCounterKey("daily-tokens", "anonymous", 3_600_000),
+      tokenCounterKey("daily-tokens", "test-user", 3_600_000),
     );
     expect(counter).toBe(0);
   });

@@ -19,7 +19,8 @@ import { createWorker, type WorkerEnv } from "../src/worker.js";
 const MEMORY_YAML = `
 version: 1
 security:
-  allowUnauthenticated: true
+  providers:
+    - type: test-authenticated
 storage:
   type: memory
 providers:
@@ -35,7 +36,8 @@ routing:
 const DO_YAML = `
 version: 1
 security:
-  allowUnauthenticated: true
+  providers:
+    - type: test-authenticated
 storage:
   type: durable-object
   binding: OMNI_DO
@@ -53,6 +55,27 @@ routing:
   defaultProvider: fake
 `;
 
+/**
+ * A verifier is mandatory, so every fixture declares one. These tests exercise
+ * worker plumbing (config resolution, DO/KV storage, streaming) rather than
+ * auth, so this stands in for "the caller is authenticated".
+ */
+const alwaysAuthenticated = {
+  type: "test-authenticated",
+  create() {
+    return {
+      type: "test-authenticated",
+      name: "test-authenticated",
+      async verify() {
+        return {
+          ok: true as const,
+          identity: { provider: "test-authenticated", userId: "test-user", claims: {} },
+        };
+      },
+    };
+  },
+};
+
 const FAKE_USAGE_TOTAL = 7;
 
 // durable-object storage + a token budget: lets the streaming test read back
@@ -60,7 +83,8 @@ const FAKE_USAGE_TOTAL = 7;
 const STREAM_DO_YAML = `
 version: 1
 security:
-  allowUnauthenticated: true
+  providers:
+    - type: test-authenticated
 storage:
   type: durable-object
   binding: OMNI_DO
@@ -230,7 +254,9 @@ async function errorBody(response: Response): Promise<{ message: string; type: s
 
 describe("createWorker", () => {
   it("boots from the OMNI_CONFIG env var and serves /healthz", async () => {
-    const worker = createWorker({ logger: silentLogger });
+    const registry = createDefaultRegistry();
+    registry.auth.set("test-authenticated", alwaysAuthenticated);
+    const worker = createWorker({ logger: silentLogger, registry });
     const env: WorkerEnv = {
       OMNI_CONFIG: MEMORY_YAML,
       OPENAI_API_KEY: "sk-test",
@@ -243,11 +269,13 @@ describe("createWorker", () => {
   });
 
   it("falls back to options.configYaml when OMNI_CONFIG is absent or blank", async () => {
-    const absent = createWorker({ configYaml: MEMORY_YAML, logger: silentLogger });
+    const registry = createDefaultRegistry();
+    registry.auth.set("test-authenticated", alwaysAuthenticated);
+    const absent = createWorker({ configYaml: MEMORY_YAML, logger: silentLogger, registry });
     const env: WorkerEnv = { OPENAI_API_KEY: "sk-test" };
     expect((await absent.fetch(healthzRequest(), env, createCtx().ctx)).status).toBe(200);
 
-    const blank = createWorker({ configYaml: MEMORY_YAML, logger: silentLogger });
+    const blank = createWorker({ configYaml: MEMORY_YAML, logger: silentLogger, registry });
     const blankEnv: WorkerEnv = { OMNI_CONFIG: "  \n", OPENAI_API_KEY: "sk-test" };
     expect((await blank.fetch(healthzRequest(), blankEnv, createCtx().ctx)).status).toBe(200);
   });
@@ -255,6 +283,7 @@ describe("createWorker", () => {
   it("serves /healthz with durable-object storage bound from env", async () => {
     const registry = createDefaultRegistry();
     registry.providers.set("fake", createFakeProviderFactory());
+    registry.auth.set("test-authenticated", alwaysAuthenticated);
     const worker = createWorker({ configYaml: DO_YAML, registry, logger: silentLogger });
     const env: WorkerEnv = { OMNI_DO: new FakeNamespace() };
     const response = await worker.fetch(healthzRequest(), env, createCtx().ctx);
@@ -265,6 +294,7 @@ describe("createWorker", () => {
     const namespace = new FakeNamespace();
     const registry = createDefaultRegistry();
     registry.providers.set("fake", createFakeProviderFactory());
+    registry.auth.set("test-authenticated", alwaysAuthenticated);
     const worker = createWorker({ configYaml: DO_YAML, registry, logger: silentLogger });
     const env: WorkerEnv = { OMNI_DO: namespace };
     const { ctx, flush } = createCtx();
@@ -294,6 +324,7 @@ describe("createWorker", () => {
     const namespace = new FakeNamespace();
     const registry = createDefaultRegistry();
     registry.providers.set("fake-stream", createFakeStreamingProviderFactory());
+    registry.auth.set("test-authenticated", alwaysAuthenticated);
     const worker = createWorker({ configYaml: STREAM_DO_YAML, registry, logger: silentLogger });
     const env: WorkerEnv = { OMNI_DO: namespace };
     const { ctx, flush } = createCtx();
@@ -323,7 +354,8 @@ describe("createWorker", () => {
     const yaml = `
 version: 1
 security:
-  allowUnauthenticated: true
+  providers:
+    - type: test-authenticated
 storage:
   type: cloudflare-kv
   binding: MY_KV
@@ -334,7 +366,9 @@ providers:
 routing:
   defaultProvider: openai
 `;
-    const worker = createWorker({ configYaml: yaml, logger: silentLogger });
+    const registry = createDefaultRegistry();
+    registry.auth.set("test-authenticated", alwaysAuthenticated);
+    const worker = createWorker({ configYaml: yaml, logger: silentLogger, registry });
     const env: WorkerEnv = { MY_KV: fakeKVNamespace() };
     const response = await worker.fetch(healthzRequest(), env, createCtx().ctx);
     expect(response.status).toBe(200);
@@ -346,7 +380,8 @@ routing:
       const yaml = `
 version: 1
 security:
-  allowUnauthenticated: true
+  providers:
+    - type: test-authenticated
 storage:
   type: durable-object
 providers:
@@ -384,7 +419,8 @@ routing:
       const yaml = `
 version: 1
 security:
-  allowUnauthenticated: true
+  providers:
+    - type: test-authenticated
 storage:
   type: cloudflare-kv
 providers:

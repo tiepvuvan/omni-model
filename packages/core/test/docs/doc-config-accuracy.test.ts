@@ -52,6 +52,8 @@ const TEST_ENV = {
   ANTHROPIC_API_KEY: "sk-test",
   GEMINI_API_KEY: "sk-test",
   REDIS_URL: "redis://localhost:6379",
+  // Referenced by the documented local-development verifier.
+  OMNI_DEV_SECRET: "dev-secret",
   DATABASE_URL: "postgres://localhost/omni",
   SUPABASE_JWT_SECRET: "secret",
 };

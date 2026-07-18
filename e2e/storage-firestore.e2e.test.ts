@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { authHeaders } from "./support/auth.js";
 import { type RunningTarget, startNodeTarget } from "./support/proxy-targets.js";
 
 /**
@@ -52,7 +53,7 @@ describe.skipIf(!READY)("E2E: Node + Firestore storage (emulator)", () => {
     for (let i = 0; i < 6; i++) {
       const res = await fetch(`${proxy.base}/v1/chat/completions`, {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: { "content-type": "application/json", ...(await authHeaders()) },
         body: JSON.stringify({
           model: "openai/gpt-4o-mini",
           messages: [{ role: "user", content: "hi" }],

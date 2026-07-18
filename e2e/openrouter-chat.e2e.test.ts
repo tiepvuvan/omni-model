@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import type { RunningServer } from "@omni-model/node";
 import { startServer } from "@omni-model/node";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { authHeaders } from "./support/auth.js";
 
 /**
  * End-to-end: the real omni-model Node server → OpenRouter (an OpenAI-compatible
@@ -42,10 +43,11 @@ describe.skipIf(!KEY)("E2E: omni-model proxy → OpenRouter", () => {
     await server?.close();
   });
 
-  const post = (body: unknown): Promise<Response> =>
+  // A verifier is mandatory, so every request carries the suite's token.
+  const post = async (body: unknown): Promise<Response> =>
     fetch(`${base}/v1/chat/completions`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", ...(await authHeaders()) },
       body: JSON.stringify(body),
     });
 

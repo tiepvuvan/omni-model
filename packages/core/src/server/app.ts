@@ -180,33 +180,33 @@ export async function createOmniApp(init: OmniAppInit): Promise<Hono<AppEnv>> {
     }
   }
 
+  // A proxy with no verifier authenticates nobody: anyone who finds the URL
+  // spends your provider credits, and a caller gains nothing over calling the
+  // upstream API directly. There is deliberately no opt-out — it fails at
+  // startup (config errors never surface mid-request).
   if (verifiers.length === 0) {
-    // A proxy with no verifier authenticates nobody: anyone who finds the URL
-    // spends your provider credits, and a caller gains nothing over calling the
-    // upstream API directly. That is never worth shipping by accident, so it
-    // fails at startup (rule: config errors never surface mid-request) unless
-    // it was asked for explicitly.
-    if (!config.security.allowUnauthenticated) {
-      throw new ConfigError(
-        "security.providers is empty, so /v1/* would accept unauthenticated requests — " +
-          "an open relay on your provider credits. Add a verifier (firebase-auth, " +
-          "firebase-app-check, apple-app-attest, apple-device-check, jwt, supabase), " +
-          "or set security.allowUnauthenticated: true to run without one (local development " +
-          "or a private network only).",
-      );
-    }
-    log.warn("security.allowUnauthenticated is set: /v1/* is open to anyone who finds this URL");
-  } else {
-    app.use(
-      "/v1/*",
-      createAuthMiddleware({
-        mode: config.security.mode,
-        publicPaths: config.security.publicPaths,
-        verifiers,
-        contextFor: verifyContextFor,
-      }),
+    throw new ConfigError(
+      "security.providers is empty: /v1/* would accept unauthenticated requests, which " +
+        "is an open relay on your provider credits. Configure at least one verifier — " +
+        "firebase-auth, firebase-app-check, apple-app-attest, apple-device-check, " +
+        "supabase, or jwt. For local development, `jwt` with a shared secret needs no " +
+        "external service:\n" +
+        "  security:\n" +
+        "    providers:\n" +
+        "      - type: jwt\n" +
+        `        secret: \${OMNI_DEV_SECRET}\n` +
+        "        algorithms: [HS256]",
     );
   }
+  app.use(
+    "/v1/*",
+    createAuthMiddleware({
+      mode: config.security.mode,
+      publicPaths: config.security.publicPaths,
+      verifiers,
+      contextFor: verifyContextFor,
+    }),
+  );
 
   const deps: RouteDeps = {
     providers,

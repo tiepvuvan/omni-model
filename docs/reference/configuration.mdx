@@ -15,8 +15,9 @@ platform specifics.
 
 ## Top-level shape
 
-A config file has six top-level blocks plus a `version`. Every block has sane defaults, so the
-smallest valid file is tiny — but always give `storage` an explicit `type`.
+A config file has six top-level blocks plus a `version`. Most blocks have sane defaults, so the
+smallest valid file is tiny — but always give `storage` an explicit `type`, and `security` at least
+one verifier.
 
 ```yaml
 version: 1                # config format version (only 1 exists; may be omitted)
@@ -29,12 +30,18 @@ providers: {}             # upstream model providers, keyed by your own ids
 routing: {}               # which provider serves which request
 ```
 
-A minimal but complete skeleton that parses and starts:
+A minimal but complete skeleton that parses and starts. `security` is the one block with no safe
+default — at least one verifier is required, so the smallest working file still configures one:
 
 ```yaml
 version: 1
 storage:
   type: memory
+security:
+  providers:
+    - type: jwt
+      secret: ${OMNI_DEV_SECRET}
+      algorithms: [HS256]
 providers:
   openai:
     type: openai
@@ -248,24 +255,26 @@ security:
 | --- | --- | --- | --- |
 | `mode` | `any` \| `all` | `any` | How multiple verifiers combine (below). |
 | `publicPaths` | `string[]` | `[]` | Paths that bypass authentication: exact match, or prefix match when the pattern ends with `*` (e.g. `/v1/models*`). |
-| `providers` | array | `[]` | Verifier blocks, discriminated by `type`. |
-| `allowUnauthenticated` | boolean | `false` | Serve `/v1/*` with no verifier. Startup fails without it. |
+| `providers` | array | `[]` | Verifier blocks, discriminated by `type`. **At least one is required.** |
 
 <Warning>
-**At least one verifier is required.** With `providers: []` the proxy **refuses to start** — a proxy
-that authenticates nobody is an open relay on your provider credits, and offers a caller nothing that
-calling the upstream API directly wouldn't. Since that's the whole reason omni-model exists, it is
-never the default.
+**At least one verifier is required, and there is no opt-out.** With `providers: []` the proxy
+**refuses to start** — one that authenticates nobody is an open relay on your provider credits, and
+offers a caller nothing that calling the upstream API directly wouldn't. Since that is the whole
+reason omni-model exists, running without authentication is not a supported mode.
 
-For local development or a genuinely private network, opt in explicitly:
+For local development, the `jwt` verifier with a shared secret needs no external service:
 
 ```yaml
 security:
-  allowUnauthenticated: true
+  providers:
+    - type: jwt
+      secret: ${OMNI_DEV_SECRET}
+      algorithms: [HS256]
 ```
 
-It logs a warning on every start, and `${...}` provider keys still apply — so an "open" proxy is
-still spending real credits.
+To leave a specific path open (a health probe, say), use `publicPaths` rather than removing
+authentication wholesale.
 </Warning>
 
 Each verifier inspects the request for its own credential and returns one of three outcomes:

@@ -21,7 +21,7 @@ export interface DeployFlags {
   providerName?: string;
   baseUrl?: string;
   apiKeyEnv?: string;
-  /** Comma-separated verifier list, or "none" for an open proxy. */
+  /** Comma-separated verifier list. At least one is required. */
   auth?: string;
   firebaseProjectId?: string;
   firebaseProjectNumber?: string;
@@ -110,21 +110,23 @@ export function answersFromFlags(f: DeployFlags): Answers {
   const provider: ProviderChoice = { id: providerId, name: providerName, envVar };
   if (f.baseUrl !== undefined) provider.baseUrl = f.baseUrl;
 
-  // Deliberately required: defaulting to no auth would silently publish an open
-  // proxy that anyone can spend your credits on. Make it an explicit choice.
+  // A verifier is mandatory: the proxy refuses to start without one, because a
+  // proxy that authenticates nobody is an open relay on your provider credits.
   if (f.auth === undefined) {
+    throw new FlagError(`--auth is required — a comma-separated list of: ${AUTH_IDS.join(", ")}`);
+  }
+  const auth: AuthId[] = f.auth
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s !== "")
+    .map((s) => oneOf<AuthId>(s, AUTH_IDS, "auth"));
+  if (auth.length === 0) {
     throw new FlagError(
-      `--auth is required in non-interactive mode — a comma-separated list of ${AUTH_IDS.join(", ")}, or "none" for an open proxy`,
+      `--auth needs at least one verifier: ${AUTH_IDS.join(", ")}. ` +
+        "Running with no authentication is not supported — the proxy would be an " +
+        "open relay on your provider credits.",
     );
   }
-  const auth: AuthId[] =
-    f.auth === "none"
-      ? []
-      : f.auth
-          .split(",")
-          .map((s) => s.trim())
-          .filter((s) => s !== "")
-          .map((s) => oneOf<AuthId>(s, AUTH_IDS, "auth"));
 
   const answers: Answers = {
     target,

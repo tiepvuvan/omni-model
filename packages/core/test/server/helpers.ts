@@ -199,6 +199,32 @@ export function createFakeProviderSetup(behaviors: Record<string, FakeProviderBe
  * authenticates with userId/deviceId = value and claims `{ tier: value }`
  * (or `{ device: value }` for device kind).
  */
+/**
+ * A verifier that accepts every request as an anonymous authenticated caller.
+ *
+ * Stands in for "the caller is authenticated" in suites that test routing,
+ * limits or streaming rather than auth itself. It exists only so those fixtures
+ * don't each have to configure a verifier and attach a credential — the app
+ * always has one, exactly as production requires.
+ */
+export function createAlwaysAuthenticatedFactory(): AuthVerifierFactory {
+  return {
+    type: "test-authenticated",
+    create() {
+      return {
+        type: "test-authenticated",
+        name: "test-authenticated",
+        async verify(): Promise<AuthResult> {
+          return {
+            ok: true,
+            identity: { provider: "test-authenticated", userId: "test-user", claims: {} },
+          };
+        },
+      };
+    },
+  };
+}
+
 export function createFakeAuthFactory(): AuthVerifierFactory {
   return {
     type: "fake-auth",
@@ -246,12 +272,14 @@ export interface TestAppOptions {
   env?: Record<string, string | undefined>;
   initOverrides?: Partial<OmniAppInit>;
   /**
-   * A config with no verifiers refuses to start unless it opts in. Most suites
-   * here exercise routing/limits/streaming rather than auth, so they default to
-   * opting in and keep the auth flag out of every unrelated fixture. Set false
-   * to assert the guard itself (see auth.test.ts).
+   * The app refuses to start with no verifier, so a fixture that declares none
+   * gets the always-accepting `test-authenticated` verifier injected. Most
+   * suites here exercise routing/limits/streaming rather than auth and just
+   * need requests to arrive authenticated — this keeps an auth block out of
+   * every unrelated fixture while preserving the production invariant that a
+   * verifier always exists. Set false to assert the guard itself (auth.test.ts).
    */
-  allowUnauthenticated?: boolean;
+  injectVerifier?: boolean;
 }
 
 /**
@@ -264,10 +292,11 @@ export async function createTestApp(options: TestAppOptions) {
   const { factory, instances } = createFakeProviderSetup(options.behaviors);
   registry.providers.set(factory.type, factory);
   registry.auth.set("fake-auth", createFakeAuthFactory());
+  registry.auth.set("test-authenticated", createAlwaysAuthenticatedFactory());
   const collector = createWaitUntilCollector();
   const config = parseConfig(options.yaml, options.env ?? {});
-  if (config.security.providers.length === 0 && (options.allowUnauthenticated ?? true)) {
-    config.security.allowUnauthenticated = true;
+  if (config.security.providers.length === 0 && (options.injectVerifier ?? true)) {
+    config.security.providers = [{ type: "test-authenticated" }];
   }
   const app = await createOmniApp({
     config,

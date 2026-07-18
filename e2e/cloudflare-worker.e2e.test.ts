@@ -2,6 +2,7 @@ import { type ChildProcess, spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { authHeaders } from "./support/auth.js";
 
 /**
  * End-to-end: the real omni-model Cloudflare Worker, running in **workerd** via
@@ -109,10 +110,11 @@ describe.skipIf(!KEY)("E2E: omni-model Cloudflare Worker (workerd) → OpenRoute
     }
   });
 
-  const post = (body: unknown): Promise<Response> =>
+  // A verifier is mandatory, so every request carries the suite's token.
+  const post = async (body: unknown): Promise<Response> =>
     fetch(`${BASE}/v1/chat/completions`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", ...(await authHeaders()) },
       body: JSON.stringify(body),
     });
 

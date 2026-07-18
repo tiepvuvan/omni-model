@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { authHeaders } from "./support/auth.js";
 
 /**
  * End-to-end: the **forkless** deploy path — the prebuilt worker artifact.
@@ -35,8 +36,10 @@ storage:
   type: durable-object
   binding: OMNI_DO
 security:
-  allowUnauthenticated: true
-  providers: []
+  providers:
+    - type: jwt
+      secret: omni-e2e-shared-secret-not-a-real-credential
+      algorithms: [HS256]
 rateLimits:
   - name: per-ip
     key: ip
@@ -164,10 +167,10 @@ describe("E2E: prebuilt worker artifact (forkless deploy)", () => {
   it("enforces the Durable Object rate limit (proves OMNI_DO is live)", async () => {
     // limit is 1/min: the 2nd request must be refused. Rate limiting fails OPEN,
     // so without a working DO binding this would pass through instead.
-    const send = (): Promise<Response> =>
+    const send = async (): Promise<Response> =>
       fetch(`${BASE}/v1/chat/completions`, {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: { "content-type": "application/json", ...(await authHeaders()) },
         body: JSON.stringify({
           model: "gpt-4o-mini",
           messages: [{ role: "user", content: "hi" }],

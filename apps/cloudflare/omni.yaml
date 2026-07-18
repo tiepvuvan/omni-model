@@ -28,8 +28,11 @@ security:
   #   - type: firebase-app-check
   #     projectNumber: "1234567890"
   #
-  # Running locally, or on a private network, and really want no auth?
-  # allowUnauthenticated: true
+  # Developing locally? `jwt` with a shared secret needs no external service:
+  # providers:
+  #   - type: jwt
+  #     secret: ${OMNI_DEV_SECRET}
+  #     algorithms: [HS256]
 
 rateLimits:
   - name: per-user-requests

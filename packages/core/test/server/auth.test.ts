@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { AuthVerifier, Identity } from "../../src/auth/types.js";
 import { isPublicPath, mergeIdentities } from "../../src/server/auth.js";
-import { CHAT_BODY, chatRequest, createRecordingLogger, createTestApp } from "./helpers.js";
+import { CHAT_BODY, chatRequest, createTestApp } from "./helpers.js";
 
 const AUTH_YAML = `
 version: 1
@@ -166,29 +166,27 @@ routing:
     // A proxy that authenticates nobody is an open relay on the operator's
     // provider credits, and gives a caller nothing the upstream API doesn't.
     // Omitting `security` must not silently produce one.
-    await expect(
-      createTestApp({ yaml: NO_VERIFIER_YAML, allowUnauthenticated: false }),
-    ).rejects.toThrow(/security\.providers is empty/);
+    await expect(createTestApp({ yaml: NO_VERIFIER_YAML, injectVerifier: false })).rejects.toThrow(
+      /security\.providers is empty/,
+    );
   });
 
-  it("names the way out in the startup error", async () => {
-    await expect(
-      createTestApp({ yaml: NO_VERIFIER_YAML, allowUnauthenticated: false }),
-    ).rejects.toThrow(/security\.allowUnauthenticated: true/);
+  it("offers a workable local-development config in the startup error", async () => {
+    // The error has to be actionable: someone hitting this on their laptop
+    // needs a verifier that works with no external service.
+    await expect(createTestApp({ yaml: NO_VERIFIER_YAML, injectVerifier: false })).rejects.toThrow(
+      /type: jwt/,
+    );
   });
 
-  it("serves openly only when allowUnauthenticated is set, and warns loudly", async () => {
-    const { logger, entries } = createRecordingLogger();
+  it("has no opt-out: an explicit empty provider list still refuses", async () => {
     const yaml = `${NO_VERIFIER_YAML}security:
-  allowUnauthenticated: true
+  mode: any
+  providers: []
 `;
-    const { app } = await createTestApp({ yaml, logger });
-    const warnings = entries.filter((entry) => entry.level === "warn");
-    expect(warnings).toHaveLength(1);
-    expect(warnings[0]?.message).toContain("allowUnauthenticated");
-
-    const response = await app.fetch(chatRequest(CHAT_BODY));
-    expect(response.status).toBe(200);
+    await expect(createTestApp({ yaml, injectVerifier: false })).rejects.toThrow(
+      /security\.providers is empty/,
+    );
   });
 });
 

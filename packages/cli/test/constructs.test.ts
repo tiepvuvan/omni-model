@@ -55,8 +55,8 @@ const PROVIDERS: ProviderChoice[] = [
   },
 ];
 
+// No empty set: a verifier is mandatory, so the wizard can't produce one.
 const AUTH_SETS: AuthId[][] = [
-  [],
   ["firebase-auth"],
   ["firebase-app-check"],
   ["apple-app-attest"],
@@ -88,7 +88,7 @@ function everyAnswer(): Answers[] {
 describe("generated config builds a real app", () => {
   it("createOmniApp accepts every combination the wizard can emit", async () => {
     for (const a of everyAnswer()) {
-      const label = `${a.target}/${a.storage}/${a.provider.name}/[${a.auth.join(",") || "open"}]`;
+      const label = `${a.target}/${a.storage}/${a.provider.name}/[${a.auth.join(",")}]`;
       const config = parseConfig(toYaml(a), TEST_ENV);
       await expect(
         createOmniApp({

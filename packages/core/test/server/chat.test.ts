@@ -79,9 +79,10 @@ routing:
     const response = await app.fetch(chatRequest(CHAT_BODY));
     expect(response.status).toBe(200);
     await collector.flush();
-    // Default canned usage is 15 total tokens; anonymous requests key "anonymous".
+    // Default canned usage is 15 total tokens. A verifier is mandatory, so the
+    // request is authenticated and keys on its identity (see createTestApp).
     const counter = await storage.getCounter(
-      tokenCounterKey("daily-tokens", "anonymous", 3_600_000),
+      tokenCounterKey("daily-tokens", "test-user", 3_600_000),
     );
     expect(counter).toBe(15);
   });

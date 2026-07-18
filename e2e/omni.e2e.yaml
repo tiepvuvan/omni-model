@@ -12,10 +12,12 @@ storage:
 
 # No auth for the local E2E server. Add a verifier before exposing it.
 security:
-  # This suite exercises chat/streaming/limits, not auth. A proxy with no
-  # verifier refuses to start unless it says so outright.
-  allowUnauthenticated: true
-  providers: []
+  # A verifier is mandatory. `jwt` with a shared secret is the only one that
+  # needs no external service; the suite signs a token with the same secret.
+  providers:
+    - type: jwt
+      secret: omni-e2e-shared-secret-not-a-real-credential
+      algorithms: [HS256]
 
 rateLimits:
   - name: per-ip-requests

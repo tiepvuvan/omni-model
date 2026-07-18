@@ -114,7 +114,7 @@ describe("POST /v1/embeddings", () => {
 
     await collector.flush();
     const counter = await storage.getCounter(
-      tokenCounterKey("daily-tokens", "anonymous", 3_600_000),
+      tokenCounterKey("daily-tokens", "test-user", 3_600_000),
     );
     expect(counter).toBe(8);
   });
