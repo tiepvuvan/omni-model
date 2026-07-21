@@ -1,28 +1,29 @@
 {
   "name": "omni-model",
   "description": "Self-hosted OpenAI-compatible AI proxy with YAML-configured auth, rate limits and model routing.",
-  "repository": "https://github.com/omni-model/omni-model",
+  "repository": "https://github.com/tiepvuvan/omni-model",
   "options": {
     "allow-unauthenticated": true,
     "memory": "512Mi",
-    "port": 8787
+    "port": 8787,
+    "max-instances": 1
   },
   "env": {
     "OPENAI_API_KEY": {
-      "description": "OpenAI API key (if the openai provider is configured)",
-      "required": false
+      "description": "OpenAI API key for the starter OpenAI provider",
+      "required": true,
+      "order": 10
     },
-    "ANTHROPIC_API_KEY": {
-      "description": "Anthropic API key (if the anthropic provider is configured)",
-      "required": false
-    },
-    "GEMINI_API_KEY": {
-      "description": "Google Gemini API key (if the google provider is configured)",
-      "required": false
+    "OMNI_JWT_SECRET": {
+      "description": "A long random secret for signing client JWTs (HS256)",
+      "required": true,
+      "order": 20
     },
     "OMNI_CONFIG": {
-      "description": "Inline YAML configuration (overrides the omni.yaml baked into the image)",
-      "required": false
+      "description": "Starter YAML: edit it only when changing providers, authentication, limits, or storage",
+      "value": "version: 1\nserver:\n  logLevel: info\nstorage:\n  type: memory\nsecurity:\n  providers:\n    - type: jwt\n      secret: ${OMNI_JWT_SECRET}\n      algorithms: [HS256]\nproviders:\n  openai:\n    type: openai\n    apiKey: ${OPENAI_API_KEY}\nrateLimits:\n  - name: per-user-requests\n    key: user\n    requests: { limit: 60, window: 1m }\n  - name: per-user-daily-tokens\n    key: user\n    tokens: { limit: 200000, window: 1d }\nrouting:\n  defaultProvider: openai\n",
+      "required": false,
+      "order": 30
     }
   }
 }

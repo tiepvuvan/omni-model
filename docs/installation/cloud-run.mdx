@@ -1,108 +1,317 @@
 ---
 title: Google Cloud Run
-description: Deploy omni-model to Cloud Run with the one-click button or a manual gcloud run deploy using the published GHCR image.
+description: Deploy omni-model to Cloud Run in one click, then configure a production service with Firestore and Secret Manager.
 ---
 
-Cloud Run runs omni-model as a scale-to-many container. Use the **Run on Google Cloud** button
-(backed by `app.json` + the `Dockerfile`) for a guided deploy, or `gcloud run deploy` from a shell.
+Cloud Run is a good fit for omni-model when you want a standard HTTPS endpoint without managing
+servers. The repository includes a **Run on Google Cloud** button for a working starter service and
+a `Dockerfile` for a fully controlled deployment.
 
 <Warning>
-Cloud Run scales to many instances. Use **`firestore`** (serverless, no provisioning), `redis`
-(Memorystore) or `postgres` (Cloud SQL) storage so rate limits and token budgets are enforced across
-all of them — `memory` storage limits each instance independently. See
-[rate limits](/reference/configuration).
+Cloud Run may start more than one instance. `memory` storage is local to an instance, so it cannot
+enforce a shared rate limit or token budget. The one-click service deliberately caps itself at one
+instance for a quick evaluation. Use the Firestore setup below before production or before raising
+the instance limit.
 </Warning>
 
-## One-click button
+## One-click starter
 
-The **Run on Google Cloud** button in the README uses `app.json`, which sets `port` to 8787,
-`memory` to 512Mi, and `allow-unauthenticated`. It prompts for optional env vars:
-`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, and `OMNI_CONFIG` (inline YAML that
-overrides the `omni.yaml` baked into the image).
+[![Run on Google Cloud](https://deploy.cloud.run/button.svg)](https://deploy.cloud.run/?git_repo=https://github.com/tiepvuvan/omni-model)
 
-## Manual deploy
+The button builds the checked-out `Dockerfile` with Cloud Build and creates a public Cloud Run
+service. It does **not** fork the repository or require Docker locally.
 
 <Steps>
-<Step title="Deploy from source">
-```sh
-gcloud run deploy omni-model \
-  --source . \
-  --port 8787 \
-  --allow-unauthenticated \
-  --set-env-vars OPENAI_API_KEY=sk-...
-```
-
-`--source .` builds the `Dockerfile`. To skip the build, deploy the published image with
-`--image ghcr.io/tiepvuvan/omni-model:latest` instead of `--source .`.
+<Step title="Choose a Google Cloud project and region">
+Sign in to Google Cloud, choose the project that should own the service, then select a Cloud Run
+region. Cloud Run enables the services it needs during the guided flow if your account is allowed to
+do so.
 </Step>
 
-<Step title="Provide config">
-Pass config via a committed `omni.yaml` (baked into the image), the `OMNI_CONFIG` env var, or a
-mounted file. The image resolves config at startup, first match wins: `OMNI_CONFIG` (inline YAML),
-then `OMNI_CONFIG_PATH` (a file path), then `/app/omni.yaml`.
+<Step title="Enter the two required values">
+The deploy form supplies `OMNI_CONFIG` with a valid starter config. Enter:
 
-To mount a secret file and point at it:
+- `OPENAI_API_KEY` — the key used only by the configured OpenAI provider.
+- `OMNI_JWT_SECRET` — a long, private random value used to verify HS256 client JWTs. Generate one
+  locally with `openssl rand -base64 48` and retain it in your secret manager.
 
-```sh
-gcloud run deploy omni-model \
-  --image ghcr.io/tiepvuvan/omni-model:latest \
-  --update-secrets /app/omni.yaml=omni-config:latest \
-  --set-env-vars OMNI_CONFIG_PATH=/app/omni.yaml
-```
+The form lets you inspect or replace `OMNI_CONFIG`. Leave its default in place for the starter; it
+configures an OpenAI provider, a `jwt` verifier, and per-user request and token limits.
 </Step>
 
-<Step title="Point storage at shared state">
-The serverless pick — **Firestore** — needs nothing provisioned; the container authenticates with
-the service account's Application Default Credentials (the project id comes from `GOOGLE_CLOUD_PROJECT`,
-which Cloud Run sets automatically):
-
-```yaml
-storage:
-  type: firestore
-  collection: omni_ratelimits
-```
-
-Grant the Cloud Run service account Firestore access once:
+<Step title="Wait for the revision and verify health">
+When deployment completes, open the Cloud Run service URL. `/healthz` is intentionally public and
+should return `{"status":"ok"}`:
 
 ```sh
-PROJECT=$(gcloud config get-value project)
-SA="$(gcloud iam service-accounts list --filter='displayName:Default compute' --format='value(email)')"
-gcloud projects add-iam-policy-binding "$PROJECT" \
-  --member="serviceAccount:$SA" --role=roles/datastore.user
+curl https://YOUR_SERVICE_URL/healthz
 ```
 
-(Or use `redis` (Memorystore) / `postgres` (Cloud SQL) with a `url:` if you prefer a managed
-database.)
+`/v1/*` is different: it requires a JWT signed by `OMNI_JWT_SECRET`. A request without one should
+return a `401`, which confirms the proxy is not an open relay.
 </Step>
 </Steps>
 
-<Warning>
-The starter config has no [security providers](/security/custom-jwt). Since `--allow-unauthenticated`
-exposes the service publicly, add at least one auth verifier before sharing the URL.
-</Warning>
+### What the button creates
 
-## Updating
+`app.json` is the deploy-button contract. Its default configuration uses `storage: memory`, caps
+Cloud Run at **one instance**, listens on the Cloud Run `PORT`, and makes the service public at the
+network layer. The application still protects every `/v1/*` endpoint with your HS256 JWT secret;
+only `/healthz` is unauthenticated.
 
-Re-run `gcloud run deploy` to roll out a new revision — from source (rebuilds the `Dockerfile`) or
-by bumping the `--image` tag to a newer release. Config and key changes go through
-`--set-env-vars` / `--update-secrets`; each deploy creates a new revision you can roll back to.
+This is purposeful: it makes the first deployment work without provisioning a database, while
+keeping provider credits behind an application credential. Memory counters disappear when an
+instance is replaced, so this is an evaluation configuration rather than durable quota enforcement.
 
-## Quick local check
+<Info>
+The Cloud Run button passes values as service environment variables. For long-lived credentials,
+use the Secret Manager production path below. Google recommends Secret Manager for API keys and
+other sensitive values.
+</Info>
 
-The same image runs anywhere Docker does — handy for validating your config before deploying:
+## Production deployment: Firestore + Secret Manager
+
+This path creates a dedicated runtime service account, stores credentials and configuration in
+Secret Manager, and uses Firestore transactions for exact shared counters. It assumes a current
+Google Cloud CLI and a cloned copy of this repository.
+
+### 1. Select the project and enable APIs
+
+In Cloud Shell or an authenticated terminal, set the values for this deployment. Use a Firestore
+location that suits your data-residency requirements; a Firestore database location cannot be
+changed later.
 
 ```sh
-docker run -p 8787:8787 \
-  -e OPENAI_API_KEY=sk-... \
-  -e OMNI_CONFIG="$(cat omni.yaml)" \
-  ghcr.io/tiepvuvan/omni-model:latest
+export PROJECT_ID="YOUR_PROJECT_ID"
+export REGION="us-central1"
+export SERVICE="omni-model"
+export RUNTIME_SA="omni-model@${PROJECT_ID}.iam.gserviceaccount.com"
+
+gcloud config set project "$PROJECT_ID"
+gcloud services enable \
+  run.googleapis.com \
+  cloudbuild.googleapis.com \
+  artifactregistry.googleapis.com \
+  firestore.googleapis.com \
+  secretmanager.googleapis.com
 ```
+
+Your deployer needs permission to create the service and use its runtime service account. The
+[Cloud Run deployment roles](https://cloud.google.com/run/docs/deploying#required-roles) list the
+minimum IAM roles. If an organization policy forbids public services, use the private-service model
+described in [Cloud Run's authentication documentation](https://cloud.google.com/run/docs/authenticating/overview)
+instead of `--allow-unauthenticated` below.
+
+### 2. Create Firestore and the runtime identity
+
+Create the default Firestore **Native mode** database if the project does not already have one.
+Run this database command once per project; it fails safely if `(default)` already exists.
+
+```sh
+gcloud firestore databases create \
+  --database="(default)" \
+  --location="YOUR_FIRESTORE_LOCATION" \
+  --type=firestore-native
+
+gcloud iam service-accounts create omni-model \
+  --display-name="omni-model Cloud Run"
+
+gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+  --member="serviceAccount:${RUNTIME_SA}" \
+  --role="roles/datastore.user"
+```
+
+`roles/datastore.user` gives the runtime service account access to the Firestore counter documents,
+without making it a project editor. The Node server uses Cloud Run's Application Default Credentials
+and `GOOGLE_CLOUD_PROJECT` automatically; do not add a service-account key file to the image.
+
+### 3. Write the production config
+
+Save the following as `omni.cloud-run.yaml` at the repository root. It uses a shared Firestore
+collection and a JWT with a `sub` claim, so `key: user` rate limits are per caller.
+
+```yaml
+version: 1
+server:
+  logLevel: info
+storage:
+  type: firestore
+  collection: omni_ratelimits
+security:
+  providers:
+    - type: jwt
+      secret: ${OMNI_JWT_SECRET}
+      algorithms: [HS256]
+providers:
+  openai:
+    type: openai
+    apiKey: ${OPENAI_API_KEY}
+rateLimits:
+  - name: per-user-requests
+    key: user
+    requests: { limit: 60, window: 1m }
+  - name: per-user-daily-tokens
+    key: user
+    tokens: { limit: 200000, window: 1d }
+routing:
+  defaultProvider: openai
+```
+
+For a production identity provider, replace the simple `jwt` block with Firebase Auth, App Check,
+Supabase, Apple attestation, or your issuer's JWKS. The [security guides](/security/custom-jwt)
+cover each verifier. Never remove all `security.providers`: omni-model refuses to start without an
+authentication verifier.
+
+### 4. Create secrets and grant the runtime account access
+
+Create one version for the config file and two environment-variable secrets. Keep the JWT signing
+secret somewhere safe if you are using the starter HS256 verifier; your token issuer needs it to
+create client JWTs.
+
+```sh
+gcloud secrets create omni-model-config --replication-policy=automatic
+gcloud secrets versions add omni-model-config --data-file=omni.cloud-run.yaml
+
+gcloud secrets create omni-openai-api-key --replication-policy=automatic
+read -r -s OPENAI_API_KEY
+printf "%s" "$OPENAI_API_KEY" | \
+  gcloud secrets versions add omni-openai-api-key --data-file=-
+unset OPENAI_API_KEY
+
+gcloud secrets create omni-jwt-secret --replication-policy=automatic
+read -r -s OMNI_JWT_SECRET
+printf "%s" "$OMNI_JWT_SECRET" | \
+  gcloud secrets versions add omni-jwt-secret --data-file=-
+unset OMNI_JWT_SECRET
+
+for SECRET in omni-model-config omni-openai-api-key omni-jwt-secret; do
+  gcloud secrets add-iam-policy-binding "$SECRET" \
+    --member="serviceAccount:${RUNTIME_SA}" \
+    --role="roles/secretmanager.secretAccessor"
+done
+```
+
+The prompt after `read -r -s` does not echo a value. Generate the JWT secret with
+`openssl rand -base64 48`, then paste it. The CLI stores the file as a mounted secret at
+`/app/omni.yaml`; the two short credentials become environment variables so `${OPENAI_API_KEY}`
+and `${OMNI_JWT_SECRET}` resolve when omni-model starts.
+
+### 5. Deploy from source
+
+From the repository root, deploy the `Dockerfile`. The included `.gcloudignore` keeps the source
+upload focused on the packages the container needs.
+
+```sh
+gcloud run deploy "$SERVICE" \
+  --source . \
+  --region "$REGION" \
+  --service-account "$RUNTIME_SA" \
+  --allow-unauthenticated \
+  --port 8787 \
+  --memory 512Mi \
+  --max-instances 20 \
+  --set-env-vars OMNI_CONFIG_PATH=/app/omni.yaml \
+  --set-secrets "\
+/app/omni.yaml=omni-model-config:1,\
+OPENAI_API_KEY=omni-openai-api-key:1,\
+OMNI_JWT_SECRET=omni-jwt-secret:1"
+```
+
+Cloud Run sets `PORT`; omni-model reads it by default. `--port 8787` tells Cloud Run to set that
+value to the image's exposed port. `--allow-unauthenticated` only permits the request to reach the
+container; the configured JWT verifier remains responsible for API-client authentication.
+
+<Warning>
+Pin secret versions as shown. Environment-variable secrets are resolved when a new instance starts,
+so blindly using `latest` can make revisions non-reproducible. A mounted config may use `latest`,
+but omni-model reads it at process start, so deploy a new revision after changing it either way.
+</Warning>
+
+### 6. Verify the endpoint
+
+```sh
+export SERVICE_URL="$(gcloud run services describe "$SERVICE" \
+  --region "$REGION" --format='value(status.url)')"
+
+curl "$SERVICE_URL/healthz"
+```
+
+To test `/v1/chat/completions`, send a JWT from your real identity provider. For a short HS256
+smoke test, use the secret you saved in step 4 and a local Node.js runtime to mint a token with a
+`sub`:
+
+```sh
+export OMNI_JWT_SECRET="YOUR_SAVED_JWT_SECRET"
+export TOKEN="$(node --input-type=module -e '
+  import { createHmac } from "node:crypto";
+  const encode = (value) => Buffer.from(JSON.stringify(value)).toString("base64url");
+  const now = Math.floor(Date.now() / 1000);
+  const unsigned = `${encode({ alg: "HS256", typ: "JWT" })}.${encode({ sub: "smoke-test", iat: now, exp: now + 300 })}`;
+  process.stdout.write(`${unsigned}.${createHmac("sha256", process.env.OMNI_JWT_SECRET).update(unsigned).digest("base64url")}`);
+')"
+
+curl "$SERVICE_URL/v1/chat/completions" \
+  -H "authorization: Bearer $TOKEN" \
+  -H "content-type: application/json" \
+  -d '{"model":"gpt-4o-mini","messages":[{"role":"user","content":"Hello from Cloud Run"}]}'
+```
+
+Do not put a signing secret in a distributed client application. HS256 is a convenient starter for
+server-to-server clients; mobile and browser clients should instead receive tokens from a trusted
+issuer or use one of the platform attestation verifiers.
+
+## Updating safely
+
+Every Cloud Run configuration change creates an immutable revision. To replace the config, create a
+new Secret Manager version and point a new revision at that exact version:
+
+```sh
+CONFIG_VERSION="$(gcloud secrets versions add omni-model-config \
+  --data-file=omni.cloud-run.yaml --format='value(name)' | awk -F/ '{print $NF}')"
+
+gcloud run services update "$SERVICE" \
+  --region "$REGION" \
+  --update-secrets "/app/omni.yaml=omni-model-config:${CONFIG_VERSION}"
+```
+
+Use the same pattern to rotate `OPENAI_API_KEY` or `OMNI_JWT_SECRET`: add a secret version, then
+run `gcloud run services update` with the corresponding `--update-secrets` entry. To deploy code
+changes, rerun the source deploy command from step 5. To roll back a bad revision, first list its
+name with `gcloud run revisions list --service "$SERVICE" --region "$REGION"`, then send all
+traffic back to it:
+
+```sh
+gcloud run services update-traffic "$SERVICE" \
+  --region "$REGION" \
+  --to-revisions YOUR_PREVIOUS_REVISION=100
+```
+
+## Published-image alternative
+
+To skip a source build, replace `--source .` in step 5 with a release-pinned image, for example:
+
+```sh
+--image ghcr.io/tiepvuvan/omni-model:1.2.3
+```
+
+Use an actual released tag or digest rather than `latest` for reproducibility. The same service
+account, secret bindings, Firestore configuration, and `OMNI_CONFIG_PATH` apply.
+
+## Troubleshooting
+
+| Symptom | Likely cause and fix |
+| --- | --- |
+| Revision never becomes ready | Read startup logs with `gcloud run services logs read "$SERVICE" --region "$REGION" --limit 50`. A missing config, missing `${VAR}`, or an empty `security.providers` is reported before the server binds. |
+| Firestore `PERMISSION_DENIED` | Verify that the **runtime** service account, not only the deployer, has `roles/datastore.user` and that the Firestore database exists. |
+| `401` from `/v1/*` | Expected without a JWT. Confirm the token is HS256, is signed by `OMNI_JWT_SECRET`, and includes a non-empty `sub` claim. |
+| Rate limits reset or differ by instance | The service is still using `memory` storage or has more than one instance. Move to the Firestore config above. |
+| `403` before omni-model responds | Cloud Run IAM rejected the request. Either grant the caller Cloud Run Invoker for a private service or make the service public and let omni-model's verifier authenticate API clients. |
 
 <CardGroup cols={2}>
 <Card title="Configuration reference" icon="gear" href="/reference/configuration">
-The full YAML surface: storage, security, providers, routing.
+The full YAML surface: storage, security, providers, routing, and limits.
 </Card>
-<Card title="Rate limits" icon="gauge" href="/reference/configuration">
-Why multi-instance deploys need shared storage.
+<Card title="JWT and identity providers" icon="lock" href="/security/custom-jwt">
+Choose a production authentication model for Cloud Run clients.
 </Card>
 </CardGroup>

@@ -54,6 +54,7 @@ const TEST_ENV = {
   REDIS_URL: "redis://localhost:6379",
   // Referenced by the documented local-development verifier.
   OMNI_DEV_SECRET: "dev-secret",
+  OMNI_JWT_SECRET: "cloud-run-jwt-secret",
   DATABASE_URL: "postgres://localhost/omni",
   SUPABASE_JWT_SECRET: "secret",
 };
@@ -125,5 +126,21 @@ describe("full config examples in the reference page parse", () => {
 
   it("`storage: {}` fails validation because storage needs a `type`", () => {
     expect(() => parseConfig("version: 1\nstorage: {}\n")).toThrow(/storage\.type/);
+  });
+});
+
+describe("the Cloud Run production configuration", () => {
+  it("parses with Firestore storage and JWT authentication", () => {
+    const cloudRunPage = repoFile("docs/installation/cloud-run.mdx");
+    const blocks = [...cloudRunPage.matchAll(/```ya?ml\n([\s\S]*?)```/g)].map((match) => match[1]);
+    const configYaml = blocks.find(
+      (block) => block.includes("type: firestore") && block.includes("$" + "{OMNI_JWT_SECRET}"),
+    );
+    expect(configYaml, "could not find the Cloud Run Firestore config example").toBeDefined();
+    if (configYaml === undefined) throw new Error("Cloud Run config example missing");
+
+    const config = parseConfig(configYaml, TEST_ENV);
+    expect(config.storage.type).toBe("firestore");
+    expect(config.security.providers).toMatchObject([{ type: "jwt" }]);
   });
 });

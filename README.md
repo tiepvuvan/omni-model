@@ -119,7 +119,10 @@ image yourself instead: `docker build -t omni-model .`.
   `wrangler secret put OPENAI_API_KEY`, every request answers `missing environment variable
   "OPENAI_API_KEY"` — set it and you're live. Edit `apps/cloudflare/omni.yaml` to change the
   config (or set the `OMNI_CONFIG` secret to reconfigure without a rebuild).
-- **Cloud Run** — no fork; paste your config into the `OMNI_CONFIG` prompt.
+- **Cloud Run** — no fork. The button builds the repository, supplies a working OpenAI + JWT
+  starter config, and asks for your OpenAI key and JWT signing secret. It intentionally starts at
+  one instance with in-memory counters; follow the [Cloud Run guide](docs/installation/cloud-run.mdx)
+  to move a production deployment to Firestore and Secret Manager.
 - **Fly.io** — `fly launch --copy-config` (a `fly.toml` ships in the repo).
 
 **Cloudflare without a fork.** Every release also ships a **prebuilt worker** — the edge counterpart

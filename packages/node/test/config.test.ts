@@ -1,7 +1,8 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ConfigError } from "@omni-model/core";
+import { fileURLToPath } from "node:url";
+import { ConfigError, createOmniApp, parseConfig, silentLogger } from "@omni-model/core";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { resolveConfigSource } from "../src/config.js";
 
@@ -119,5 +120,41 @@ describe("resolveConfigSource", () => {
     });
 
     expect(result.yaml).toContain("despite-empty-env");
+  });
+});
+
+describe("Cloud Run deploy button", () => {
+  it("ships a valid authenticated starter configuration", async () => {
+    const appJsonPath = fileURLToPath(new URL("../../../app.json", import.meta.url));
+    const appJson = JSON.parse(await readFile(appJsonPath, "utf8")) as {
+      env: Record<string, { required?: boolean; value?: string }>;
+      options: { "max-instances"?: number };
+      repository: string;
+    };
+
+    expect(appJson.repository).toBe("https://github.com/tiepvuvan/omni-model");
+    expect(appJson.options["max-instances"]).toBe(1);
+    expect(appJson.env.OPENAI_API_KEY?.required).toBe(true);
+    expect(appJson.env.OMNI_JWT_SECRET?.required).toBe(true);
+
+    const configYaml = appJson.env.OMNI_CONFIG?.value;
+    expect(configYaml).toBeTypeOf("string");
+    if (configYaml === undefined) {
+      throw new Error("app.json must provide a default OMNI_CONFIG value");
+    }
+    const config = parseConfig(configYaml, {
+      OPENAI_API_KEY: "sk-test",
+      OMNI_JWT_SECRET: "test-jwt-secret",
+    });
+
+    expect(config.storage.type).toBe("memory");
+    expect(config.security.providers).toMatchObject([{ type: "jwt" }]);
+
+    const app = await createOmniApp({
+      config,
+      env: { OPENAI_API_KEY: "sk-test", OMNI_JWT_SECRET: "test-jwt-secret" },
+      logger: silentLogger,
+    });
+    expect(app.request("http://omni.test/healthz")).toMatchObject({ status: 200 });
   });
 });
