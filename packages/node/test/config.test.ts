@@ -53,6 +53,7 @@ describe("Cloud Run deploy button", () => {
     expect(appJson.options["max-instances"]).toBe(1);
     expect(appJson.env.OMNI_STORAGE_TYPE?.value).toBe("firestore");
     expect(appJson.env.OMNI_SECURITY_FIREBASE_APPCHECK_ENABLED?.value).toBe("true");
+    expect(appJson.env.OMNI_SECURITY_FIREBASE_APPCHECK_CONSUME?.value).toBe("false");
     expect(appJson.env.OMNI_PROVIDERS_DEFAULT_TYPE?.value).toBe("openai-compatible");
     expect(appJson.env.OMNI_PROVIDERS_DEFAULT_API_KEY?.required).toBe(false);
     expect(appJson.env.OMNI_CONFIG).toBeUndefined();

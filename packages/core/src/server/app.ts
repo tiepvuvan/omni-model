@@ -76,7 +76,16 @@ export async function createOmniApp(init: OmniAppInit): Promise<Hono<AppEnv>> {
         log.error("background task failed", { error: errorMessage(error) });
       });
     });
-  const runtime: RuntimeContext = { env, fetch: fetchImpl, now, waitUntil: fallbackWaitUntil, log };
+  const runtime: RuntimeContext = {
+    env,
+    fetch: fetchImpl,
+    now,
+    waitUntil: fallbackWaitUntil,
+    ...(init.consumeFirebaseAppCheckToken === undefined
+      ? {}
+      : { consumeFirebaseAppCheckToken: init.consumeFirebaseAppCheckToken }),
+    log,
+  };
 
   let storage = init.storage;
   if (storage === undefined) {
@@ -159,6 +168,9 @@ export async function createOmniApp(init: OmniAppInit): Promise<Hono<AppEnv>> {
     fetch: fetchImpl,
     now,
     waitUntil: waitUntilFor(c),
+    ...(init.consumeFirebaseAppCheckToken === undefined
+      ? {}
+      : { consumeFirebaseAppCheckToken: init.consumeFirebaseAppCheckToken }),
     log,
   });
   const verifyContextFor = (c: Context<AppEnv>): VerifyContext => ({ ...runtimeFor(c), storage });

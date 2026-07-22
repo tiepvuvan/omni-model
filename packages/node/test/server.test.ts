@@ -25,6 +25,13 @@ const GCP_APP_CHECK_CONFIG = {
   routing: { defaultProvider: "main" },
 };
 
+const GCP_CONSUMING_APP_CHECK_CONFIG = {
+  ...GCP_APP_CHECK_CONFIG,
+  security: {
+    providers: [{ type: "firebase-app-check", projectNumber: "1234567890", consume: true }],
+  },
+};
+
 const METADATA_HOST = "metadata.test";
 const METADATA_BASE_URL = `http://${METADATA_HOST}/computeMetadata/v1/project/`;
 
@@ -105,6 +112,26 @@ describe("startServer", () => {
       `${METADATA_BASE_URL}numeric-project-id`,
       `${METADATA_BASE_URL}project-id`,
     ]);
+  });
+
+  it("injects the Firebase Admin consumer when App Check replay protection is enabled", async () => {
+    const metadataFetch: typeof fetch = async (input) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      if (url === `${METADATA_BASE_URL}project-id`) return new Response("omni-firebase-project");
+      if (url === `${METADATA_BASE_URL}numeric-project-id`) return new Response("1234567890");
+      throw new Error(`unexpected fetch: ${url}`);
+    };
+
+    running = await startServer({
+      config: GCP_CONSUMING_APP_CHECK_CONFIG,
+      env: { GCE_METADATA_HOST: METADATA_HOST },
+      fetch: metadataFetch,
+      port: 0,
+      hostname: "127.0.0.1",
+      logger: silentLogger,
+    });
+
+    expect(running.port).toBeGreaterThan(0);
   });
 
   it("rejects an unknown storage type, listing redis and postgres as registered", async () => {

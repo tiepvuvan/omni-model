@@ -176,6 +176,7 @@ export async function startServer(options: StartOptions): Promise<RunningServer>
       env,
       storage,
       logger,
+      consumeFirebaseAppCheckToken,
       // Behind a trusted proxy, derive the IP from headers; otherwise use the
       // real socket peer, which a client cannot spoof.
       clientIp: (c) =>

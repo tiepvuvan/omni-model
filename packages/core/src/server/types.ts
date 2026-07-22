@@ -4,7 +4,7 @@ import type { OmniConfig } from "../config/schema.js";
 import type { OmniRegistry } from "../registry.js";
 import type { ExpressionEngine, RequestFacts } from "../routing/types.js";
 import type { StorageAdapter } from "../storage/types.js";
-import type { Logger } from "../types.js";
+import type { FirebaseAppCheckTokenConsumer, Logger } from "../types.js";
 
 /**
  * Options for `createOmniApp`. Only `config` is required; every other field
@@ -32,6 +32,12 @@ export interface OmniAppInit {
    * context (`c.executionCtx` throws outside Workers).
    */
   waitUntil?: (promise: Promise<unknown>) => void;
+  /**
+   * Firebase Admin replay-protection hook for App Check limited-use tokens.
+   * The Node runtime supplies this when the App Check verifier enables
+   * `consume`; other runtimes may omit it.
+   */
+  consumeFirebaseAppCheckToken?: FirebaseAppCheckTokenConsumer;
   /** Defaults to `createConsoleLogger(config.server.logLevel)`. */
   logger?: Logger;
   /**
