@@ -15,7 +15,8 @@ const optionsSchema = z.strictObject({
   /** Numeric Firebase project number (not the project id). */
   projectNumber: z
     .string()
-    .regex(/^\d+$/, "projectNumber must be the numeric Firebase project number"),
+    .regex(/^\d+$/, "projectNumber must be the numeric Firebase project number")
+    .optional(),
   /** Optional allowlist of Firebase app ids (the token `sub`). */
   appIds: z.array(z.string().min(1)).min(1).optional(),
   /** Header carrying the raw App Check token (no scheme). */
@@ -38,6 +39,13 @@ export const firebaseAppCheckVerifierFactory: AuthVerifierFactory = {
       );
     }
     const opts = parsed.data;
+    const projectNumber = opts.projectNumber ?? runtime.env.OMNI_GCP_PROJECT_NUMBER;
+    if (projectNumber === undefined || !/^\d+$/.test(projectNumber)) {
+      throw new ConfigError(
+        `invalid "${TYPE}" verifier options: provide a numeric projectNumber, or run ` +
+          "@omni-model/node on GCP so it can read OMNI_GCP_PROJECT_NUMBER from metadata",
+      );
+    }
     const jwks = remoteJwks(APP_CHECK_JWKS_URL, runtime);
 
     return {
@@ -50,9 +58,9 @@ export const firebaseAppCheckVerifierFactory: AuthVerifierFactory = {
           const { payload } = await jwtVerify(token, jwks, {
             algorithms: ["RS256"],
             typ: "JWT",
-            issuer: `https://firebaseappcheck.googleapis.com/${opts.projectNumber}`,
+            issuer: `https://firebaseappcheck.googleapis.com/${projectNumber}`,
             // App Check `aud` is an array; jose accepts when it contains this value.
-            audience: `projects/${opts.projectNumber}`,
+            audience: `projects/${projectNumber}`,
             clockTolerance: opts.clockToleranceSeconds,
             currentDate: new Date(ctx.now()),
           });

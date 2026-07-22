@@ -27,15 +27,19 @@ security:
   mode: any
   providers:
     - type: firebase-app-check
+      # Omit on Cloud Run / GCE when this is the Firebase project:
       projectNumber: "1234567890"
       appIds:
         - "1:1234567890:ios:abcdef123456"
 ```
 
-<ParamField path="projectNumber" type="string" required>
+<ParamField path="projectNumber" type="string">
 The **numeric** Firebase project number — not the project id. The verifier pins
 the issuer to `https://firebaseappcheck.googleapis.com/<projectNumber>` and the
-audience to `projects/<projectNumber>`.
+audience to `projects/<projectNumber>`. It is optional for `@omni-model/node`
+on Cloud Run or Compute Engine: startup reads the numeric project id from the
+Google metadata server. Specify it for local/container deployments or whenever
+the Firebase project differs from the GCP project that runs the proxy.
 </ParamField>
 <ParamField path="appIds" type="string[]">
 Optional allowlist of Firebase app ids, matched against the token `sub`. When
@@ -51,6 +55,22 @@ Allowed clock skew, in seconds.
 Tokens are RS256 JWTs verified against Google's App Check JWKS
 (`https://firebaseappcheck.googleapis.com/v1/jwks`). A token with no subject, or
 a subject outside the `appIds` allowlist, is rejected with a token-free reason.
+
+<Note>
+**GCP zero-config.** When the Node server runs on Cloud Run or Compute Engine
+and the Firebase project is the same GCP project, this is enough:
+
+```yaml
+security:
+  providers:
+    - type: firebase-app-check
+```
+
+The runtime obtains the project number before it starts serving requests. This
+does not enroll an app in Firebase App Check or configure an attestation
+provider; complete those steps in the Firebase console first. Explicit
+`projectNumber` always wins, which is how cross-project deployments work.
+</Note>
 
 ## Sending the token
 
@@ -75,14 +95,15 @@ security:
   mode: all
   providers:
     - type: firebase-app-check
-      projectNumber: "1234567890"
     - type: firebase-auth
-      projectId: my-app-12345
+      projectId: ${GOOGLE_CLOUD_PROJECT}
 ```
 
 With `mode: all`, a missing credential fails with `credential missing for
 <name>`, and the merged identity carries both `device.id` (from App Check) and
 `user.id` (from Firebase Auth) into [routing and rate-limit rules](/model-routing/routing).
+On Cloud Run / GCE, both values are discovered from the metadata server. Outside
+GCP, use explicit `projectNumber` and `projectId` values instead.
 
 ## Related
 

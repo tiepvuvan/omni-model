@@ -16,15 +16,17 @@ import {
 import type { FirestoreLike } from "@omni-model/storage-firestore";
 import { postgresStorageFactory } from "@omni-model/storage-postgres";
 import { redisStorageFactory } from "@omni-model/storage-redis";
+import { enrichGcpEnvironment } from "./gcp-metadata.js";
 
 /**
  * Build the Firestore storage factory (serverless rate limits for Cloud Run /
  * GCE / Firebase). Firestore auth uses Application Default Credentials — the
  * service account on Cloud Run, `GOOGLE_APPLICATION_CREDENTIALS` locally, or a
- * local emulator via `FIRESTORE_EMULATOR_HOST`. The project id comes from
- * `GOOGLE_CLOUD_PROJECT` (Cloud Run sets it) or `FIREBASE_PROJECT_ID`;
- * `FIRESTORE_DATABASE_ID` selects a non-default database. firebase-admin is
- * imported lazily so only Firestore deployments load it.
+ * local emulator via `FIRESTORE_EMULATOR_HOST`. The GCP startup adapter fills
+ * `GOOGLE_CLOUD_PROJECT` from metadata when available; `FIREBASE_PROJECT_ID`
+ * remains a manual fallback. `FIRESTORE_DATABASE_ID` selects a non-default
+ * database. firebase-admin is imported lazily so only Firestore deployments
+ * load it.
  */
 async function firestoreStorageFactory(
   env: Record<string, string | undefined>,
@@ -48,6 +50,8 @@ export interface StartOptions {
    * (pass `process.env` in production). Defaults to `{}`.
    */
   env?: Record<string, string | undefined>;
+  /** Fetch implementation for upstreams and GCP metadata discovery. Defaults to global fetch. */
+  fetch?: typeof fetch;
   /** Port to bind; `0` picks an ephemeral port. Defaults to `env.PORT`, then 8787. */
   port?: number;
   /** Interface to bind. Defaults to "0.0.0.0" (all interfaces, for containers). */
@@ -92,7 +96,12 @@ async function closeStorage(storage: StorageAdapter): Promise<void> {
  * HTTP server first, then closes the storage adapter.
  */
 export async function startServer(options: StartOptions): Promise<RunningServer> {
-  const env = options.env ?? {};
+  const fetchImpl = options.fetch ?? globalThis.fetch;
+  const env = await enrichGcpEnvironment({
+    configYaml: options.configYaml,
+    env: options.env ?? {},
+    fetch: fetchImpl,
+  });
   const config = parseConfig(options.configYaml, env);
   const logger = options.logger ?? createConsoleLogger(config.server.logLevel);
 
@@ -107,7 +116,7 @@ export async function startServer(options: StartOptions): Promise<RunningServer>
 
   const runtime: RuntimeContext = {
     env,
-    fetch: (...args: Parameters<typeof fetch>) => globalThis.fetch(...args),
+    fetch: (...args: Parameters<typeof fetch>) => fetchImpl(...args),
     now: Date.now,
     // Node has no execution context to extend; run the work fire-and-forget.
     waitUntil: (promise: Promise<unknown>): void => {

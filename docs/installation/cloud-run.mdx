@@ -162,6 +162,29 @@ Supabase, Apple attestation, or your issuer's JWKS. The [security guides](/secur
 cover each verifier. Never remove all `security.providers`: omni-model refuses to start without an
 authentication verifier.
 
+### Use the project's Firebase App Check instead
+
+If this Cloud Run project is also your Firebase project and its apps are enrolled in App Check,
+replace the JWT block with the following. No project-id or project-number environment variable is
+needed: the Node runtime reads both from the Cloud Run metadata server before it parses the config.
+
+```yaml
+security:
+  mode: all
+  providers:
+    - type: firebase-app-check
+      appIds:
+        - "1:YOUR_PROJECT_NUMBER:ios:YOUR_FIREBASE_APP_ID"
+    - type: firebase-auth
+      projectId: ${GOOGLE_CLOUD_PROJECT}
+```
+
+This requires both the raw `X-Firebase-AppCheck` token and the Firebase Auth ID token. It attests
+the client app and gives each signed-in user an independent `key: user` rate limit. To accept only
+App Check, omit the `firebase-auth` entry and use `mode: any`; App Check alone identifies an app,
+not a user. For a Firebase project in a different GCP project, set App Check's numeric
+`projectNumber` and Firebase Auth's string `projectId` explicitly. See [Firebase App Check](/security/firebase-app-check).
+
 ### 4. Create secrets and grant the runtime account access
 
 Create one version for the config file and two environment-variable secrets. Keep the JWT signing
@@ -195,6 +218,9 @@ The prompt after `read -r -s` does not echo a value. Generate the JWT secret wit
 `openssl rand -base64 48`, then paste it. The CLI stores the file as a mounted secret at
 `/app/omni.yaml`; the two short credentials become environment variables so `${OPENAI_API_KEY}`
 and `${OMNI_JWT_SECRET}` resolve when omni-model starts.
+
+If you selected Firebase App Check instead, omit the `omni-jwt-secret` creation, its IAM binding,
+and its `--set-secrets` entry. The OpenAI key and mounted configuration secret remain unchanged.
 
 ### 5. Deploy from source
 

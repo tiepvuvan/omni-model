@@ -16,9 +16,12 @@ const APP_ID = "1:1234567890:ios:abc123def456";
 const { publicKey, privateKey } = await generateKeyPair("RS256", { extractable: true });
 const jwk = { ...(await exportJWK(publicKey)), kid: "ac-key", alg: "RS256", use: "sig" };
 
-function makeCtx(fetchImpl: typeof fetch): VerifyContext {
+function makeCtx(
+  fetchImpl: typeof fetch,
+  env: Record<string, string | undefined> = {},
+): VerifyContext {
   return {
-    env: {},
+    env,
     fetch: fetchImpl,
     now: () => NOW,
     waitUntil: () => {},
@@ -70,6 +73,13 @@ describe("firebaseAppCheckVerifierFactory", () => {
 
   it("has type firebase-app-check", () => {
     expect(firebaseAppCheckVerifierFactory.type).toBe("firebase-app-check");
+  });
+
+  it("uses the GCP project number injected into the runtime environment", async () => {
+    const ctx = makeCtx(jwksFetch([]), { OMNI_GCP_PROJECT_NUMBER: PROJECT_NUMBER });
+    const verifier = firebaseAppCheckVerifierFactory.create({ type: "firebase-app-check" }, ctx);
+    const result = await verifier.verify(withAppCheckHeader(await signAppCheckToken({})), ctx);
+    expect(result?.ok).toBe(true);
   });
 
   it("verifies a valid token and maps the app id to deviceId", async () => {
@@ -158,7 +168,7 @@ describe("firebaseAppCheckVerifierFactory", () => {
     expect(await verifier.verify(withAppCheckHeader(token), ctx)).toBeNull();
   });
 
-  it("requires a numeric projectNumber and rejects unknown options", () => {
+  it("requires a numeric projectNumber outside GCP and rejects unknown options", () => {
     const ctx = makeCtx(rejectFetch);
     expect(() =>
       firebaseAppCheckVerifierFactory.create({ type: "firebase-app-check" }, ctx),

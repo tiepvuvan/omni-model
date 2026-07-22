@@ -386,12 +386,13 @@ your app (iOS, Android or web). App Check tokens carry no user, so the Firebase 
 
 ```yaml
 - type: firebase-app-check
+  # Omit projectNumber on Cloud Run / GCE when this is the Firebase project.
   projectNumber: "1234567890"
 ```
 
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
-| `projectNumber` | string | required | The **numeric** Firebase project number (not the project id). |
+| `projectNumber` | string | GCP metadata | The **numeric** Firebase project number (not the project id). Required outside Node deployments on GCP; set it explicitly for a different Firebase project. |
 | `appIds` | `string[]` | _(any app)_ | Allowlist of Firebase app ids (matched against the token `sub`). |
 | `header` | string | `x-firebase-appcheck` | Header carrying the raw App Check token (no `Bearer` prefix). |
 | `clockToleranceSeconds` | integer ≥ 0 | `60` | Allowed clock skew. |

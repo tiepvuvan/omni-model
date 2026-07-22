@@ -25,6 +25,26 @@ routing:
   defaultProvider: main
 `;
 
+const GCP_APP_CHECK_CONFIG = `
+version: 1
+server:
+  logLevel: silent
+storage:
+  type: memory
+security:
+  providers:
+    - type: firebase-app-check
+providers:
+  main:
+    type: openai
+    apiKey: sk-test
+routing:
+  defaultProvider: main
+`;
+
+const METADATA_HOST = "metadata.test";
+const METADATA_BASE_URL = `http://${METADATA_HOST}/computeMetadata/v1/project/`;
+
 describe("startServer", () => {
   let running: RunningServer | undefined;
 
@@ -76,6 +96,32 @@ describe("startServer", () => {
     expect(running.port).not.toBe(8787);
     const health = await fetch(`http://127.0.0.1:${running.port}/healthz`);
     expect(health.status).toBe(200);
+  });
+
+  it("discovers the App Check project number from GCP metadata before startup", async () => {
+    const metadataCalls: string[] = [];
+    const metadataFetch: typeof fetch = async (input) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      metadataCalls.push(url);
+      if (url === `${METADATA_BASE_URL}project-id`) return new Response("omni-firebase-project");
+      if (url === `${METADATA_BASE_URL}numeric-project-id`) return new Response("1234567890");
+      throw new Error(`unexpected fetch: ${url}`);
+    };
+
+    running = await startServer({
+      configYaml: GCP_APP_CHECK_CONFIG,
+      env: { GCE_METADATA_HOST: METADATA_HOST },
+      fetch: metadataFetch,
+      port: 0,
+      hostname: "127.0.0.1",
+      logger: silentLogger,
+    });
+
+    expect(running.port).toBeGreaterThan(0);
+    expect(metadataCalls.sort()).toEqual([
+      `${METADATA_BASE_URL}numeric-project-id`,
+      `${METADATA_BASE_URL}project-id`,
+    ]);
   });
 
   it("rejects an unknown storage type, listing redis and postgres as registered", async () => {
