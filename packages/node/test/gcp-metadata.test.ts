@@ -53,6 +53,22 @@ describe("enrichGcpEnvironment", () => {
     expect(calls).not.toHaveLength(0);
   });
 
+  it("discovers the project id for App Check replay protection with an explicit project number", async () => {
+    const calls: string[] = [];
+    const env = await enrichGcpEnvironment({
+      config: {
+        security: {
+          providers: [{ type: "firebase-app-check", projectNumber: PROJECT_NUMBER, consume: true }],
+        },
+      },
+      env: { GCE_METADATA_HOST: METADATA_HOST },
+      fetch: metadataFetch(calls),
+    });
+
+    expect(env.GOOGLE_CLOUD_PROJECT).toBe(PROJECT_ID);
+    expect(calls).toContain(`${BASE_URL}project-id`);
+  });
+
   it("discovers a project id for Firestore when no local project is configured", async () => {
     const env = await enrichGcpEnvironment({
       config: FIRESTORE_CONFIG,

@@ -49,6 +49,17 @@ function requiresGcpMetadata(options: GcpEnvironmentOptions): boolean {
         provider !== null &&
         (provider as { projectNumber?: unknown }).projectNumber !== undefined,
     );
+  const consumesAppCheckTokens =
+    typeof security === "object" &&
+    security !== null &&
+    Array.isArray((security as { providers?: unknown }).providers) &&
+    (security as { providers: unknown[] }).providers.some(
+      (provider) =>
+        typeof provider === "object" &&
+        provider !== null &&
+        (provider as { type?: unknown; consume?: unknown }).type === "firebase-app-check" &&
+        (provider as { consume?: unknown }).consume === true,
+    );
   const hasFirestoreProjectId =
     env.GOOGLE_CLOUD_PROJECT !== undefined ||
     env.FIREBASE_PROJECT_ID !== undefined ||
@@ -56,7 +67,12 @@ function requiresGcpMetadata(options: GcpEnvironmentOptions): boolean {
   if (isFirestore && hasFirestoreProjectId === false && env.FIRESTORE_EMULATOR_HOST === undefined) {
     return true;
   }
-  return appCheck && hasProjectNumber === false && env.OMNI_GCP_PROJECT_NUMBER === undefined;
+  const needsProjectNumber =
+    hasProjectNumber === false && env.OMNI_GCP_PROJECT_NUMBER === undefined;
+  return (
+    appCheck &&
+    (needsProjectNumber || (consumesAppCheckTokens && env.GOOGLE_CLOUD_PROJECT === undefined))
+  );
 }
 
 function metadataUrl(env: Record<string, string | undefined>, path: string): string {

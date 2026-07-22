@@ -99,6 +99,7 @@ describe("environment configuration", () => {
       OMNI_SECURITY_FIREBASE_APPCHECK_ENABLED: "true",
       OMNI_SECURITY_FIREBASE_APPCHECK_PROJECT_NUMBER: "1234567890",
       OMNI_SECURITY_FIREBASE_APPCHECK_APP_ID: "1:1234567890:ios:abc123",
+      OMNI_SECURITY_FIREBASE_APPCHECK_CONSUME: "true",
       OMNI_ROUTING_ALLOWED_MODELS: '["smart","embeddings"]',
       OMNI_ROUTING_ROUTES: JSON.stringify([
         {
@@ -129,6 +130,7 @@ describe("environment configuration", () => {
           type: "firebase-app-check",
           projectNumber: "1234567890",
           appIds: ["1:1234567890:ios:abc123"],
+          consume: true,
         },
       ],
     });

@@ -6,6 +6,17 @@ export interface Logger {
   error(message: string, fields?: Record<string, unknown>): void;
 }
 
+/** Result of consuming a Firebase App Check token for replay protection. */
+export interface FirebaseAppCheckTokenConsumption {
+  /** Whether Firebase had already consumed this limited-use token. */
+  alreadyConsumed: boolean;
+}
+
+/** Platform hook that consumes a Firebase App Check limited-use token. */
+export type FirebaseAppCheckTokenConsumer = (
+  token: string,
+) => Promise<FirebaseAppCheckTokenConsumption>;
+
 /**
  * Runtime services injected into every pluggable component (auth verifiers,
  * model providers, storage factories). Abstracts over Node, Cloudflare
@@ -23,5 +34,10 @@ export interface RuntimeContext {
    * (`ctx.waitUntil` on Workers, fire-and-forget on Node).
    */
   waitUntil(promise: Promise<unknown>): void;
+  /**
+   * Optional Firebase Admin SDK hook for App Check replay protection. The Node
+   * runtime supplies it when an App Check verifier enables `consume`.
+   */
+  consumeFirebaseAppCheckToken?: FirebaseAppCheckTokenConsumer;
   log: Logger;
 }

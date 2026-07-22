@@ -83,6 +83,7 @@ const SECURITY_PROFILES: readonly SecurityProfile[] = [
     values: [
       ["OMNI_SECURITY_FIREBASE_APPCHECK_PROJECT_NUMBER", "projectNumber"],
       ["OMNI_SECURITY_FIREBASE_APPCHECK_HEADER", "header"],
+      ["OMNI_SECURITY_FIREBASE_APPCHECK_CONSUME", "consume"],
       ["OMNI_SECURITY_FIREBASE_APPCHECK_CLOCK_TOLERANCE_SECONDS", "clockToleranceSeconds"],
     ],
     appId: "OMNI_SECURITY_FIREBASE_APPCHECK_APP_ID",
@@ -364,6 +365,7 @@ function applyObjectValues(
 function shortcutValue(value: string, key: string): unknown {
   const typedValue =
     key.endsWith("_MIGRATE") ||
+    key.endsWith("_CONSUME") ||
     key.endsWith("_INCLUDE_STREAM_USAGE") ||
     key.endsWith("_MAX_TOKENS_DEFAULT") ||
     key.endsWith("_CLOCK_TOLERANCE_SECONDS") ||

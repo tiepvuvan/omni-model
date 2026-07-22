@@ -37,6 +37,9 @@ make these choices directly in the values:
 - `OMNI_SECURITY_FIREBASE_APPCHECK_ENABLED`: leave `true` to accept Firebase App Check tokens, or
   enter `false` to use the generated JWT fallback alone. On Cloud Run, the Firebase project number
   is discovered from GCP metadata; an App ID allowlist is optional.
+- `OMNI_SECURITY_FIREBASE_APPCHECK_CONSUME`: leave `false` unless every client requests a fresh
+  limited-use App Check token per request. Enabling it rejects replayed tokens and requires the
+  runtime service account role described below.
 - `OMNI_PROVIDERS_DEFAULT_BASE_URL` and `OMNI_PROVIDERS_DEFAULT_API_KEY`: both are editable later.
   The form defaults to the OpenAI-compatible OpenAI endpoint and permits a blank key so an
   unauthenticated compatible endpoint can be used. With the default endpoint, add an API key before
@@ -135,6 +138,15 @@ gcloud projects add-iam-policy-binding "$PROJECT_ID" \
 without making it a project editor. The Node server uses Cloud Run's Application Default Credentials
 and `GOOGLE_CLOUD_PROJECT` automatically; do not add a service-account key file to the image.
 
+If you enable App Check limited-use-token replay protection, grant the same runtime identity the
+additional verifier role:
+
+```sh
+gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+  --member="serviceAccount:${RUNTIME_SA}" \
+  --role="roles/firebaseappcheck.tokenVerifier"
+```
+
 ### 3. Choose the runtime environment variables
 
 The production starter below uses Firestore and a JWT with a `sub` claim, so `user` rate limits are
@@ -174,6 +186,7 @@ configuration.
 | `OMNI_SECURITY_MODE` | `all` |
 | `OMNI_SECURITY_FIREBASE_APPCHECK_ENABLED` | `true` |
 | `OMNI_SECURITY_FIREBASE_APPCHECK_APP_ID` | `1:YOUR_PROJECT_NUMBER:ios:YOUR_FIREBASE_APP_ID` |
+| `OMNI_SECURITY_FIREBASE_APPCHECK_CONSUME` | `false` — set `true` only with limited-use client tokens |
 | `OMNI_SECURITY_FIREBASE_AUTH_ENABLED` | `true` |
 | `OMNI_SECURITY_FIREBASE_AUTH_PROJECT_ID` | `${GOOGLE_CLOUD_PROJECT}` |
 
@@ -328,6 +341,7 @@ account, secret bindings, Firestore configuration, and `OMNI_*` environment vari
 | --- | --- |
 | Revision never becomes ready | Read startup logs with `gcloud run services logs read "$SERVICE" --region "$REGION" --limit 50`. A missing `OMNI_*` value, missing `${VAR}`, or an empty `security.providers` is reported before the server binds. |
 | Firestore `PERMISSION_DENIED` | Verify that the **runtime** service account, not only the deployer, has `roles/datastore.user` and that the Firestore database exists. |
+| App Check replay-protection `PERMISSION_DENIED` | Grant the runtime service account `roles/firebaseappcheck.tokenVerifier`; clients must send a fresh limited-use token for every request. |
 | `401` from `/v1/*` | Expected without a JWT. Confirm the token is HS256, is signed by `OMNI_JWT_SECRET`, and includes a non-empty `sub` claim. |
 | Rate limits reset or differ by instance | The service is still using `memory` storage or has more than one instance. Set `OMNI_STORAGE_TYPE=firestore` and the Firestore variables above. |
 | `403` before omni-model responds | Cloud Run IAM rejected the request. Either grant the caller Cloud Run Invoker for a private service or make the service public and let omni-model's verifier authenticate API clients. |

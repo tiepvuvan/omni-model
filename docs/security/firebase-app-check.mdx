@@ -48,6 +48,12 @@ omitted, any app in the project is accepted.
 <ParamField path="header" type="string" default="x-firebase-appcheck">
 Header carrying the raw App Check token (no `Bearer` prefix).
 </ParamField>
+<ParamField path="consume" type="boolean" default="false">
+Enable Firebase's limited-use token replay protection. The Node runtime consumes each token using
+the Firebase Admin SDK; a second use returns `401`. Only enable this after every client obtains a
+new limited-use token for every proxy request. It is supported by `@omni-model/node` on Cloud Run,
+GCE, or another Node environment with Application Default Credentials; Workers do not support it.
+</ParamField>
 <ParamField path="clockToleranceSeconds" type="integer" default="60">
 Allowed clock skew, in seconds.
 </ParamField>
@@ -55,6 +61,33 @@ Allowed clock skew, in seconds.
 Tokens are RS256 JWTs verified against Google's App Check JWKS
 (`https://firebaseappcheck.googleapis.com/v1/jwks`). A token with no subject, or
 a subject outside the `appIds` allowlist, is rejected with a token-free reason.
+
+## Replay protection with limited-use tokens
+
+Session App Check tokens are intentionally reusable until their expiry. For low-volume, costly, or
+security-sensitive proxy operations, set `consume: true` (or the named environment variable) to
+make Firebase consume each token after its local signature, project, and app-id checks pass:
+
+```sh
+export OMNI_SECURITY_FIREBASE_APPCHECK_CONSUME=true
+```
+
+This adds a Firebase verification round trip to every request and fails closed if it cannot be
+completed. The Cloud Run runtime service account needs the Firebase App Check Token Verifier role:
+
+```sh
+gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+  --member="serviceAccount:${RUNTIME_SA}" \
+  --role="roles/firebaseappcheck.tokenVerifier"
+```
+
+Clients must request a **new limited-use token per request**; an ordinary cached App Check session
+token will succeed once and then be rejected as a replay. For example, on Apple platforms use
+`try await AppCheck.appCheck().limitedUseToken()` instead of `token(forcingRefresh:)` before
+placing the result in `X-Firebase-AppCheck`. For Firebase callable functions, enable their
+`CONSUME_APP_CHECK_TOKEN` install parameter and configure the callable client for limited-use
+tokens. Firebase documents the latency and attestation-quota tradeoff for this beta protection in
+its [custom-backend replay-protection guide](https://firebase.google.com/docs/app-check/custom-resource-backend).
 
 <Note>
 **GCP zero-config.** When the Node server runs on Cloud Run or Compute Engine

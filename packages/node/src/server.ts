@@ -8,6 +8,7 @@ import {
   createOmniApp,
   extractClientIp,
   type Logger,
+  type OmniConfig,
   parseConfigObject,
   type RuntimeContext,
   type StorageAdapter,
@@ -18,6 +19,17 @@ import { postgresStorageFactory } from "@omni-model/storage-postgres";
 import { redisStorageFactory } from "@omni-model/storage-redis";
 import { enrichGcpEnvironment } from "./gcp-metadata.js";
 
+function firebaseProjectId(env: Record<string, string | undefined>): string | undefined {
+  return env.GOOGLE_CLOUD_PROJECT ?? env.FIREBASE_PROJECT_ID ?? env.GCLOUD_PROJECT;
+}
+
+/** Initialize or reuse the Admin SDK app backed by Application Default Credentials. */
+async function firebaseAdminApp(env: Record<string, string | undefined>) {
+  const { getApps, initializeApp } = await import("firebase-admin/app");
+  const projectId = firebaseProjectId(env);
+  return getApps()[0] ?? initializeApp(projectId ? { projectId } : undefined);
+}
+
 /**
  * Build the Firestore storage factory (serverless rate limits for Cloud Run /
  * GCE / Firebase). Firestore auth uses Application Default Credentials — the
@@ -26,19 +38,36 @@ import { enrichGcpEnvironment } from "./gcp-metadata.js";
  * `GOOGLE_CLOUD_PROJECT` from metadata when available; `FIREBASE_PROJECT_ID`
  * remains a manual fallback. `FIRESTORE_DATABASE_ID` selects a non-default
  * database. firebase-admin is imported lazily so only Firestore deployments
- * load it.
+ * or App Check replay-protected deployments load it.
  */
 async function firestoreStorageFactory(
   env: Record<string, string | undefined>,
 ): Promise<StorageFactory> {
-  const { getApps, initializeApp } = await import("firebase-admin/app");
   const { getFirestore } = await import("firebase-admin/firestore");
   const { createFirestoreStorageFactory } = await import("@omni-model/storage-firestore");
-  const projectId = env.GOOGLE_CLOUD_PROJECT ?? env.FIREBASE_PROJECT_ID ?? env.GCLOUD_PROJECT;
-  const app = getApps()[0] ?? initializeApp(projectId ? { projectId } : undefined);
+  const app = await firebaseAdminApp(env);
   const databaseId = env.FIRESTORE_DATABASE_ID;
   const firestore = databaseId ? getFirestore(app, databaseId) : getFirestore(app);
   return createFirestoreStorageFactory(firestore as unknown as FirestoreLike);
+}
+
+/** Build the Firebase Admin replay-protection hook used by the App Check verifier. */
+async function firebaseAppCheckTokenConsumer(env: Record<string, string | undefined>) {
+  const [app, { getAppCheck }] = await Promise.all([
+    firebaseAdminApp(env),
+    import("firebase-admin/app-check"),
+  ]);
+  const appCheck = getAppCheck(app);
+  return async (token: string) => {
+    const result = await appCheck.verifyToken(token, { consume: true });
+    return { alreadyConsumed: result.alreadyConsumed === true };
+  };
+}
+
+function consumesFirebaseAppCheckTokens(config: OmniConfig): boolean {
+  return config.security.providers.some(
+    (provider) => provider.type === "firebase-app-check" && provider.consume === true,
+  );
 }
 
 /** Options for {@link startServer}. */
@@ -104,6 +133,9 @@ export async function startServer(options: StartOptions): Promise<RunningServer>
   });
   const config = parseConfigObject(options.config, env);
   const logger = options.logger ?? createConsoleLogger(config.server.logLevel);
+  const consumeFirebaseAppCheckToken = consumesFirebaseAppCheckTokens(config)
+    ? await firebaseAppCheckTokenConsumer(env)
+    : undefined;
 
   const registry = createDefaultRegistry();
   registry.storage.set(redisStorageFactory.type, redisStorageFactory);
@@ -124,6 +156,7 @@ export async function startServer(options: StartOptions): Promise<RunningServer>
         logger.error("background task failed", { error: describeError(error) });
       });
     },
+    ...(consumeFirebaseAppCheckToken === undefined ? {} : { consumeFirebaseAppCheckToken }),
     log: logger,
   };
 

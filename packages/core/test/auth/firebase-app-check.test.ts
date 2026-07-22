@@ -19,6 +19,7 @@ const jwk = { ...(await exportJWK(publicKey)), kid: "ac-key", alg: "RS256", use:
 function makeCtx(
   fetchImpl: typeof fetch,
   env: Record<string, string | undefined> = {},
+  consumeFirebaseAppCheckToken?: (token: string) => Promise<{ alreadyConsumed: boolean }>,
 ): VerifyContext {
   return {
     env,
@@ -27,6 +28,7 @@ function makeCtx(
     waitUntil: () => {},
     log: silentLogger,
     storage: new MemoryStorageAdapter(() => NOW),
+    ...(consumeFirebaseAppCheckToken === undefined ? {} : { consumeFirebaseAppCheckToken }),
   };
 }
 
@@ -156,6 +158,22 @@ describe("firebaseAppCheckVerifierFactory", () => {
     expect(rejected.reason).toContain(APP_ID);
   });
 
+  it("consumes limited-use tokens and rejects their replay", async () => {
+    const consumed = new Set<string>();
+    const ctx = makeCtx(jwksFetch([]), {}, async (token) => {
+      const alreadyConsumed = consumed.has(token);
+      consumed.add(token);
+      return { alreadyConsumed };
+    });
+    const verifier = firebaseAppCheckVerifierFactory.create({ ...options, consume: true }, ctx);
+    const token = await signAppCheckToken({});
+
+    expect((await verifier.verify(withAppCheckHeader(token), ctx))?.ok).toBe(true);
+    const replay = await verifier.verify(withAppCheckHeader(token), ctx);
+    if (replay === null || replay.ok) throw new Error("expected replay rejection");
+    expect(replay.reason).toContain("already been used");
+  });
+
   it("reads the raw token from an overridden header", async () => {
     const ctx = makeCtx(jwksFetch([]));
     const verifier = firebaseAppCheckVerifierFactory.create(
@@ -179,5 +197,8 @@ describe("firebaseAppCheckVerifierFactory", () => {
     expect(() =>
       firebaseAppCheckVerifierFactory.create({ ...options, appId: APP_ID }, ctx),
     ).toThrow(ConfigError);
+    expect(() =>
+      firebaseAppCheckVerifierFactory.create({ ...options, consume: true }, ctx),
+    ).toThrow(/token consumer/);
   });
 });

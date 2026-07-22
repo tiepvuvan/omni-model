@@ -62,6 +62,12 @@
       "required": false,
       "order": 76
     },
+    "OMNI_SECURITY_FIREBASE_APPCHECK_CONSUME": {
+      "description": "Consume limited-use App Check tokens once to prevent replay; keep false unless clients request one per call",
+      "value": "false",
+      "required": false,
+      "order": 77
+    },
     "OMNI_PROVIDERS_DEFAULT_TYPE": {
       "description": "Default upstream type; openai-compatible accepts any compatible endpoint",
       "value": "openai-compatible",

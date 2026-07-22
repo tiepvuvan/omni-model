@@ -21,6 +21,8 @@ const optionsSchema = z.strictObject({
   appIds: z.array(z.string().min(1)).min(1).optional(),
   /** Header carrying the raw App Check token (no scheme). */
   header: z.string().min(1).default("x-firebase-appcheck"),
+  /** Consume limited-use tokens through Firebase to prevent replay. */
+  consume: z.boolean().default(false),
   clockToleranceSeconds: z.number().int().nonnegative().default(60),
 });
 
@@ -39,6 +41,12 @@ export const firebaseAppCheckVerifierFactory: AuthVerifierFactory = {
       );
     }
     const opts = parsed.data;
+    if (opts.consume && runtime.consumeFirebaseAppCheckToken === undefined) {
+      throw new ConfigError(
+        `invalid "${TYPE}" verifier options: consume requires a Firebase App Check token ` +
+          "consumer from the hosting runtime; use @omni-model/node on Cloud Run/GCE or disable consume",
+      );
+    }
     const projectNumber = opts.projectNumber ?? runtime.env.OMNI_GCP_PROJECT_NUMBER;
     if (projectNumber === undefined || !/^\d+$/.test(projectNumber)) {
       throw new ConfigError(
@@ -69,6 +77,17 @@ export const firebaseAppCheckVerifierFactory: AuthVerifierFactory = {
           }
           if (opts.appIds !== undefined && !opts.appIds.includes(payload.sub)) {
             return { ok: false, reason: `app "${payload.sub}" is not in the allowed app list` };
+          }
+          if (opts.consume) {
+            const consumption = await runtime.consumeFirebaseAppCheckToken?.(token);
+            // The consumer is checked at construction; this guard preserves the
+            // fail-closed contract if an embedder mutates its runtime afterward.
+            if (consumption === undefined) {
+              throw new Error("Firebase App Check token consumer is unavailable");
+            }
+            if (consumption.alreadyConsumed) {
+              return { ok: false, reason: "App Check token has already been used" };
+            }
           }
           return {
             ok: true,
