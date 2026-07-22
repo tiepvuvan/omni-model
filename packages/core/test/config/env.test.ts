@@ -99,6 +99,7 @@ describe("environment configuration", () => {
       OMNI_SECURITY_FIREBASE_APPCHECK_ENABLED: "true",
       OMNI_SECURITY_FIREBASE_APPCHECK_PROJECT_NUMBER: "1234567890",
       OMNI_SECURITY_FIREBASE_APPCHECK_APP_ID: "1:1234567890:ios:abc123",
+      OMNI_ROUTING_ALLOWED_MODELS: '["smart","embeddings"]',
       OMNI_ROUTING_ROUTES: JSON.stringify([
         {
           name: "smart",
@@ -117,6 +118,7 @@ describe("environment configuration", () => {
     });
     expect(config.routing).toMatchObject({
       defaultProvider: "default",
+      allowedModels: ["smart", "embeddings"],
       routes: [{ name: "smart", provider: "default", model: "gpt-4o-mini" }],
     });
     expect(config.security).toMatchObject({

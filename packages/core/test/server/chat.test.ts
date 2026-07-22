@@ -85,6 +85,34 @@ describe("POST /v1/chat/completions", () => {
     expect(providers.get("fake")?.chatCalls[0]?.request.model).toBe("smart");
   });
 
+  it("rejects a client model outside the configured allowlist", async () => {
+    const yaml = `
+version: 1
+security:
+  providers:
+    - type: fake-auth
+providers:
+  fake:
+    type: fake
+routing:
+  allowedModels: [smart]
+  defaultProvider: fake
+`;
+    const { app, providers } = await createTestApp({ yaml });
+
+    const response = await app.fetch(
+      chatRequest(
+        { model: "not-allowed", messages: CHAT_BODY.messages },
+        { "x-test-user": "free" },
+      ),
+    );
+    expect(response.status).toBe(404);
+    expect(await response.json()).toMatchObject({
+      error: { code: "model_not_found", param: "model" },
+    });
+    expect(providers.get("fake")?.chatCalls).toHaveLength(0);
+  });
+
   it("records completion usage against token budgets via waitUntil", async () => {
     const yaml = `
 version: 1

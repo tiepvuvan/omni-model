@@ -61,6 +61,7 @@ export function createRouter(
   log?: Logger,
 ): Router {
   const rules: CompiledRule[] = [];
+  const allowedModels = new Set(config.allowedModels);
 
   config.routes.forEach((route, index) => {
     const where = `routing.routes[${index}] ("${route.name}")`;
@@ -93,6 +94,14 @@ export function createRouter(
 
   return {
     resolve(facts: RequestFacts): RouteDecision {
+      if (allowedModels.size > 0 && allowedModels.has(facts.request.model) === false) {
+        throw new OmniError(
+          404,
+          `The model \`${facts.request.model}\` is not available for this deployment.`,
+          { code: "model_not_found", param: "model" },
+        );
+      }
+
       const vars: Record<string, unknown> = {
         request: facts.request,
         user: facts.user,

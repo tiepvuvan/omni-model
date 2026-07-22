@@ -14,6 +14,19 @@ import type { RouteDeps } from "./chat.js";
  */
 export function createModelsHandler(deps: RouteDeps): (c: Context<AppEnv>) => Promise<Response> {
   return async (c) => {
+    if (deps.allowedModels.length > 0) {
+      const body: ModelList = {
+        object: "list",
+        data: deps.allowedModels.map((id) => ({
+          id,
+          object: "model",
+          created: 0,
+          owned_by: "omni-model",
+        })),
+      };
+      return c.json(body);
+    }
+
     const runtime = deps.runtimeFor(c);
     const listable: { providerId: string; list: (ctx: RuntimeContext) => Promise<ModelInfo[]> }[] =
       [];

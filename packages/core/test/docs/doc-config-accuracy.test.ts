@@ -165,6 +165,7 @@ describe("full config examples in the reference page parse", () => {
       "OMNI_SECURITY_FIREBASE_AUTH_ENABLED",
       "OMNI_SECURITY_FIREBASE_APPCHECK_ENABLED",
       "OMNI_ROUTING_DEFAULT_PROVIDER",
+      "OMNI_ROUTING_ALLOWED_MODELS",
       "OMNI__",
     ]) {
       expect(md).toContain(variable);

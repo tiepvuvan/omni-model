@@ -21,9 +21,9 @@ export interface RouteDeps extends PipelineDeps {
   clientIp: (c: Context<AppEnv>) => string | null;
   /** Reject request bodies larger than this many bytes with a 413. */
   maxBodyBytes: number;
+  /** Exact client model names exposed and accepted when configured. */
+  allowedModels: readonly string[];
 }
-
-const bodyEncoder = new TextEncoder();
 
 function payloadTooLarge(maxBodyBytes: number): OmniError {
   return new OmniError(413, `request body exceeds the ${maxBodyBytes}-byte limit`, {
@@ -32,10 +32,53 @@ function payloadTooLarge(maxBodyBytes: number): OmniError {
 }
 
 /**
+ * Read a request stream up to `maxBodyBytes`, cancelling it as soon as the
+ * limit is crossed. The content-length preflight is cheaper when available,
+ * while this protects chunked bodies and lying headers without buffering the
+ * whole payload first.
+ */
+async function readBodyText(c: Context<AppEnv>, maxBodyBytes: number): Promise<string> {
+  const body = c.req.raw.body;
+  if (body === null) return "";
+
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value === undefined) continue;
+      size += value.byteLength;
+      if (size > maxBodyBytes) {
+        try {
+          await reader.cancel();
+        } catch {
+          // The 413 response is still correct when cancellation fails.
+        }
+        throw payloadTooLarge(maxBodyBytes);
+      }
+      chunks.push(value);
+    }
+  } catch (error) {
+    if (error instanceof OmniError) throw error;
+    throw badRequest("request body is not valid JSON", { code: "invalid_json" });
+  }
+
+  const bytes = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(bytes);
+}
+
+/**
  * Parse the request body as a JSON object, rejecting bodies over
- * `maxBodyBytes` (checked against the declared `content-length` and the actual
- * bytes read, since the header can be absent or lie). Anything non-object is a
- * 400.
+ * `maxBodyBytes` (checked against the declared `content-length` and the
+ * incrementally-read body, since the header can be absent or lie). Anything
+ * non-object is a 400.
  */
 export async function readJsonObject(
   c: Context<AppEnv>,
@@ -47,11 +90,11 @@ export async function readJsonObject(
   }
   let text: string;
   try {
-    text = await c.req.text();
-  } catch {
+    text = await readBodyText(c, maxBodyBytes);
+  } catch (error) {
+    if (error instanceof OmniError) throw error;
     throw badRequest("request body is not valid JSON", { code: "invalid_json" });
   }
-  if (bodyEncoder.encode(text).length > maxBodyBytes) throw payloadTooLarge(maxBodyBytes);
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);

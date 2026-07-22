@@ -216,6 +216,7 @@ export async function createOmniApp(init: OmniAppInit): Promise<Hono<AppEnv>> {
     runtimeFor,
     clientIp,
     maxBodyBytes: config.server.maxBodyBytes,
+    allowedModels: config.routing.allowedModels,
   };
   app.post("/v1/chat/completions", createChatHandler(deps));
   app.get("/v1/models", createModelsHandler(deps));

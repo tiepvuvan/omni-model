@@ -26,7 +26,11 @@ export const serverConfigSchema = z.strictObject({
    */
   trustProxyHeaders: z.boolean().default(false),
   /** Maximum accepted request body size in bytes; larger bodies get a 413. */
-  maxBodyBytes: z.number().int().positive().default(2_000_000),
+  maxBodyBytes: z
+    .number()
+    .int()
+    .positive()
+    .default(128 * 1024),
 });
 
 /**
@@ -122,6 +126,11 @@ export const modelRuleSchema = z.strictObject({
 });
 
 export const routingConfigSchema = z.strictObject({
+  /**
+   * Exact client-facing model names that may be requested. An empty list
+   * preserves the default: every model name is eligible for routing.
+   */
+  allowedModels: z.array(z.string().min(1)).default([]),
   /** Evaluated in order against every request; first match wins. */
   routes: z.array(routeConfigSchema).default([]),
   /** Fallback mapping from client-requested model to provider. */

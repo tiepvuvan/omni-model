@@ -27,6 +27,7 @@ const SIMPLE_VALUES: ReadonlyArray<readonly [name: string, path: readonly string
   ["OMNI_SECURITY_PUBLIC_PATHS", ["security", "publicPaths"]],
   ["OMNI_DEFAULT_PROVIDER", ["routing", "defaultProvider"]],
   ["OMNI_ROUTING_DEFAULT_PROVIDER", ["routing", "defaultProvider"]],
+  ["OMNI_ROUTING_ALLOWED_MODELS", ["routing", "allowedModels"]],
   ["OMNI_ROUTING_ROUTES", ["routing", "routes"]],
   ["OMNI_ROUTING_MODEL_RULES", ["routing", "modelRules"]],
   ["OMNI_RATE_LIMITS", ["rateLimits"]],

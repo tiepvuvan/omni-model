@@ -77,6 +77,20 @@ routing:
     expect((await app.fetch(chatRequest(CHAT_BODY))).status).toBe(200);
   });
 
+  it("defaults to a 128 KiB limit when server.maxBodyBytes is omitted", async () => {
+    const defaultYaml = `
+version: 1
+providers:
+  fake:
+    type: fake
+routing:
+  defaultProvider: fake
+`;
+    const { app } = await createTestApp({ yaml: defaultYaml });
+    const body = { ...CHAT_BODY, messages: [{ role: "user", content: "x".repeat(128 * 1024) }] };
+    expect((await app.fetch(chatRequest(body))).status).toBe(413);
+  });
+
   it("rejects when content-length lies but the actual body is oversized", async () => {
     const { app } = await createTestApp({ yaml });
     const bigBody = JSON.stringify({

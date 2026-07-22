@@ -71,6 +71,33 @@ routing:
     ).json()) as ModelList;
     expect(body).toEqual({ object: "list", data: [] });
   });
+
+  it("returns the configured client model allowlist instead of upstream model names", async () => {
+    const yaml = `
+version: 1
+providers:
+  fake:
+    type: fake
+routing:
+  allowedModels: [smart, fast]
+  defaultProvider: fake
+`;
+    const { app } = await createTestApp({
+      yaml,
+      behaviors: { fake: { models: [model("upstream-secret", "fake")] } },
+    });
+
+    const body = (await (
+      await app.fetch(new Request("http://local/v1/models"))
+    ).json()) as ModelList;
+    expect(body).toEqual({
+      object: "list",
+      data: [
+        { id: "smart", object: "model", created: 0, owned_by: "omni-model" },
+        { id: "fast", object: "model", created: 0, owned_by: "omni-model" },
+      ],
+    });
+  });
 });
 
 const EMBED_RESPONSE: EmbeddingsResponse = {

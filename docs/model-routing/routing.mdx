@@ -36,6 +36,19 @@ condition is exactly boolean `true`:
 If none of the three produce a decision, the request fails with an OpenAI-style **404
 `model_not_found`** error.
 
+### Restrict the client-visible model names
+
+Use `allowedModels` when the proxy should expose only a deliberate set of aliases or model names.
+It is an exact-match allowlist: requests for any other name fail with `404 model_not_found` before
+reaching an upstream. When set, `/v1/models` returns precisely this list rather than the upstream
+inventory.
+
+```sh
+export OMNI_ROUTING_ALLOWED_MODELS='["smart","fast","embed"]'
+```
+
+An omitted or empty `allowedModels` list permits every client model name, as before.
+
 <Note>
   Provider references (`provider` / `defaultProvider`) must be keys of your
   [`providers`](/reference/configuration) map. Unknown references are caught at startup and throw

@@ -174,6 +174,25 @@ describe("createRouter", () => {
     });
   });
 
+  it("restricts client model names when an allowlist is configured", () => {
+    const router = createRouter(
+      config({ allowedModels: ["smart"], defaultProvider: "openai" }),
+      providerIds,
+      engine,
+    );
+
+    expect(router.resolve(makeFacts({ model: "smart" })).providerId).toBe("openai");
+    expect(() => router.resolve(makeFacts({ model: "not-allowed" }))).toThrow(OmniError);
+    try {
+      router.resolve(makeFacts({ model: "not-allowed" }));
+    } catch (error) {
+      const omniError = error as OmniError;
+      expect(omniError.status).toBe(404);
+      expect(omniError.code).toBe("model_not_found");
+      expect(omniError.param).toBe("model");
+    }
+  });
+
   it("throws OmniError 404 model_not_found when nothing matches", () => {
     const router = createRouter(config({}), providerIds, engine);
     let thrown: unknown;

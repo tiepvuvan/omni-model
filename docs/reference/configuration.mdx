@@ -189,7 +189,7 @@ Use `OMNI_SERVER_JSON` for several values, or the individual aliases below.
 | --- | --- | --- | --- |
 | `server.logLevel` | `OMNI_SERVER_LOG_LEVEL` (or legacy `OMNI_LOG_LEVEL`) | `debug` \| `info` \| `warn` \| `error` \| `silent` | `info` |
 | `server.trustProxyHeaders` | `OMNI_SERVER_TRUST_PROXY_HEADERS` | boolean | `false` |
-| `server.maxBodyBytes` | `OMNI_SERVER_MAX_BODY_BYTES` | positive integer | `2000000` |
+| `server.maxBodyBytes` | `OMNI_SERVER_MAX_BODY_BYTES` | positive integer | `131072` (128 KiB) |
 | `server.cors` | `OMNI_SERVER_CORS` | JSON object | none |
 
 Example browser CORS policy:
@@ -203,6 +203,14 @@ OMNI_SERVER_JSON='{
     "maxAge":3600
   }
 }'
+```
+
+Requests are capped at **128 KiB** by default, measured in UTF-8 bytes. The proxy checks both
+`Content-Length` and streaming body bytes, returning `413 payload_too_large` without buffering an
+oversized chunked request. Raise the limit deliberately for large multimodal or embedding inputs:
+
+```sh
+OMNI_SERVER_MAX_BODY_BYTES=524288
 ```
 
 Set `trustProxyHeaders` only behind a reverse proxy or CDN that overwrites forwarding headers.
@@ -338,11 +346,20 @@ For the common fields, these aliases avoid wrapping one value in an object:
 | Variable | JSON type | Maps to |
 | --- | --- | --- |
 | `OMNI_ROUTING_DEFAULT_PROVIDER` | string | `routing.defaultProvider` |
+| `OMNI_ROUTING_ALLOWED_MODELS` | string array | `routing.allowedModels` |
 | `OMNI_ROUTING_ROUTES` | array | `routing.routes` |
 | `OMNI_ROUTING_MODEL_RULES` | array | `routing.modelRules` |
 
 `OMNI_DEFAULT_PROVIDER` remains supported as a legacy alias. Use the `OMNI_ROUTING_*` names for new
 deployments. Ordered routes and model rules are arrays, so use JSON for them.
+
+Set an allowlist to restrict clients to exact model names. This applies to chat completions and
+embeddings before any upstream call; `/v1/models` then exposes only these client-facing names. An
+empty or omitted allowlist permits all model names, preserving the default behavior.
+
+```sh
+OMNI_ROUTING_ALLOWED_MODELS='["smart","fast","embed"]'
+```
 
 ```sh
 OMNI_ROUTING_JSON='{
@@ -412,12 +429,12 @@ its own options at startup, so unsupported fields fail before the service accept
 | Root field | JSON type | Default | Notes |
 | --- | --- | --- | --- |
 | `version` | literal `1` | `1` | Compatibility marker. |
-| `server` | object | `{ logLevel: "info", trustProxyHeaders: false, maxBodyBytes: 2000000 }` | HTTP and logging behavior. |
+| `server` | object | `{ logLevel: "info", trustProxyHeaders: false, maxBodyBytes: 131072 }` | HTTP and logging behavior. |
 | `storage` | object | `{ type: "memory" }` | Selects a storage backend and its options. |
 | `security` | object | `{ mode: "all", publicPaths: [], providers: [] }` | At least one provider is required for an HTTP proxy. |
 | `rateLimits` | array | `[{ per-user-requests: 30/1h }, { per-user-daily-tokens: 30000/1d }]` | Ordered request/token budget rules. |
 | `providers` | object keyed by ID | `{}` | Each value has a `type` and type-specific options. |
-| `routing` | object | `{ routes: [], modelRules: [] }` | Chooses a provider and optional upstream model. |
+| `routing` | object | `{ allowedModels: [], routes: [], modelRules: [] }` | Restricts client model names and chooses an upstream. |
 
 ### `server` object
 
@@ -425,7 +442,7 @@ its own options at startup, so unsupported fields fail before the service accept
 | --- | --- | --- |
 | `logLevel` | `debug` \| `info` \| `warn` \| `error` \| `silent` | `info` |
 | `trustProxyHeaders` | boolean | `false` |
-| `maxBodyBytes` | positive integer | `2000000` |
+| `maxBodyBytes` | positive integer | `131072` (128 KiB) |
 | `cors.allowOrigins` | string array | `["*"]` |
 | `cors.allowMethods`, `cors.allowHeaders`, `cors.exposeHeaders` | string arrays | omitted |
 | `cors.maxAge` | positive integer seconds | omitted |
@@ -454,6 +471,7 @@ its own options at startup, so unsupported fields fail before the service accept
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
+| `allowedModels` | string array | `[]` | Exact client model names allowed for chat and embeddings. When non-empty, `/v1/models` returns this list only. |
 | `routes` | array of `{ name, when, provider, model? }` | `[]` | First CEL `when` that is true wins. |
 | `modelRules` | array of `{ match, provider, model? }` | `[]` | Fallback matching by client model name. |
 | `defaultProvider` | provider ID | omitted | Last fallback; an unmatched request is 404 when omitted. |
