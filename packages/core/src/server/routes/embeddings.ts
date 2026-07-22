@@ -2,6 +2,7 @@ import type { Context } from "hono";
 import { badRequest } from "../../errors.js";
 import type { EmbeddingsRequest } from "../../openai/types.js";
 import { embeddingsUsage, executeEmbeddings } from "../pipeline.js";
+import { redactEmbeddingsResponse, redactProviderError } from "../response.js";
 import type { AppEnv } from "../types.js";
 import { factsFor, type RouteDeps, readJsonObject } from "./chat.js";
 
@@ -30,13 +31,13 @@ export function createEmbeddingsHandler(
       signal: c.req.raw.signal,
     });
     if (result.kind === "error") {
-      return Response.json(result.body, { status: result.status });
+      return Response.json(redactProviderError(result.body), { status: result.status });
     }
 
     const usage = result.response.usage;
     if (usage !== undefined) {
       runtime.waitUntil(deps.limiter.recordUsage(facts, embeddingsUsage(usage)));
     }
-    return c.json(result.response);
+    return c.json(redactEmbeddingsResponse(result.response, request.model));
   };
 }

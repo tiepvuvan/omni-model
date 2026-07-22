@@ -28,8 +28,19 @@ routing:
 `;
 
 describe("POST /v1/chat/completions", () => {
-  it("routes with a model override and relays the provider completion", async () => {
-    const completion = cannedCompletion("fake-large");
+  it("routes with a model override and returns only public completion fields", async () => {
+    const completion = {
+      ...cannedCompletion("fake-large"),
+      provider: "fake-upstream",
+      system_fingerprint: "upstream-fingerprint",
+      service_tier: "internal",
+      usage: {
+        prompt_tokens: 10,
+        completion_tokens: 5,
+        total_tokens: 15,
+        cost: 0.01,
+      },
+    };
     const { app, providers } = await createTestApp({
       yaml: ROUTED_YAML,
       behaviors: { fake: { completion } },
@@ -42,7 +53,20 @@ describe("POST /v1/chat/completions", () => {
       chatRequest({ model: "smart", messages, temperature: 0.7 }, { "x-test-user": "pro" }),
     );
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual(completion);
+    expect(await response.json()).toEqual({
+      id: expect.stringMatching(/^chatcmpl-/),
+      object: "chat.completion",
+      created: FIXED_NOW / 1000,
+      // The upstream override is deliberately hidden from clients.
+      model: "smart",
+      choices: [
+        {
+          index: 0,
+          message: { role: "assistant", content: "hello from fake" },
+          finish_reason: "stop",
+        },
+      ],
+    });
 
     const call = providers.get("fake")?.chatCalls[0];
     // The provider sees the route's model override but the client's payload verbatim.
@@ -171,7 +195,7 @@ routing:
     expect(response.status).toBe(400);
   });
 
-  it("passes provider error results through verbatim", async () => {
+  it("redacts provider error details", async () => {
     const errorBody = {
       error: {
         message: "[provider fake] upstream exploded",
@@ -186,7 +210,14 @@ routing:
     });
     const response = await app.fetch(chatRequest(CHAT_BODY, { "x-test-user": "pro" }));
     expect(response.status).toBe(502);
-    expect(await response.json()).toEqual(errorBody);
+    expect(await response.json()).toEqual({
+      error: {
+        message: "upstream model request failed",
+        type: "api_error",
+        param: null,
+        code: "upstream_error",
+      },
+    });
   });
 
   it("forwards the inbound abort signal to the provider", async () => {

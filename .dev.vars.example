@@ -1,0 +1,10 @@
+# Deploy to Cloudflare reads this file to prompt for Worker secrets. These are
+# placeholders only: do not commit a real credential in `.dev.vars`.
+
+# Required fallback authentication. Generate locally, for example:
+# openssl rand -base64 48
+OMNI_SECURITY_JWT_SECRET=replace-with-a-long-random-secret
+
+# Optional for an unauthenticated OpenAI-compatible endpoint. The default
+# https://api.openai.com/v1 endpoint needs a real OpenAI API key.
+OMNI_PROVIDERS_DEFAULT_API_KEY=

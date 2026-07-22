@@ -5,6 +5,12 @@ import type { RequestFacts } from "../../routing/types.js";
 import type { RuntimeContext } from "../../types.js";
 import { buildRequestFacts } from "../facts.js";
 import { executeChat, type PipelineDeps } from "../pipeline.js";
+import {
+  createPublicChatResponseMetadata,
+  redactChatCompletion,
+  redactChatCompletionStream,
+  redactProviderError,
+} from "../response.js";
 import type { AppEnv } from "../types.js";
 
 /** Dependencies shared by every `/v1` route handler. */
@@ -88,8 +94,8 @@ const STREAM_RESPONSE_HEADERS = {
 
 /**
  * POST /v1/chat/completions — validate, rate-limit, route, then relay the
- * provider's completion / SSE stream / error verbatim. Token usage is
- * recorded post-response via `waitUntil` so it never delays the reply.
+ * provider's completion / SSE stream. Provider metadata is redacted at the
+ * response boundary while token usage is retained internally for accounting.
  */
 export function createChatHandler(deps: RouteDeps): (c: Context<AppEnv>) => Promise<Response> {
   return async (c) => {
@@ -110,6 +116,7 @@ export function createChatHandler(deps: RouteDeps): (c: Context<AppEnv>) => Prom
     const result = await executeChat(deps, facts, request, runtime, {
       signal: c.req.raw.signal,
     });
+    const metadata = createPublicChatResponseMetadata(request.model, runtime.now());
 
     switch (result.kind) {
       case "completion": {
@@ -117,7 +124,7 @@ export function createChatHandler(deps: RouteDeps): (c: Context<AppEnv>) => Prom
         if (usage !== undefined) {
           runtime.waitUntil(deps.limiter.recordUsage(facts, usage));
         }
-        return c.json(result.completion);
+        return c.json(redactChatCompletion(result.completion, metadata));
       }
       case "stream": {
         runtime.waitUntil(
@@ -125,10 +132,12 @@ export function createChatHandler(deps: RouteDeps): (c: Context<AppEnv>) => Prom
             usage === null ? undefined : deps.limiter.recordUsage(facts, usage),
           ),
         );
-        return new Response(result.sse, { headers: STREAM_RESPONSE_HEADERS });
+        return new Response(redactChatCompletionStream(result.sse, metadata), {
+          headers: STREAM_RESPONSE_HEADERS,
+        });
       }
       case "error":
-        return Response.json(result.body, { status: result.status });
+        return Response.json(redactProviderError(result.body), { status: result.status });
     }
   };
 }

@@ -1,6 +1,7 @@
 import type { Context } from "hono";
 import type { ModelInfo, ModelList } from "../../openai/types.js";
 import type { RuntimeContext } from "../../types.js";
+import { redactModelInfo } from "../response.js";
 import type { AppEnv } from "../types.js";
 import type { RouteDeps } from "./chat.js";
 
@@ -32,7 +33,7 @@ export function createModelsHandler(deps: RouteDeps): (c: Context<AppEnv>) => Pr
         return;
       }
       for (const model of result.value) {
-        if (!byId.has(model.id)) byId.set(model.id, model);
+        if (!byId.has(model.id)) byId.set(model.id, redactModelInfo(model));
       }
     });
 

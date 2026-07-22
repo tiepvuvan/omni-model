@@ -143,6 +143,17 @@ describe("environment configuration", () => {
     );
   });
 
+  it("defaults multiple enabled security profiles to require every credential", () => {
+    const config = parseEnvironmentConfig({
+      OMNI_SECURITY_FIREBASE_AUTH_ENABLED: "true",
+      OMNI_SECURITY_FIREBASE_AUTH_PROJECT_ID: "my-firebase-project",
+      OMNI_SECURITY_FIREBASE_APPCHECK_ENABLED: "true",
+      OMNI_SECURITY_FIREBASE_APPCHECK_PROJECT_NUMBER: "1234567890",
+    });
+
+    expect(config.security.mode).toBe("all");
+  });
+
   it("omits empty optional compatible-provider credentials and App Check app IDs", () => {
     const config = parseEnvironmentConfig({
       OMNI_PROVIDERS_DEFAULT_TYPE: "openai-compatible",

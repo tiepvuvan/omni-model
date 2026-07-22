@@ -46,8 +46,8 @@ routing:
     const body = (await response.json()) as ModelList;
     expect(body.object).toBe("list");
     expect(body.data.map((m) => m.id)).toEqual(["m1", "m2", "m3"]);
-    // Duplicate id m2 kept alpha's entry (config order).
-    expect(body.data.find((m) => m.id === "m2")?.owned_by).toBe("alpha");
+    // Provider ownership is deliberately hidden from clients.
+    expect(body.data.find((m) => m.id === "m2")?.owned_by).toBe("omni-model");
 
     const warning = entries.find(
       (entry) => entry.level === "warn" && entry.message.includes("listModels"),
@@ -98,7 +98,7 @@ routing:
 `;
 
 describe("POST /v1/embeddings", () => {
-  it("routes, relays the response and records usage with completion_tokens 0", async () => {
+  it("routes, redacts the response and records usage with completion_tokens 0", async () => {
     const storage = new MemoryStorageAdapter(() => FIXED_NOW);
     const { app, providers, collector } = await createTestApp({
       yaml: EMBED_YAML,
@@ -108,7 +108,11 @@ describe("POST /v1/embeddings", () => {
 
     const response = await app.fetch(embeddingsRequest({ model: "embed", input: "hello" }));
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual(EMBED_RESPONSE);
+    expect(await response.json()).toEqual({
+      object: "list",
+      data: [{ object: "embedding", index: 0, embedding: [0.1, 0.2] }],
+      model: "embed",
+    });
     // The route's model override reached the provider.
     expect(providers.get("fake")?.embeddingsCalls[0]?.model).toBe("embed-large");
 
@@ -139,7 +143,7 @@ describe("POST /v1/embeddings", () => {
     expect(((await noInput.json()) as { error: { param: string } }).error.param).toBe("input");
   });
 
-  it("passes provider embedding errors through verbatim", async () => {
+  it("redacts provider embedding error details", async () => {
     const errorBody = {
       error: {
         message: "[provider fake] bad input",
@@ -154,7 +158,14 @@ describe("POST /v1/embeddings", () => {
     });
     const response = await app.fetch(embeddingsRequest({ model: "embed", input: "x" }));
     expect(response.status).toBe(400);
-    expect(await response.json()).toEqual(errorBody);
+    expect(await response.json()).toEqual({
+      error: {
+        message: "upstream model request failed",
+        type: "invalid_request_error",
+        param: null,
+        code: "upstream_error",
+      },
+    });
   });
 
   it("rate limits embeddings like chat", async () => {

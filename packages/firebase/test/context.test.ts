@@ -9,7 +9,6 @@ import { createOmniCallables } from "../src/callable.js";
 import { buildOmniContext } from "../src/context.js";
 import {
   buildTestContext,
-  CANNED_COMPLETION,
   FIXED_NOW,
   fakeProviderFactory,
   makeConfig,
@@ -73,7 +72,20 @@ describe("createOmniCallables", () => {
       auth: { uid: "u1", token: {} },
       app: { appId: "a1" },
     });
-    expect(result).toEqual(CANNED_COMPLETION);
+    expect(result).toMatchObject({
+      id: expect.stringMatching(/^chatcmpl-/),
+      object: "chat.completion",
+      created: FIXED_NOW / 1000,
+      model: "m",
+      choices: [
+        {
+          index: 0,
+          message: { role: "assistant", content: "hello world" },
+          finish_reason: "stop",
+        },
+      ],
+    });
+    expect(result).not.toHaveProperty("usage");
 
     // Missing App Check is rejected by the default requirement.
     await expect(

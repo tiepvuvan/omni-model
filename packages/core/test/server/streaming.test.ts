@@ -27,8 +27,16 @@ function chunk(content: string, finish: string | null = null): ChatCompletionChu
 }
 
 describe("streaming chat completions", () => {
-  it("relays SSE chunks with streaming headers and records usage after the stream", async () => {
-    const chunks = [chunk("hel"), chunk("lo", "stop")];
+  it("redacts SSE metadata while recording upstream usage after the stream", async () => {
+    const chunks = [
+      {
+        ...chunk("hel"),
+        provider: "fake-upstream",
+        system_fingerprint: "upstream-fingerprint",
+        usage: { prompt_tokens: 7, completion_tokens: 3, total_tokens: 10, cost: 0.01 },
+      },
+      chunk("lo", "stop"),
+    ];
     const storage = new MemoryStorageAdapter(() => FIXED_NOW);
     const { app, collector } = await createTestApp({
       yaml: STREAM_YAML,
@@ -50,8 +58,14 @@ describe("streaming chat completions", () => {
     expect(response.headers.get("x-accel-buffering")).toBe("no");
 
     const text = await response.text();
-    expect(text).toContain(`data: ${JSON.stringify(chunks[0])}\n\n`);
-    expect(text).toContain(`data: ${JSON.stringify(chunks[1])}\n\n`);
+    expect(text).toContain('"object":"chat.completion.chunk"');
+    expect(text).toContain('"model":"smart"');
+    expect(text).toContain('"content":"hel"');
+    expect(text).toContain('"content":"lo"');
+    expect(text).not.toContain("fake-upstream");
+    expect(text).not.toContain("upstream-fingerprint");
+    expect(text).not.toContain('"usage"');
+    expect(text).not.toContain('"cost"');
     expect(text.trimEnd().endsWith("data: [DONE]")).toBe(true);
 
     // Usage recording was scheduled via waitUntil and lands after the stream.

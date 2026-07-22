@@ -1,13 +1,7 @@
 import { describe, expect, test, vi } from "vitest";
 import { createChatCallable, createEmbeddingsCallable } from "../src/callable.js";
 import { CallableError, type CallableRequestLike } from "../src/identity.js";
-import {
-  buildTestContext,
-  CANNED_COMPLETION,
-  CANNED_EMBEDDINGS,
-  COMPLETION_USAGE,
-  STREAM_USAGE,
-} from "./helpers.js";
+import { buildTestContext, COMPLETION_USAGE, STREAM_USAGE } from "./helpers.js";
 
 const OPEN = { requireAuth: false, requireAppCheck: false } as const;
 
@@ -16,14 +10,19 @@ function chatData(overrides: Record<string, unknown> = {}): Record<string, unkno
 }
 
 describe("createChatCallable — non-streaming", () => {
-  test("returns the completion and records usage", async () => {
+  test("returns a redacted completion and records usage", async () => {
     const ctx = await buildTestContext({ provider: { mode: "completion" } });
     const spy = vi.spyOn(ctx.deps.limiter, "recordUsage");
     const chat = createChatCallable(ctx, OPEN);
 
     const result = await chat({ data: chatData(), acceptsStreaming: false });
 
-    expect(result).toEqual(CANNED_COMPLETION);
+    expect(result).toMatchObject({
+      id: expect.stringMatching(/^chatcmpl-/),
+      object: "chat.completion",
+      model: "gpt-x",
+    });
+    expect(result).not.toHaveProperty("usage");
     expect(result.choices[0]?.message.content).toBe("hello world");
     expect(spy).toHaveBeenCalledTimes(1);
     expect(spy).toHaveBeenCalledWith(expect.anything(), COMPLETION_USAGE);
@@ -44,12 +43,12 @@ describe("createChatCallable — streaming", () => {
     expect(sent[0]).toMatchObject({ object: "chat.completion.chunk" });
 
     expect(result.object).toBe("chat.completion");
-    expect(result.id).toBe("chatcmpl-s");
-    expect(result.model).toBe("fake-model");
+    expect(result.id).toMatch(/^chatcmpl-/);
+    expect(result.model).toBe("gpt-x");
     expect(result.choices[0]?.message.content).toBe("Hello");
     expect(result.choices[0]?.message.role).toBe("assistant");
     expect(result.choices[0]?.finish_reason).toBe("stop");
-    expect(result.usage).toEqual(STREAM_USAGE);
+    expect(result).not.toHaveProperty("usage");
 
     expect(spy).toHaveBeenCalledWith(expect.anything(), STREAM_USAGE);
   });
@@ -180,7 +179,11 @@ describe("createEmbeddingsCallable", () => {
 
     const result = await embeddings({ data: { model: "embed-x", input: "hello" } });
 
-    expect(result).toEqual(CANNED_EMBEDDINGS);
+    expect(result).toEqual({
+      object: "list",
+      data: [{ object: "embedding", index: 0, embedding: [0.1, 0.2, 0.3] }],
+      model: "embed-x",
+    });
     expect(spy).toHaveBeenCalledWith(expect.anything(), {
       prompt_tokens: 4,
       completion_tokens: 0,

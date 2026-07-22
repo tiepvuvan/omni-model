@@ -6,9 +6,10 @@
 // through that package (or `cd apps/cloudflare` first).
 //
 // Configuration and provider secrets are environment variables. For example:
-//   OMNI__PROVIDERS__OPENAI__API_KEY=${OPENAI_API_KEY}
-// Provider keys are set with:
-//   pnpm --filter omni-model-cloudflare exec wrangler secret put OPENAI_API_KEY
+//   OMNI_PROVIDERS_DEFAULT_API_KEY=<provider key>
+// `.dev.vars.example` lets the Deploy to Cloudflare button prompt for the
+// JWT and upstream API-key secrets while the non-secret defaults below are
+// deployed automatically.
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "omni-model",
@@ -21,6 +22,19 @@
   // fails with `Could not resolve "@omni-model/cloudflare"`.
   // Filtered to the two packages the worker needs (`...` pulls in core).
   "build": { "command": "pnpm --filter @omni-model/cloudflare... run build" },
+  // A complete, safe one-provider starter. Worker secrets declared in
+  // `.dev.vars.example` supply OMNI_SECURITY_JWT_SECRET and the optional
+  // OMNI_PROVIDERS_DEFAULT_API_KEY; no application YAML is needed.
+  "vars": {
+    "OMNI_SERVER_LOG_LEVEL": "info",
+    "OMNI_STORAGE_TYPE": "durable-object",
+    "OMNI_STORAGE_DURABLE_OBJECT_BINDING": "OMNI_DO",
+    "OMNI_SECURITY_JWT_ENABLED": "true",
+    "OMNI_SECURITY_JWT_ALGORITHMS": "[\"HS256\"]",
+    "OMNI_PROVIDERS_DEFAULT_TYPE": "openai-compatible",
+    "OMNI_PROVIDERS_DEFAULT_BASE_URL": "https://api.openai.com/v1",
+    "OMNI_RATE_LIMITS_JSON": "[{\"name\":\"per-user-requests\",\"key\":\"user\",\"requests\":{\"limit\":60,\"window\":\"1m\"}},{\"name\":\"per-user-daily-tokens\",\"key\":\"user\",\"tokens\":{\"limit\":200000,\"window\":\"1d\"}}]"
+  },
   // Default storage: a Durable Object (exact rate-limit counters). The class
   // is exported by apps/cloudflare/src/index.ts.
   "durable_objects": {

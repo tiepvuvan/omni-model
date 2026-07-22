@@ -181,10 +181,10 @@ error body. The raw token is never logged or echoed.
 exempts specific routes from authentication.
 
 <Tabs>
-<Tab title="mode: any (default)">
+<Tab title="mode: any (explicit)">
 Verifiers are consulted in config order. The first one that **accepts** wins;
 a verifier whose credential is absent is skipped. Use this to accept tokens
-from more than one issuer.
+from more than one issuer. This mode must be selected explicitly; the default is `all`.
 
 ```sh
 export OMNI_SECURITY_JSON='{

@@ -15,22 +15,21 @@ which prevents an unauthenticated proxy from spending your upstream provider cre
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/tiepvuvan/omni-model)
 
-The button provisions the `OMNI_DO` Durable Object binding. In **Workers & Pages → your Worker →
-Settings → Variables and Secrets**, add the provider secret and the following configuration values:
+The button provisions the `OMNI_DO` Durable Object and deploys the complete named-variable starter
+from `wrangler.jsonc`. It prompts for the two entries in `.dev.vars.example` during setup:
 
-| Variable | Value |
-| --- | --- |
-| `OPENAI_API_KEY` | Store as a secret. |
-| `OMNI_STORAGE_TYPE` | `durable-object` |
-| `OMNI_STORAGE_DURABLE_OBJECT_BINDING` | `OMNI_DO` |
-| `OMNI_SECURITY_JWT_ENABLED` | `true` |
-| `OMNI_JWT_SECRET` | Store as a secret. |
-| `OMNI_SECURITY_JWT_SECRET` | `${OMNI_JWT_SECRET}` |
-| `OMNI_SECURITY_JWT_ALGORITHMS` | `["HS256"]` |
-| `OMNI_PROVIDERS_DEFAULT_TYPE` | `openai` |
-| `OMNI_PROVIDERS_DEFAULT_API_KEY` | `${OPENAI_API_KEY}` |
+| Secret | Required | Purpose |
+| --- | --- | --- |
+| `OMNI_SECURITY_JWT_SECRET` | Yes | HS256 fallback authentication for clients without App Check. |
+| `OMNI_PROVIDERS_DEFAULT_API_KEY` | No | Key for the default OpenAI-compatible upstream. Leave blank only for an unauthenticated compatible endpoint. |
 
-For Firebase App Check, use its named profile instead of the JWT variables:
+The default Worker uses exact Durable Object counters, a JWT verifier, and an OpenAI-compatible
+provider pointed at `https://api.openai.com/v1`. It starts with no provider key, so add the key
+during setup or later in **Workers & Pages → your Worker → Settings → Variables and Secrets** before
+sending model requests. No dashboard configuration is required for the storage binding, rate limits,
+or the default provider type and endpoint.
+
+To use Firebase App Check instead, set `OMNI_SECURITY_JWT_ENABLED=false` and add its named profile:
 
 ```text
 OMNI_SECURITY_FIREBASE_APPCHECK_ENABLED=true
@@ -38,7 +37,7 @@ OMNI_SECURITY_FIREBASE_APPCHECK_PROJECT_NUMBER=YOUR_PROJECT_NUMBER
 OMNI_SECURITY_FIREBASE_APPCHECK_APP_ID=1:YOUR_PROJECT_NUMBER:ios:YOUR_APP_ID
 ```
 
-Deploy a new Worker revision after changing a variable.
+Deploy a new Worker revision after changing a variable or secret.
 
 ## Forkless prebuilt Worker
 
@@ -53,13 +52,12 @@ npx wrangler deploy \
   --var OMNI_STORAGE_TYPE:durable-object \
   --var OMNI_STORAGE_DURABLE_OBJECT_BINDING:OMNI_DO \
   --var OMNI_SECURITY_JWT_ENABLED:true \
-  --var OMNI_SECURITY_JWT_SECRET:'${OMNI_JWT_SECRET}' \
   --var OMNI_SECURITY_JWT_ALGORITHMS:'["HS256"]' \
-  --var OMNI_PROVIDERS_DEFAULT_TYPE:openai \
-  --var OMNI_PROVIDERS_DEFAULT_API_KEY:'${OPENAI_API_KEY}'
+  --var OMNI_PROVIDERS_DEFAULT_TYPE:openai-compatible \
+  --var OMNI_PROVIDERS_DEFAULT_BASE_URL:https://api.openai.com/v1
 
-npx wrangler secret put OPENAI_API_KEY
-npx wrangler secret put OMNI_JWT_SECRET
+npx wrangler secret put OMNI_SECURITY_JWT_SECRET
+npx wrangler secret put OMNI_PROVIDERS_DEFAULT_API_KEY
 ```
 
 The uploaded Worker is self-contained. The `OMNI_DO` binding declared in the downloaded

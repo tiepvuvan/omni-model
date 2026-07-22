@@ -5,6 +5,7 @@ import {
   type ChatCompletionRequest,
   type ChatResult,
   type ChatToolCall,
+  createPublicChatResponseMetadata,
   type EmbeddingsRequest,
   type EmbeddingsResponse,
   type EmbeddingsResult,
@@ -14,6 +15,10 @@ import {
   type OmniConfig,
   type RequestFacts,
   readSSEStream,
+  redactChatCompletion,
+  redactChatCompletionChunk,
+  redactEmbeddingsResponse,
+  redactProviderError,
   type Usage,
 } from "@omni-model/core";
 import { type BuildOmniContextDeps, buildOmniContext, type OmniContext } from "./context.js";
@@ -180,12 +185,13 @@ export function createChatCallable(
     } catch (error) {
       throw toCallableError(error);
     }
+    const metadata = createPublicChatResponseMetadata(chatRequest.model, ctx.runtime.now());
 
     switch (result.kind) {
       case "completion": {
         const usage = result.completion.usage;
         if (usage !== undefined) await recordUsage(ctx, facts, usage);
-        return result.completion;
+        return redactChatCompletion(result.completion, metadata);
       }
       case "stream": {
         const aggregator = new ChatCompletionAggregator();
@@ -199,8 +205,9 @@ export function createChatCallable(
               // A non-JSON data line is not a completion chunk; skip it.
               continue;
             }
-            if (streamMode && response !== undefined) response.sendChunk(chunk);
-            aggregator.add(chunk);
+            const publicChunk = redactChatCompletionChunk(chunk, metadata);
+            if (streamMode && response !== undefined) response.sendChunk(publicChunk);
+            aggregator.add(publicChunk);
           }
         } catch (error) {
           // A mid-stream upstream failure surfaces here; map it for the client.
@@ -213,10 +220,10 @@ export function createChatCallable(
           const usage = await result.usage;
           if (usage !== null) await recordUsage(ctx, facts, usage);
         }
-        return aggregator.build(await result.usage);
+        return redactChatCompletion(aggregator.build(await result.usage), metadata);
       }
       case "error":
-        throw callableErrorFromStatus(result.status, result.body.error.message);
+        throw callableErrorFromStatus(result.status, redactProviderError(result.body).error.message);
     }
   };
 }
@@ -263,11 +270,11 @@ export function createEmbeddingsCallable(
     }
 
     if (result.kind === "error") {
-      throw callableErrorFromStatus(result.status, result.body.error.message);
+      throw callableErrorFromStatus(result.status, redactProviderError(result.body).error.message);
     }
     const usage = result.response.usage;
     if (usage !== undefined) await recordUsage(ctx, facts, embeddingsUsage(usage));
-    return result.response;
+    return redactEmbeddingsResponse(result.response, embeddingsRequest.model);
   };
 }
 

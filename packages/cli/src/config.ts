@@ -139,7 +139,7 @@ export function buildConfig(a: Answers): Record<string, unknown> {
     storage: storageBlock(a.storage),
     // At least one verifier is mandatory — the proxy refuses to start without
     // one, so the wizard and --auth both require a choice.
-    security: { mode: "any", providers: securityProviders(a) },
+    security: { mode: "all", providers: securityProviders(a) },
     rateLimits: rateLimits(a),
     providers: { [a.provider.name]: providerBlock(a.provider) },
     routing: { defaultProvider: a.provider.name },
@@ -176,7 +176,7 @@ export function configEnvironment(a: Answers): Record<string, string> {
     provider.OMNI_PROVIDERS_DEFAULT_BASE_URL = a.provider.baseUrl;
   }
 
-  const security: Record<string, string> = { OMNI_SECURITY_MODE: "any" };
+  const security: Record<string, string> = { OMNI_SECURITY_MODE: "all" };
   for (const id of a.auth) {
     switch (id) {
       case "firebase-auth":

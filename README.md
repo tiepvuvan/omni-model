@@ -120,16 +120,13 @@ image yourself instead: `docker build -t omni-model .`.
 - **Render** — no fork. The [`render.yaml`](render.yaml) Blueprint runs the prebuilt GHCR image,
   provisions a managed Key Value (Redis) datastore for rate limits, and prompts you for your
   provider API keys.
-- **Cloudflare Workers** — the button forks the repo into your account (Workers bindings + secrets
-  live there), compiles the workspace packages and provisions the `OMNI_DO` Durable Object for you.
-  Set your named `OMNI_STORAGE_*`, `OMNI_PROVIDERS_DEFAULT_*`, `OMNI_SECURITY_*`, or advanced JSON
-  configuration variables and provider secrets in the
-  Workers dashboard before the first request. Edit those variables to create a new configuration
-  revision; no configuration file is bundled into the worker.
-- **Cloud Run** — no fork. The button builds the repository, supplies a working OpenAI + JWT
-  starter config, and asks for your OpenAI key and JWT signing secret. It intentionally starts at
-  one instance with in-memory counters; follow the [Cloud Run guide](docs/installation/cloud-run.mdx)
-  to move a production deployment to Firestore and Secret Manager.
+- **Cloudflare Workers** — Cloudflare clones the repository into your account, provisions the
+  `OMNI_DO` Durable Object, applies the named Worker configuration, and prompts for the JWT and
+  optional upstream-key secrets. The starter is ready without dashboard configuration; edit its
+  environment variables later for Firebase App Check, routing, or a different provider.
+- **Cloud Run** — no fork. The button defaults to Firestore and Firebase App Check, generates a
+  JWT fallback secret, and lets you add an optional OpenAI-compatible upstream key later. Follow the
+  [Cloud Run guide](docs/installation/cloud-run.mdx) for Firestore IAM and Secret Manager.
 - **Fly.io** — `fly launch --copy-config` (a `fly.toml` ships in the repo).
 
 **Cloudflare without a fork.** Every release also ships a **prebuilt worker** — the edge counterpart

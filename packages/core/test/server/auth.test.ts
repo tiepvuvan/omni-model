@@ -6,6 +6,7 @@ import { CHAT_BODY, chatRequest, createTestApp } from "./helpers.js";
 const AUTH_YAML = `
 version: 1
 security:
+  mode: any
   providers:
     - type: fake-auth
 providers:
@@ -104,6 +105,7 @@ describe("auth middleware (mode: any)", () => {
     const yaml = `
 version: 1
 security:
+  mode: any
   providers:
     - type: fake-auth
       name: primary

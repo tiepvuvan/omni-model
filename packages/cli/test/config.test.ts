@@ -118,6 +118,7 @@ describe("generated config", () => {
     const env = configEnvironment(answers[0] as Answers);
     expect(env.OMNI_STORAGE_TYPE).toBeDefined();
     expect(env.OMNI_PROVIDERS_DEFAULT_TYPE).toBeDefined();
+    expect(env.OMNI_SECURITY_MODE).toBe("all");
     expect(Object.keys(env).some((name) => name.endsWith("_ENABLED"))).toBe(true);
     expect(env.OMNI_STORAGE_JSON).toBeUndefined();
     expect(env.OMNI_PROVIDERS_JSON).toBeUndefined();

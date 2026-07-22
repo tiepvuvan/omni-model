@@ -50,7 +50,7 @@ export const securityConfigSchema = z.strictObject({
    *        a presented-but-invalid credential still rejects the request.
    * "all": every configured verifier must accept the request.
    */
-  mode: z.enum(["any", "all"]).default("any"),
+  mode: z.enum(["any", "all"]).default("all"),
   /** Paths (exact or trailing-`*` prefix) that bypass authentication. */
   publicPaths: z.array(z.string()).default([]),
   /**
