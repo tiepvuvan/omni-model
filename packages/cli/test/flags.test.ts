@@ -40,8 +40,8 @@ describe("non-interactive flags", () => {
     // Storage defaults to the best one for the target.
     expect(a.storage).toBe("durable-object");
     expect(a.provider).toEqual({ id: "openai", name: "openai", envVar: "OPENAI_API_KEY" });
-    expect(a.requestsPerMinute).toBe(60);
-    expect(a.tokensPerDay).toBe(200_000);
+    expect(a.requestsPerHour).toBe(30);
+    expect(a.tokensPerDay).toBe(30_000);
   });
 
   it("defaults Cloud Run to Firestore, not to Cloudflare's storage", () => {
@@ -108,8 +108,8 @@ describe("non-interactive flags", () => {
 
   it("validates numbers and URLs", () => {
     expect(() =>
-      answersFromFlags({ target: "docker", auth: "firebase-auth", requestsPerMinute: "lots" }),
-    ).toThrowError(/--requests-per-minute must be a whole number/);
+      answersFromFlags({ target: "docker", auth: "firebase-auth", requestsPerHour: "lots" }),
+    ).toThrowError(/--requests-per-hour must be a whole number/);
     expect(() =>
       answersFromFlags({ target: "docker", auth: "firebase-auth", baseUrl: "ftp://x" }),
     ).toThrowError(/--base-url must be an http\(s\) URL/);
@@ -130,7 +130,7 @@ describe("non-interactive flags", () => {
     const a = answersFromFlags({
       target: "cloud-run",
       auth: "firebase-auth,firebase-app-check,apple-app-attest,apple-device-check",
-      requestsPerMinute: "30",
+      requestsPerHour: "30",
       tokensPerDay: "1000",
     });
     const config = parseEnvironmentConfig({ ...TEST_ENV, ...configEnvironment(a) });

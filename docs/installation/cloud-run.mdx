@@ -238,7 +238,7 @@ gcloud run deploy "$SERVICE" \
   --set-env-vars 'OMNI_SECURITY_JWT_ALGORITHMS=["HS256"]' \
   --set-env-vars 'OMNI_PROVIDERS_DEFAULT_TYPE=openai' \
   --set-env-vars 'OMNI_PROVIDERS_DEFAULT_API_KEY=${OPENAI_API_KEY}' \
-  --set-env-vars 'OMNI_RATE_LIMITS_JSON=[{"name":"per-user-requests","key":"user","requests":{"limit":60,"window":"1m"}},{"name":"per-user-daily-tokens","key":"user","tokens":{"limit":200000,"window":"1d"}}]' \
+  --set-env-vars 'OMNI_RATE_LIMITS_JSON=[{"name":"per-user-requests","key":"user","requests":{"limit":30,"window":"1h"}},{"name":"per-user-daily-tokens","key":"user","tokens":{"limit":30000,"window":"1d"}}]' \
   --set-secrets "\
 OPENAI_API_KEY=omni-openai-api-key:1,\
 OMNI_JWT_SECRET=omni-jwt-secret:1"
@@ -296,7 +296,7 @@ per minute:
 ```sh
 gcloud run services update "$SERVICE" \
   --region "$REGION" \
-  --update-env-vars 'OMNI_RATE_LIMITS_JSON=[{"name":"per-user-requests","key":"user","requests":{"limit":100,"window":"1m"}},{"name":"per-user-daily-tokens","key":"user","tokens":{"limit":200000,"window":"1d"}}]'
+  --update-env-vars 'OMNI_RATE_LIMITS_JSON=[{"name":"per-user-requests","key":"user","requests":{"limit":30,"window":"1h"}},{"name":"per-user-daily-tokens","key":"user","tokens":{"limit":30000,"window":"1d"}}]'
 ```
 
 To rotate `OPENAI_API_KEY` or `OMNI_JWT_SECRET`, add a Secret Manager version and update the

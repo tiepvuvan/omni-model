@@ -30,8 +30,8 @@ app  ──httpsCallable──▶  ext-<id>-chat / -embeddings  ──▶  OpenA
 | `ANTHROPIC_API_KEY` | secret | — | Anthropic (Claude) API key. Optional. |
 | `GEMINI_API_KEY` | secret | — | Google Gemini API key. Optional. |
 | `DEFAULT_PROVIDER` | select | `openai` | Provider used when no route matches. Falls back to the first configured provider if its key is absent. |
-| `REQUESTS_PER_MINUTE` | string (int) | `60` | Per-user request limit per minute. |
-| `DAILY_TOKEN_BUDGET` | string (int) | `200000` | Per-user token budget per day. |
+| `REQUESTS_PER_HOUR` | string (int) | `30` | Per-user request limit per hour. |
+| `DAILY_TOKEN_BUDGET` | string (int) | `30000` | Per-user token budget per day. |
 | `REQUIRE_APP_CHECK` | select | `true` | Require a valid App Check token. |
 | `REQUIRE_AUTH` | select | `true` | Require a signed-in Firebase user. |
 | `FIRESTORE_COLLECTION` | string | `omni_ratelimits` | Firestore collection for rate-limit counters. |

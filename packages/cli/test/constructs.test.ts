@@ -80,8 +80,8 @@ function everyAnswer(): Answers[] {
             storage: storage.id,
             provider,
             auth,
-            requestsPerMinute: 60,
-            tokensPerDay: 200_000,
+            requestsPerHour: 30,
+            tokensPerDay: 30_000,
           });
         }
       }
@@ -115,7 +115,7 @@ describe("generated config builds a real app", () => {
       storage: "memory",
       provider: PROVIDERS[0] as ProviderChoice,
       auth: ["firebase-auth"],
-      requestsPerMinute: 60,
+      requestsPerHour: 30,
       tokensPerDay: 0,
     };
     const app = await createOmniApp({

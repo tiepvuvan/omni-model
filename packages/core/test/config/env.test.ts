@@ -154,6 +154,26 @@ describe("environment configuration", () => {
     expect(config.security.mode).toBe("all");
   });
 
+  it("applies the default per-user request and token budgets when omitted", () => {
+    const config = parseEnvironmentConfig({
+      OMNI_SECURITY_FIREBASE_AUTH_ENABLED: "true",
+      OMNI_SECURITY_FIREBASE_AUTH_PROJECT_ID: "my-firebase-project",
+    });
+
+    expect(config.rateLimits).toEqual([
+      {
+        name: "per-user-requests",
+        key: "user",
+        requests: { limit: 30, window: "1h" },
+      },
+      {
+        name: "per-user-daily-tokens",
+        key: "user",
+        tokens: { limit: 30_000, window: "1d" },
+      },
+    ]);
+  });
+
   it("omits empty optional compatible-provider credentials and App Check app IDs", () => {
     const config = parseEnvironmentConfig({
       OMNI_PROVIDERS_DEFAULT_TYPE: "openai-compatible",

@@ -82,7 +82,7 @@
     },
     "OMNI_RATE_LIMITS_JSON": {
       "description": "Request and token budget rules (JSON array)",
-      "value": "[{\"name\":\"per-user-requests\",\"key\":\"user\",\"requests\":{\"limit\":60,\"window\":\"1m\"}},{\"name\":\"per-user-daily-tokens\",\"key\":\"user\",\"tokens\":{\"limit\":200000,\"window\":\"1d\"}}]",
+      "value": "[{\"name\":\"per-user-requests\",\"key\":\"user\",\"requests\":{\"limit\":30,\"window\":\"1h\"}},{\"name\":\"per-user-daily-tokens\",\"key\":\"user\",\"tokens\":{\"limit\":30000,\"window\":\"1d\"}}]",
       "required": false,
       "order": 100
     }

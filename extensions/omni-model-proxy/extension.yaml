@@ -95,13 +95,13 @@ params:
       - label: Google Gemini
         value: google
 
-  - param: REQUESTS_PER_MINUTE
-    label: Requests per minute (per user)
+  - param: REQUESTS_PER_HOUR
+    label: Requests per hour (per user)
     description: >-
       Maximum chat/embeddings requests allowed per authenticated user per
-      minute. Must be a positive integer.
+      hour. Must be a positive integer.
     type: string
-    default: "60"
+    default: "30"
     required: true
     validationRegex: ^[0-9]+$
     validationErrorMessage: Must be a positive integer.
@@ -112,7 +112,7 @@ params:
       Maximum tokens (prompt + completion) an authenticated user may consume per
       day. Must be a positive integer.
     type: string
-    default: "200000"
+    default: "30000"
     required: true
     validationRegex: ^[0-9]+$
     validationErrorMessage: Must be a positive integer.

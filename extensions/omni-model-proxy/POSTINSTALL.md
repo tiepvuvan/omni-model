@@ -67,7 +67,7 @@ upstream. Do **not** set `stream` in the body — the callable derives streaming
 
 # Rate limits
 
-Each authenticated user is limited to **${param:REQUESTS_PER_MINUTE} requests/minute**
+Each authenticated user is limited to **${param:REQUESTS_PER_HOUR} requests/hour**
 and **${param:DAILY_TOKEN_BUDGET} tokens/day**. Exceeding a limit returns a
 `resource-exhausted` callable error. Counters live in the Firestore collection
 `${param:FIRESTORE_COLLECTION}`.

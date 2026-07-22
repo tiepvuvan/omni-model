@@ -20,8 +20,8 @@ what the limits are; produces environment variables; and ships them with the dep
 ◆  Which upstream provider?    ● OpenAI ○ Anthropic ○ Gemini ○ OpenAI-compatible
 ◆  How should clients authenticate?
 │  ◻ Firebase Auth  ◻ App Check  ◻ App Attest  ◻ DeviceCheck
-◆  Requests per minute, per caller?   60
-◆  Token budget per caller per day?   200000
+◆  Requests per hour, per caller?   30
+◆  Token budget per caller per day?   30000
 ```
 
 ## Non-interactive (CI, scripts, Dockerfiles)
@@ -34,7 +34,7 @@ npx omni-model deploy \
   --storage durable-object \
   --provider openai \
   --auth firebase-app-check --firebase-project-number 499566808294 \
-  --requests-per-minute 60 --tokens-per-day 200000 \
+  --requests-per-hour 30 --tokens-per-day 30000 \
   --name my-proxy --yes
 ```
 
@@ -58,7 +58,7 @@ Exit codes: `0` success, `2` a flag problem (message names the valid values), `1
 | `--provider-name` · `--api-key-env` | derived from the provider |
 | `--auth` | *required* — comma-separated verifiers, or `none` |
 | `--firebase-project-id` · `--firebase-project-number` · `--apple-team-id` · `--apple-bundle-id` | omitted → the config emits a `${VAR}` reference to read at runtime |
-| `--requests-per-minute` · `--tokens-per-day` | `60` · `200000` (`0` disables) |
+| `--requests-per-hour` · `--tokens-per-day` | `30` · `30000` (`0` disables) |
 | `--name` · `-y, --yes` · `--dry-run` | `omni-model` · off · off |
 
 Invalid combinations are refused up front — `--target cloudflare --storage firestore` tells you

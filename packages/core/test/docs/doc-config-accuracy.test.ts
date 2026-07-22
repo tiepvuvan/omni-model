@@ -192,7 +192,7 @@ describe("the Cloud Run production configuration", () => {
       OMNI_PROVIDERS_DEFAULT_TYPE: "openai",
       OMNI_PROVIDERS_DEFAULT_API_KEY: "$" + "{OPENAI_API_KEY}",
       OMNI_RATE_LIMITS_JSON:
-        '[{"name":"per-user-requests","key":"user","requests":{"limit":60,"window":"1m"}}]',
+        '[{"name":"per-user-requests","key":"user","requests":{"limit":30,"window":"1h"}}]',
     });
     expect(config.storage.type).toBe("firestore");
     expect(config.security.providers).toMatchObject([{ type: "jwt" }]);

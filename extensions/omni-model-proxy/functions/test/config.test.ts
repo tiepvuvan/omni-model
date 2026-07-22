@@ -7,7 +7,7 @@ describe("buildOmniConfig", () => {
       OPENAI_API_KEY: "sk-openai",
       ANTHROPIC_API_KEY: "sk-anthropic",
       DEFAULT_PROVIDER: "anthropic",
-      REQUESTS_PER_MINUTE: "30",
+      REQUESTS_PER_HOUR: "30",
       DAILY_TOKEN_BUDGET: "500000",
       FIRESTORE_COLLECTION: "my_limits",
     });
@@ -21,7 +21,7 @@ describe("buildOmniConfig", () => {
 
     const requestRule = config.rateLimits.find((r) => r.name === "per-user-requests");
     const tokenRule = config.rateLimits.find((r) => r.name === "per-user-daily-tokens");
-    expect(requestRule?.requests).toEqual({ limit: 30, window: "1m" });
+    expect(requestRule?.requests).toEqual({ limit: 30, window: "1h" });
     expect(tokenRule?.tokens).toEqual({ limit: 500000, window: "1d" });
   });
 
@@ -31,12 +31,23 @@ describe("buildOmniConfig", () => {
     expect(config.storage).toMatchObject({ type: "firestore", collection: "omni_ratelimits" });
     expect(config.routing.defaultProvider).toBe("google");
     expect(config.rateLimits.find((r) => r.name === "per-user-requests")?.requests).toEqual({
-      limit: 60,
-      window: "1m",
+      limit: 30,
+      window: "1h",
     });
     expect(config.rateLimits.find((r) => r.name === "per-user-daily-tokens")?.tokens).toEqual({
-      limit: 200000,
+      limit: 30000,
       window: "1d",
+    });
+  });
+
+  it("keeps reading the legacy request parameter with the new hour window", () => {
+    const config = buildOmniConfig({
+      GEMINI_API_KEY: "gemini-key",
+      REQUESTS_PER_MINUTE: "45",
+    });
+    expect(config.rateLimits.find((r) => r.name === "per-user-requests")?.requests).toEqual({
+      limit: 45,
+      window: "1h",
     });
   });
 
@@ -74,7 +85,7 @@ describe("buildOmniConfig", () => {
 
   it("throws on a non-numeric integer param", () => {
     expect(() =>
-      buildOmniConfig({ OPENAI_API_KEY: "sk-openai", REQUESTS_PER_MINUTE: "sixty" }),
-    ).toThrow(/REQUESTS_PER_MINUTE/);
+      buildOmniConfig({ OPENAI_API_KEY: "sk-openai", REQUESTS_PER_HOUR: "thirty" }),
+    ).toThrow(/REQUESTS_PER_HOUR/);
   });
 });

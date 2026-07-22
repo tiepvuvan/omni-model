@@ -159,11 +159,11 @@ export async function runWizard(): Promise<Answers> {
     );
   }
 
-  answers.requestsPerMinute = Number(
+  answers.requestsPerHour = Number(
     stopIfCancelled(
       await text({
-        message: "Requests per minute, per caller (0 for no limit)",
-        initialValue: "60",
+        message: "Requests per hour, per caller (0 for no limit)",
+        initialValue: "30",
         validate: (v) => (v && /^\d+$/.test(v) ? undefined : "A whole number"),
       }),
     ),
@@ -172,7 +172,7 @@ export async function runWizard(): Promise<Answers> {
     stopIfCancelled(
       await text({
         message: "Token budget per caller per day (0 for no budget)",
-        initialValue: "200000",
+        initialValue: "30000",
         validate: (v) => (v && /^\d+$/.test(v) ? undefined : "A whole number"),
       }),
     ),

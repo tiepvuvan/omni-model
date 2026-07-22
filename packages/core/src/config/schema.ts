@@ -88,6 +88,21 @@ export const rateLimitRuleSchema = z
     message: "a rate limit rule needs at least one of `requests` or `tokens`",
   });
 
+function defaultRateLimits() {
+  return [
+    {
+      name: "per-user-requests",
+      key: "user" as const,
+      requests: { limit: 30, window: "1h" },
+    },
+    {
+      name: "per-user-daily-tokens",
+      key: "user" as const,
+      tokens: { limit: 30_000, window: "1d" },
+    },
+  ];
+}
+
 export const providerConfigSchema = z.looseObject({ type: z.string().min(1) });
 
 export const routeConfigSchema = z.strictObject({
@@ -123,7 +138,7 @@ export const omniConfigSchema = z.strictObject({
   server: serverConfigSchema.prefault({}),
   storage: storageConfigSchema,
   security: securityConfigSchema.prefault({}),
-  rateLimits: z.array(rateLimitRuleSchema).default([]),
+  rateLimits: z.array(rateLimitRuleSchema).default(defaultRateLimits),
   providers: z.record(z.string().min(1), providerConfigSchema).default({}),
   routing: routingConfigSchema.prefault({}),
 });

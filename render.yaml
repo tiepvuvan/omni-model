@@ -47,4 +47,4 @@ services:
       # not expand ${...}; omni-model resolves these references at startup.
       - key: OMNI_CONFIG_JSON
         value: >-
-          {"version":1,"server":{"logLevel":"info"},"storage":{"type":"redis","url":"${REDIS_URL}"},"security":{"providers":[{"type":"jwt","secret":"${OMNI_JWT_SECRET}","algorithms":["HS256"]}]},"providers":{"openai":{"type":"openai","apiKey":"${OPENAI_API_KEY}"}},"rateLimits":[{"name":"per-user-requests","key":"user","requests":{"limit":60,"window":"1m"}},{"name":"per-user-daily-tokens","key":"user","tokens":{"limit":200000,"window":"1d"}}],"routing":{"defaultProvider":"openai"}}
+          {"version":1,"server":{"logLevel":"info"},"storage":{"type":"redis","url":"${REDIS_URL}"},"security":{"providers":[{"type":"jwt","secret":"${OMNI_JWT_SECRET}","algorithms":["HS256"]}]},"providers":{"openai":{"type":"openai","apiKey":"${OPENAI_API_KEY}"}},"rateLimits":[{"name":"per-user-requests","key":"user","requests":{"limit":30,"window":"1h"}},{"name":"per-user-daily-tokens","key":"user","tokens":{"limit":30000,"window":"1d"}}],"routing":{"defaultProvider":"openai"}}

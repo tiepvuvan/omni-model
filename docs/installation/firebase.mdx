@@ -77,8 +77,8 @@ firebase ext:dev:emulators:start --test-params=test-params.env
 | `LOCATION` | `us-central1` | Function region. **Immutable** — cannot change after install. |
 | `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` | — | Secret. Set at least one (unless you supply `ADVANCED_CONFIG_JSON`). |
 | `DEFAULT_PROVIDER` | `openai` | Provider used when no route matches. Falls back to the first configured provider if its key is absent. |
-| `REQUESTS_PER_MINUTE` | `60` | Per-user request limit per minute. Positive integer. |
-| `DAILY_TOKEN_BUDGET` | `200000` | Per-user daily token budget (prompt + completion). Positive integer. |
+| `REQUESTS_PER_HOUR` | `30` | Per-user request limit per hour. Positive integer. |
+| `DAILY_TOKEN_BUDGET` | `30000` | Per-user daily token budget (prompt + completion). Positive integer. |
 | `REQUIRE_APP_CHECK` | `true` | Reject calls without a valid App Check token. |
 | `REQUIRE_AUTH` | `true` | Reject calls without a signed-in Firebase user. |
 | `CONSUME_APP_CHECK_TOKEN` | `false` | Enforce single-use App Check tokens. Enable **only** if your app requests limited-use tokens. |

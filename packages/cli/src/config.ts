@@ -40,8 +40,8 @@ export interface Answers {
   /** Apple team + bundle, when an Apple verifier is selected. */
   appleTeamId?: string;
   appleBundleId?: string;
-  /** Requests per minute per identity. 0/undefined disables the rule. */
-  requestsPerMinute?: number;
+  /** Requests per hour per identity. 0/undefined disables the rule. */
+  requestsPerHour?: number;
   /** Daily token budget per identity. 0/undefined disables the rule. */
   tokensPerDay?: number;
 }
@@ -119,15 +119,19 @@ function rateLimits(a: Answers): Record<string, unknown>[] {
   // A verifier is always configured, so there is always an identity to key on.
   const key = "user";
   const rules: Record<string, unknown>[] = [];
-  if (a.requestsPerMinute && a.requestsPerMinute > 0) {
+  if (a.requestsPerHour && a.requestsPerHour > 0) {
     rules.push({
-      name: "requests",
+      name: "per-user-requests",
       key,
-      requests: { limit: a.requestsPerMinute, window: "1m" },
+      requests: { limit: a.requestsPerHour, window: "1h" },
     });
   }
   if (a.tokensPerDay && a.tokensPerDay > 0) {
-    rules.push({ name: "tokens", key, tokens: { limit: a.tokensPerDay, window: "1d" } });
+    rules.push({
+      name: "per-user-daily-tokens",
+      key,
+      tokens: { limit: a.tokensPerDay, window: "1d" },
+    });
   }
   return rules;
 }

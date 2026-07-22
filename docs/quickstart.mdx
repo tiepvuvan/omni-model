@@ -58,7 +58,7 @@ where the proxy runs and how clients authenticate.
         OMNI_SECURITY_JWT_ALGORITHMS='["HS256"]'
         OMNI_PROVIDERS_DEFAULT_TYPE=openai
         OMNI_PROVIDERS_DEFAULT_API_KEY='${OPENAI_API_KEY}'
-        OMNI_RATE_LIMITS_JSON='[{"name":"per-user-requests","key":"user","requests":{"limit":60,"window":"1m"}}]'
+        OMNI_RATE_LIMITS_JSON='[{"name":"per-user-requests","key":"user","requests":{"limit":30,"window":"1h"}},{"name":"per-user-daily-tokens","key":"user","tokens":{"limit":30000,"window":"1d"}}]'
         OMNI_DEFAULT_PROVIDER=openai
         ```
 

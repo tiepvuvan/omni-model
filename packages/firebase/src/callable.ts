@@ -223,7 +223,10 @@ export function createChatCallable(
         return redactChatCompletion(aggregator.build(await result.usage), metadata);
       }
       case "error":
-        throw callableErrorFromStatus(result.status, redactProviderError(result.body).error.message);
+        throw callableErrorFromStatus(
+          result.status,
+          redactProviderError(result.body).error.message,
+        );
     }
   };
 }

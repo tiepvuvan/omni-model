@@ -68,8 +68,8 @@ function everyAnswer(): Answers[] {
             storage: storage.id,
             provider,
             auth,
-            requestsPerMinute: 60,
-            tokensPerDay: 200_000,
+            requestsPerHour: 30,
+            tokensPerDay: 30_000,
           });
         }
       }
@@ -161,7 +161,7 @@ describe("generated config", () => {
   it("omits a limit rule when the user asks for none", () => {
     const cfg = parseEnvironmentConfig({
       ...TEST_ENV,
-      ...configEnvironment({ ...(answers[0] as Answers), requestsPerMinute: 0, tokensPerDay: 0 }),
+      ...configEnvironment({ ...(answers[0] as Answers), requestsPerHour: 0, tokensPerDay: 0 }),
     }) as unknown as { rateLimits: unknown[] };
     expect(cfg.rateLimits).toEqual([]);
   });

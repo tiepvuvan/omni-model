@@ -85,7 +85,7 @@ function withAnswerFlags(cmd: Command): Command {
     .option("--firebase-project-number <number>")
     .option("--apple-team-id <id>")
     .option("--apple-bundle-id <id>")
-    .option("--requests-per-minute <n>", "per-caller request limit (0 = none)")
+    .option("--requests-per-hour <n>", "per-caller request limit (0 = none)")
     .option("--tokens-per-day <n>", "per-caller token budget (0 = none)")
     .option("-y, --yes", "skip confirmations", false);
 }

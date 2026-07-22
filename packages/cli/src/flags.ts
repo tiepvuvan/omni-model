@@ -27,7 +27,7 @@ export interface DeployFlags {
   firebaseProjectNumber?: string;
   appleTeamId?: string;
   appleBundleId?: string;
-  requestsPerMinute?: string;
+  requestsPerHour?: string;
   tokensPerDay?: string;
 }
 
@@ -133,8 +133,8 @@ export function answersFromFlags(f: DeployFlags): Answers {
     storage,
     provider,
     auth,
-    requestsPerMinute: wholeNumber(f.requestsPerMinute, 60, "--requests-per-minute"),
-    tokensPerDay: wholeNumber(f.tokensPerDay, 200_000, "--tokens-per-day"),
+    requestsPerHour: wholeNumber(f.requestsPerHour, 30, "--requests-per-hour"),
+    tokensPerDay: wholeNumber(f.tokensPerDay, 30_000, "--tokens-per-day"),
   };
   // Blank/absent means "read it from the environment" — the config emits a
   // ${VAR} reference instead of a literal.

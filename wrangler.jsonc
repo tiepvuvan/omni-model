@@ -33,7 +33,7 @@
     "OMNI_SECURITY_JWT_ALGORITHMS": "[\"HS256\"]",
     "OMNI_PROVIDERS_DEFAULT_TYPE": "openai-compatible",
     "OMNI_PROVIDERS_DEFAULT_BASE_URL": "https://api.openai.com/v1",
-    "OMNI_RATE_LIMITS_JSON": "[{\"name\":\"per-user-requests\",\"key\":\"user\",\"requests\":{\"limit\":60,\"window\":\"1m\"}},{\"name\":\"per-user-daily-tokens\",\"key\":\"user\",\"tokens\":{\"limit\":200000,\"window\":\"1d\"}}]"
+    "OMNI_RATE_LIMITS_JSON": "[{\"name\":\"per-user-requests\",\"key\":\"user\",\"requests\":{\"limit\":30,\"window\":\"1h\"}},{\"name\":\"per-user-daily-tokens\",\"key\":\"user\",\"tokens\":{\"limit\":30000,\"window\":\"1d\"}}]"
   },
   // Default storage: a Durable Object (exact rate-limit counters). The class
   // is exported by apps/cloudflare/src/index.ts.

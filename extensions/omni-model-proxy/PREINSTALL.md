@@ -13,7 +13,7 @@ authenticated by the [callable protocol](https://firebase.google.com/docs/app-ch
 - **Firebase App Check** proves the call came from your genuine app, blocking abuse.
 
 Requests are routed to the provider you configure, and each user is held to a
-**requests-per-minute** limit and a **daily token budget**, tracked in Firestore.
+**requests-per-hour** limit and a **daily token budget**, tracked in Firestore.
 
 # What you configure
 

@@ -82,8 +82,14 @@ export function buildOmniConfig(env: NodeJS.ProcessEnv): OmniConfig {
       ? requestedDefault
       : (Object.keys(providers)[0] as string);
 
-  const requestsPerMinute = parseIntParam("REQUESTS_PER_MINUTE", env.REQUESTS_PER_MINUTE, 60);
-  const dailyTokenBudget = parseIntParam("DAILY_TOKEN_BUDGET", env.DAILY_TOKEN_BUDGET, 200_000);
+  // Keep reading the former minute-named parameter so existing extension
+  // instances remain valid after upgrading; it now uses the stricter hour window.
+  const requestsPerHour = parseIntParam(
+    "REQUESTS_PER_HOUR",
+    env.REQUESTS_PER_HOUR ?? env.REQUESTS_PER_MINUTE,
+    30,
+  );
+  const dailyTokenBudget = parseIntParam("DAILY_TOKEN_BUDGET", env.DAILY_TOKEN_BUDGET, 30_000);
   const collection = env.FIRESTORE_COLLECTION?.trim() || "omni_ratelimits";
 
   return omniConfigSchema.parse({
@@ -96,7 +102,7 @@ export function buildOmniConfig(env: NodeJS.ProcessEnv): OmniConfig {
       {
         name: "per-user-requests",
         key: "user",
-        requests: { limit: requestsPerMinute, window: "1m" },
+        requests: { limit: requestsPerHour, window: "1h" },
       },
       {
         name: "per-user-daily-tokens",
