@@ -26,9 +26,11 @@ fly secrets set \
   OPENAI_API_KEY=sk-... \
   OMNI_JWT_SECRET="$(openssl rand -base64 48)" \
   OMNI_STORAGE_TYPE=memory \
-  OMNI_SECURITY_PROVIDERS_JSON='[{"type":"jwt","secret":"${OMNI_JWT_SECRET}","algorithms":["HS256"]}]' \
-  OMNI_PROVIDERS_JSON='{"openai":{"type":"openai","apiKey":"${OPENAI_API_KEY}"}}' \
-  OMNI_DEFAULT_PROVIDER=openai
+  OMNI_SECURITY_JWT_ENABLED=true \
+  OMNI_SECURITY_JWT_SECRET='${OMNI_JWT_SECRET}' \
+  OMNI_SECURITY_JWT_ALGORITHMS='["HS256"]' \
+  OMNI_PROVIDERS_DEFAULT_TYPE=openai \
+  OMNI_PROVIDERS_DEFAULT_API_KEY='${OPENAI_API_KEY}'
 ```
 
 Fly stores these as service environment variables. omni-model interpolates the two secret references
@@ -49,10 +51,11 @@ fly deploy
 provisioning Redis, replace the storage value:
 
 ```sh
-fly secrets set OMNI_STORAGE_JSON='{"type":"redis","url":"${REDIS_URL}"}' REDIS_URL=redis://...
+fly secrets set OMNI_STORAGE_TYPE=redis OMNI_STORAGE_REDIS_URL='${REDIS_URL}' REDIS_URL=redis://...
 ```
 
-Use `postgres` with `{"type":"postgres","url":"${DATABASE_URL}"}` in the same way.
+Use `OMNI_STORAGE_TYPE=postgres` with `OMNI_STORAGE_POSTGRES_URL=${DATABASE_URL}` in the same
+way.
 
 ## Updating
 
@@ -70,8 +73,10 @@ docker run -p 8787:8787 \
   -e OPENAI_API_KEY=sk-... \
   -e OMNI_JWT_SECRET=replace-with-a-long-random-secret \
   -e OMNI_STORAGE_TYPE=memory \
-  -e 'OMNI_SECURITY_PROVIDERS_JSON=[{"type":"jwt","secret":"${OMNI_JWT_SECRET}","algorithms":["HS256"]}]' \
-  -e 'OMNI_PROVIDERS_JSON={"openai":{"type":"openai","apiKey":"${OPENAI_API_KEY}"}}' \
-  -e OMNI_DEFAULT_PROVIDER=openai \
+  -e OMNI_SECURITY_JWT_ENABLED=true \
+  -e 'OMNI_SECURITY_JWT_SECRET=${OMNI_JWT_SECRET}' \
+  -e 'OMNI_SECURITY_JWT_ALGORITHMS=["HS256"]' \
+  -e OMNI_PROVIDERS_DEFAULT_TYPE=openai \
+  -e 'OMNI_PROVIDERS_DEFAULT_API_KEY=${OPENAI_API_KEY}' \
   ghcr.io/tiepvuvan/omni-model:latest
 ```

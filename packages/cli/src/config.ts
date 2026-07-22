@@ -146,19 +146,70 @@ export function buildConfig(a: Answers): Record<string, unknown> {
   };
 }
 
-/**
- * Environment variables containing JSON blocks for the generated config.
- * Keeping blocks separate makes providers and routing editable without a
- * configuration file, while normal provider credentials remain secrets.
- */
+/** Environment variables for the generated one-provider configuration. */
 export function configEnvironment(a: Answers): Record<string, string> {
-  const config = buildConfig(a);
+  const storage: Record<StorageId, Record<string, string>> = {
+    "durable-object": {
+      OMNI_STORAGE_TYPE: "durable-object",
+      OMNI_STORAGE_DURABLE_OBJECT_BINDING: "OMNI_DO",
+    },
+    "cloudflare-kv": {
+      OMNI_STORAGE_TYPE: "cloudflare-kv",
+      OMNI_STORAGE_CLOUDFLARE_KV_BINDING: "OMNI_KV",
+    },
+    firestore: {
+      OMNI_STORAGE_TYPE: "firestore",
+      OMNI_STORAGE_FIRESTORE_COLLECTION: "omni_ratelimits",
+    },
+    redis: { OMNI_STORAGE_TYPE: "redis", OMNI_STORAGE_REDIS_URL: envRef("REDIS_URL") },
+    postgres: {
+      OMNI_STORAGE_TYPE: "postgres",
+      OMNI_STORAGE_POSTGRES_URL: envRef("DATABASE_URL"),
+    },
+    memory: { OMNI_STORAGE_TYPE: "memory" },
+  };
+  const provider: Record<string, string> = {
+    OMNI_PROVIDERS_DEFAULT_TYPE: a.provider.id,
+    OMNI_PROVIDERS_DEFAULT_API_KEY: envRef(a.provider.envVar),
+  };
+  if (a.provider.baseUrl !== undefined) {
+    provider.OMNI_PROVIDERS_DEFAULT_BASE_URL = a.provider.baseUrl;
+  }
+
+  const security: Record<string, string> = { OMNI_SECURITY_MODE: "any" };
+  for (const id of a.auth) {
+    switch (id) {
+      case "firebase-auth":
+        security.OMNI_SECURITY_FIREBASE_AUTH_ENABLED = "true";
+        security.OMNI_SECURITY_FIREBASE_AUTH_PROJECT_ID =
+          a.firebaseProjectId ?? envRef("FIREBASE_PROJECT_ID");
+        break;
+      case "firebase-app-check":
+        security.OMNI_SECURITY_FIREBASE_APPCHECK_ENABLED = "true";
+        security.OMNI_SECURITY_FIREBASE_APPCHECK_PROJECT_NUMBER =
+          a.firebaseProjectNumber ?? envRef("FIREBASE_PROJECT_NUMBER");
+        break;
+      case "apple-app-attest":
+        security.OMNI_SECURITY_APP_ATTEST_ENABLED = "true";
+        security.OMNI_SECURITY_APP_ATTEST_TEAM_ID = a.appleTeamId ?? envRef("APPLE_TEAM_ID");
+        security.OMNI_SECURITY_APP_ATTEST_BUNDLE_ID = a.appleBundleId ?? envRef("APPLE_BUNDLE_ID");
+        security.OMNI_SECURITY_APP_ATTEST_ENVIRONMENT = "development";
+        break;
+      case "apple-device-check":
+        security.OMNI_SECURITY_DEVICE_CHECK_ENABLED = "true";
+        security.OMNI_SECURITY_DEVICE_CHECK_TEAM_ID = a.appleTeamId ?? envRef("APPLE_TEAM_ID");
+        security.OMNI_SECURITY_DEVICE_CHECK_KEY_ID = envRef("APPLE_DEVICECHECK_KEY_ID");
+        security.OMNI_SECURITY_DEVICE_CHECK_PRIVATE_KEY = envRef("APPLE_DEVICECHECK_KEY");
+        security.OMNI_SECURITY_DEVICE_CHECK_DEVELOPMENT = "true";
+        break;
+    }
+  }
+
   return {
-    OMNI_STORAGE_JSON: JSON.stringify(config.storage),
-    OMNI_SECURITY_JSON: JSON.stringify(config.security),
-    OMNI_RATE_LIMITS_JSON: JSON.stringify(config.rateLimits),
-    OMNI_PROVIDERS_JSON: JSON.stringify(config.providers),
-    OMNI_ROUTING_JSON: JSON.stringify(config.routing),
+    ...storage[a.storage],
+    ...security,
+    OMNI_RATE_LIMITS_JSON: JSON.stringify(rateLimits(a)),
+    ...provider,
   };
 }
 

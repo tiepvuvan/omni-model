@@ -24,11 +24,51 @@ Use the smallest shape that fits the change:
 | Routing and model aliases | `OMNI_ROUTING_JSON` | A JSON object with routes, model rules, and a default. |
 | Rate-limit rules | `OMNI_RATE_LIMITS_JSON` | A JSON array of rules. |
 | Security providers | `OMNI_SECURITY_JSON` or `OMNI_SECURITY_PROVIDERS_JSON` | A JSON object or array. |
-| One simple value | `OMNI_STORAGE_TYPE`, `OMNI_DEFAULT_PROVIDER`, `OMNI_LOG_LEVEL`, or `OMNI_SECURITY_MODE` | `OMNI_STORAGE_TYPE=firestore`. |
+| One default provider | `OMNI_PROVIDERS_DEFAULT_*` | `OMNI_PROVIDERS_DEFAULT_TYPE=openai`. |
+| One built-in verifier | `OMNI_SECURITY_<VERIFIER>_*` | `OMNI_SECURITY_FIREBASE_AUTH_ENABLED=true`. |
+| One simple value | `OMNI_STORAGE_TYPE`, `OMNI_ROUTING_DEFAULT_PROVIDER`, `OMNI_SERVER_LOG_LEVEL`, or `OMNI_SECURITY_MODE` | `OMNI_STORAGE_TYPE=firestore`. |
 | One deeply nested override | `OMNI__…` | `OMNI__ROUTING__ROUTES__0__MODEL=gpt-4o-mini`. |
 
 The precedence order is: `OMNI_CONFIG_JSON`, named JSON blocks, simple variables, then `OMNI__…`
 paths. Later values override earlier values at the same path.
+
+## Quick setup with named variables
+
+Use named variables for the common one-provider deployment. They avoid JSON and are the fastest way
+to configure Cloud Run, Docker, Fly.io, or a Worker. The built-in provider created this way always
+has the routing ID **`default`**; setting any `OMNI_PROVIDERS_DEFAULT_*` variable automatically sets
+`routing.defaultProvider` to `default` unless `OMNI_ROUTING_DEFAULT_PROVIDER` or a later `OMNI__…`
+override changes it.
+
+```sh
+# Storage
+OMNI_STORAGE_TYPE=firestore
+OMNI_STORAGE_FIRESTORE_COLLECTION=omni_ratelimits
+
+# The default upstream provider
+OMNI_PROVIDERS_DEFAULT_TYPE=openai
+OMNI_PROVIDERS_DEFAULT_API_KEY='${OPENAI_API_KEY}'
+
+# One or more enabled authentication methods
+OMNI_SECURITY_FIREBASE_AUTH_ENABLED=true
+OMNI_SECURITY_FIREBASE_AUTH_PROJECT_ID=my-firebase-project
+OMNI_SECURITY_FIREBASE_APPCHECK_ENABLED=true
+OMNI_SECURITY_FIREBASE_APPCHECK_PROJECT_NUMBER=1234567890
+OMNI_SECURITY_FIREBASE_APPCHECK_APP_ID=1:1234567890:ios:abc123
+
+# Optional model alias rules are JSON because they are ordered lists.
+OMNI_ROUTING_ROUTES='[{"name":"smart","when":"request.model == \"smart\"","provider":"default","model":"gpt-4o-mini"}]'
+```
+
+<Note>
+`*_ENABLED` switches accept only `true` or `false`. A verifier's companion variables do nothing
+until its switch is `true`. Set `OMNI_SECURITY_MODE=all` when every enabled verifier must validate
+the same request; the default `any` accepts the first valid credential.
+</Note>
+
+Use JSON blocks when you need a second named provider, more than one provider of the same type, or
+full route/rate-limit objects. The [schema explorer](#environment-schema-explorer) below lists both
+the easy variables and advanced fields.
 
 ## Full configuration in one variable
 
@@ -134,10 +174,10 @@ Use `OMNI_SERVER_JSON` for several values, or the individual aliases below.
 
 | Path | Variable | Type | Default |
 | --- | --- | --- | --- |
-| `server.logLevel` | `OMNI_LOG_LEVEL` | `debug` \| `info` \| `warn` \| `error` \| `silent` | `info` |
-| `server.trustProxyHeaders` | `OMNI__SERVER__TRUST_PROXY_HEADERS` | boolean | `false` |
-| `server.maxBodyBytes` | `OMNI__SERVER__MAX_BODY_BYTES` | positive integer | `2000000` |
-| `server.cors` | `OMNI__SERVER__CORS` | JSON object | none |
+| `server.logLevel` | `OMNI_SERVER_LOG_LEVEL` (or legacy `OMNI_LOG_LEVEL`) | `debug` \| `info` \| `warn` \| `error` \| `silent` | `info` |
+| `server.trustProxyHeaders` | `OMNI_SERVER_TRUST_PROXY_HEADERS` | boolean | `false` |
+| `server.maxBodyBytes` | `OMNI_SERVER_MAX_BODY_BYTES` | positive integer | `2000000` |
+| `server.cors` | `OMNI_SERVER_CORS` | JSON object | none |
 
 Example browser CORS policy:
 
@@ -157,24 +197,46 @@ Set `trustProxyHeaders` only behind a reverse proxy or CDN that overwrites forwa
 ## Storage
 
 `storage` controls rate-limit counters, token budgets, and Apple attestation state. Set
-`OMNI_STORAGE_TYPE` for the common case, then add options with `OMNI_STORAGE_JSON`.
+`OMNI_STORAGE_TYPE` first, then set only the option variables for that type. An option for the wrong
+type is rejected during startup validation.
 
-| Type | `OMNI_STORAGE_JSON` example | Use case |
+| Storage type | Setup variables | Platform / behavior |
 | --- | --- | --- |
-| `memory` | `{"type":"memory"}` | One process or local development. |
-| `firestore` | `{"type":"firestore","collection":"omni_ratelimits"}` | Cloud Run and Firebase with shared exact counters. |
-| `redis` | `{"type":"redis","url":"${REDIS_URL}","keyPrefix":"omni:"}` | Shared exact counters. |
-| `postgres` | `{"type":"postgres","url":"${DATABASE_URL}","table":"omni_kv","migrate":true}` | Shared exact counters and persistence. |
-| `cloudflare-kv` | `{"type":"cloudflare-kv","binding":"OMNI_KV"}` | Cloudflare Workers; eventually consistent limits. |
-| `durable-object` | `{"type":"durable-object","binding":"OMNI_DO"}` | Cloudflare Workers; exact counters. |
+| `memory` | `OMNI_STORAGE_TYPE=memory` | One process or local development. Not shared across Cloud Run instances. |
+| `firestore` | `OMNI_STORAGE_TYPE=firestore`<br/>`OMNI_STORAGE_FIRESTORE_COLLECTION=omni_ratelimits` | Cloud Run / GCP. Exact shared counters using Application Default Credentials. `collection` is optional. |
+| `redis` | `OMNI_STORAGE_TYPE=redis`<br/>`OMNI_STORAGE_REDIS_URL=${REDIS_URL}`<br/>`OMNI_STORAGE_REDIS_KEY_PREFIX=omni:` | Shared exact counters. `keyPrefix` is optional. |
+| `postgres` | `OMNI_STORAGE_TYPE=postgres`<br/>`OMNI_STORAGE_POSTGRES_URL=${DATABASE_URL}`<br/>`OMNI_STORAGE_POSTGRES_TABLE=omni_kv`<br/>`OMNI_STORAGE_POSTGRES_MIGRATE=true` | Shared exact counters. `table` and `migrate` are optional. |
+| `cloudflare-kv` | `OMNI_STORAGE_TYPE=cloudflare-kv`<br/>`OMNI_STORAGE_CLOUDFLARE_KV_BINDING=OMNI_KV` | Workers only. Counters are eventually consistent. |
+| `durable-object` | `OMNI_STORAGE_TYPE=durable-object`<br/>`OMNI_STORAGE_DURABLE_OBJECT_BINDING=OMNI_DO` | Workers only. Exact counters; preferred for App Attest. |
 
-`memory` is the default only when `storage` is omitted. It must not be used for shared limits across
-Cloud Run instances.
+`memory` is the default only when storage is omitted. Use `OMNI_STORAGE_JSON` for third-party
+storage options not listed here.
 
 ## Security
 
 Every HTTP proxy deployment needs at least one security provider. Set `OMNI_SECURITY_MODE=all` to
 require every configured verifier; the default `any` accepts the first recognized valid credential.
+
+### Built-in verifier profiles
+
+Set the profile's `*_ENABLED=true` switch, then provide its required fields. You may enable several
+profiles; `OMNI_SECURITY_MODE` determines whether any or all must validate. Use
+`OMNI_SECURITY_PUBLIC_PATHS='["/v1/models"]'` for paths that bypass authentication.
+
+| Verifier | Enable and required configuration | Optional configuration |
+| --- | --- | --- |
+| Firebase Auth | `OMNI_SECURITY_FIREBASE_AUTH_ENABLED=true`<br/>`OMNI_SECURITY_FIREBASE_AUTH_PROJECT_ID=my-project` | `OMNI_SECURITY_FIREBASE_AUTH_HEADER`<br/>`OMNI_SECURITY_FIREBASE_AUTH_CLOCK_TOLERANCE_SECONDS` |
+| Firebase App Check | `OMNI_SECURITY_FIREBASE_APPCHECK_ENABLED=true`<br/>`OMNI_SECURITY_FIREBASE_APPCHECK_PROJECT_NUMBER=1234567890` outside GCP | `OMNI_SECURITY_FIREBASE_APPCHECK_APP_ID` (one)<br/>`OMNI_SECURITY_FIREBASE_APPCHECK_APP_IDS` (JSON array)<br/>`OMNI_SECURITY_FIREBASE_APPCHECK_HEADER`<br/>`OMNI_SECURITY_FIREBASE_APPCHECK_CLOCK_TOLERANCE_SECONDS`<br/><br/>On Cloud Run/GCE, omit project number to discover it at startup. |
+| JWT | `OMNI_SECURITY_JWT_ENABLED=true` plus exactly one of `OMNI_SECURITY_JWT_SECRET`, `OMNI_SECURITY_JWT_JWKS_URL`, or `OMNI_SECURITY_JWT_PUBLIC_KEY` | `OMNI_SECURITY_JWT_ALGORITHMS` (JSON array)<br/>`OMNI_SECURITY_JWT_ISSUER`<br/>`OMNI_SECURITY_JWT_AUDIENCE` (string or JSON array)<br/>`OMNI_SECURITY_JWT_HEADER`<br/>`OMNI_SECURITY_JWT_SCHEME` (`bearer` or `none`)<br/>`OMNI_SECURITY_JWT_USER_ID_CLAIM`<br/>`OMNI_SECURITY_JWT_DEVICE_ID_CLAIM`<br/>`OMNI_SECURITY_JWT_CLOCK_TOLERANCE_SECONDS` |
+| Supabase | `OMNI_SECURITY_SUPABASE_ENABLED=true` plus one of `OMNI_SECURITY_SUPABASE_URL`, `OMNI_SECURITY_SUPABASE_JWT_SECRET`, or `OMNI_SECURITY_SUPABASE_JWKS_URL` | `OMNI_SECURITY_SUPABASE_ISSUER`<br/>`OMNI_SECURITY_SUPABASE_AUDIENCE` (string or JSON array)<br/>`OMNI_SECURITY_SUPABASE_HEADER`<br/>`OMNI_SECURITY_SUPABASE_CLOCK_TOLERANCE_SECONDS` |
+| Apple App Attest | `OMNI_SECURITY_APP_ATTEST_ENABLED=true`<br/>`OMNI_SECURITY_APP_ATTEST_TEAM_ID`<br/>`OMNI_SECURITY_APP_ATTEST_BUNDLE_ID` | `OMNI_SECURITY_APP_ATTEST_ENVIRONMENT`<br/>`OMNI_SECURITY_APP_ATTEST_CHALLENGE_TTL`<br/>`OMNI_SECURITY_APP_ATTEST_ROOT_CA_PEM`<br/>`OMNI_SECURITY_APP_ATTEST_KEY_ID_HEADER`<br/>`OMNI_SECURITY_APP_ATTEST_ASSERTION_HEADER`<br/>`OMNI_SECURITY_APP_ATTEST_CHALLENGE_HEADER` |
+| Apple DeviceCheck | `OMNI_SECURITY_DEVICE_CHECK_ENABLED=true`<br/>`OMNI_SECURITY_DEVICE_CHECK_TEAM_ID`<br/>`OMNI_SECURITY_DEVICE_CHECK_KEY_ID`<br/>`OMNI_SECURITY_DEVICE_CHECK_PRIVATE_KEY` | `OMNI_SECURITY_DEVICE_CHECK_DEVELOPMENT`<br/>`OMNI_SECURITY_DEVICE_CHECK_HEADER`<br/>`OMNI_SECURITY_DEVICE_CHECK_CACHE_TTL` |
+
+Array and object variables use JSON: for example,
+`OMNI_SECURITY_JWT_ALGORITHMS='["HS256"]'` and
+`OMNI_SECURITY_FIREBASE_APPCHECK_APP_IDS='["1:123:ios:abc","1:123:android:def"]'`.
+See the dedicated [security guides](/security/custom-jwt) for request headers and verification
+behavior.
 
 ```sh
 OMNI_SECURITY_JSON='{
@@ -194,14 +256,45 @@ headers.
 
 ## Providers, endpoints, and model types
 
+### Default provider profile
+
+For one upstream, use `OMNI_PROVIDERS_DEFAULT_*`; it creates a provider named `default` and routes
+unmatched requests there automatically. `OMNI_PROVIDERS_DEFAULT_TYPE` is one of `openai`,
+`openai-compatible`, `anthropic`, or `google`.
+
+| Variable | Applies to | Type / behavior |
+| --- | --- | --- |
+| `OMNI_PROVIDERS_DEFAULT_TYPE` | all | Required. Provider implementation type. |
+| `OMNI_PROVIDERS_DEFAULT_API_KEY` | OpenAI, Anthropic, Google; optional for compatible | String or `${SECRET}` reference. |
+| `OMNI_PROVIDERS_DEFAULT_BASE_URL` | all | URL. Required for `openai-compatible`; optional otherwise. |
+| `OMNI_PROVIDERS_DEFAULT_HEADERS` | OpenAI / compatible | JSON object of extra upstream headers. |
+| `OMNI_PROVIDERS_DEFAULT_MODELS` | OpenAI / compatible | JSON array used as a fallback `/v1/models` list. |
+| `OMNI_PROVIDERS_DEFAULT_ORGANIZATION` | OpenAI / compatible | Optional OpenAI organization header. |
+| `OMNI_PROVIDERS_DEFAULT_INCLUDE_STREAM_USAGE` | OpenAI / compatible | Boolean, default `true`. |
+| `OMNI_PROVIDERS_DEFAULT_ANTHROPIC_VERSION` | Anthropic | String, default `2023-06-01`. |
+| `OMNI_PROVIDERS_DEFAULT_ANTHROPIC_MAX_TOKENS_DEFAULT` | Anthropic | Positive integer, default `4096`. |
+
+```sh
+# OpenAI
+OMNI_PROVIDERS_DEFAULT_TYPE=openai
+OMNI_PROVIDERS_DEFAULT_API_KEY='${OPENAI_API_KEY}'
+
+# Or an OpenAI-compatible endpoint such as Groq, OpenRouter, Together, or a local gateway.
+OMNI_PROVIDERS_DEFAULT_TYPE=openai-compatible
+OMNI_PROVIDERS_DEFAULT_BASE_URL=https://api.groq.com/openai/v1
+OMNI_PROVIDERS_DEFAULT_API_KEY='${GROQ_API_KEY}'
+```
+
+### Multiple named providers
+
 `OMNI_PROVIDERS_JSON` is an object keyed by your provider IDs. Each entry must contain `type`.
 
 | Provider type | Required fields | Optional fields |
 | --- | --- | --- |
-| `openai` | `apiKey` | `baseUrl`, `organization`, `project`, request defaults |
-| `openai-compatible` | `apiKey` | `baseUrl` for Groq, OpenRouter, Together, Azure-compatible gateways, or another OpenAI wire endpoint |
-| `anthropic` | `apiKey` | `baseUrl`, API version and request defaults |
-| `google` | `apiKey` | `baseUrl`, request defaults |
+| `openai` | `apiKey` | `baseUrl`, `organization`, `headers`, `models`, `includeStreamUsage` |
+| `openai-compatible` | `baseUrl` | `apiKey`, `organization`, `headers`, `models`, `includeStreamUsage` |
+| `anthropic` | `apiKey` | `baseUrl`, `version`, `maxTokensDefault` |
+| `google` | `apiKey` | `baseUrl` |
 
 Set an endpoint per provider, not globally. This lets one route use OpenAI while another uses an
 OpenAI-compatible gateway:
@@ -225,6 +318,17 @@ names; routes and model rules can replace them.
 
 Set `OMNI_ROUTING_JSON` to configure client-facing aliases, conditional routes, model rules, and a
 fallback provider. Routes run in order; the first `when` expression that evaluates to true wins.
+
+For the common fields, these aliases avoid wrapping one value in an object:
+
+| Variable | JSON type | Maps to |
+| --- | --- | --- |
+| `OMNI_ROUTING_DEFAULT_PROVIDER` | string | `routing.defaultProvider` |
+| `OMNI_ROUTING_ROUTES` | array | `routing.routes` |
+| `OMNI_ROUTING_MODEL_RULES` | array | `routing.modelRules` |
+
+`OMNI_DEFAULT_PROVIDER` remains supported as a legacy alias. Use the `OMNI_ROUTING_*` names for new
+deployments. Ordered routes and model rules are arrays, so use JSON for them.
 
 ```sh
 OMNI_ROUTING_JSON='{
@@ -262,8 +366,8 @@ available request, user, device, HTTP, and time facts.
 
 ## Rate limits
 
-`OMNI_RATE_LIMITS_JSON` is an ordered JSON array. Every rule needs a `name`, a key strategy, and at
-least one `requests` or `tokens` limit.
+`OMNI_RATE_LIMITS_JSON` (or the shorter alias `OMNI_RATE_LIMITS`) is an ordered JSON array. Every
+rule needs a `name`, a key strategy, and at least one `requests` or `tokens` limit.
 
 ```sh
 OMNI_RATE_LIMITS_JSON='[
@@ -283,6 +387,63 @@ OMNI_RATE_LIMITS_JSON='[
 
 `key` can be `user`, `device`, `ip`, `global`, or `expression`. Use `keyExpression` when the key
 is `expression`. Durations are `500ms`, `30s`, `5m`, `1h`, or `1d`.
+
+## Environment schema explorer
+
+This is the canonical configuration object after omni-model merges your environment variables. Use
+it as a JSON-schema-style map when an easy variable does not cover an option. Each component validates
+its own options at startup, so unsupported fields fail before the service accepts traffic.
+
+| Root field | JSON type | Default | Notes |
+| --- | --- | --- | --- |
+| `version` | literal `1` | `1` | Compatibility marker. |
+| `server` | object | `{ logLevel: "info", trustProxyHeaders: false, maxBodyBytes: 2000000 }` | HTTP and logging behavior. |
+| `storage` | object | `{ type: "memory" }` | Selects a storage backend and its options. |
+| `security` | object | `{ mode: "any", publicPaths: [], providers: [] }` | At least one provider is required for an HTTP proxy. |
+| `rateLimits` | array | `[]` | Ordered request/token budget rules. |
+| `providers` | object keyed by ID | `{}` | Each value has a `type` and type-specific options. |
+| `routing` | object | `{ routes: [], modelRules: [] }` | Chooses a provider and optional upstream model. |
+
+### `server` object
+
+| Field | Type | Default |
+| --- | --- | --- |
+| `logLevel` | `debug` \| `info` \| `warn` \| `error` \| `silent` | `info` |
+| `trustProxyHeaders` | boolean | `false` |
+| `maxBodyBytes` | positive integer | `2000000` |
+| `cors.allowOrigins` | string array | `["*"]` |
+| `cors.allowMethods`, `cors.allowHeaders`, `cors.exposeHeaders` | string arrays | omitted |
+| `cors.maxAge` | positive integer seconds | omitted |
+| `cors.credentials` | boolean | omitted |
+
+### `security` object
+
+| Field | Type | Default | Constraint |
+| --- | --- | --- | --- |
+| `mode` | `any` \| `all` | `any` | `all` requires every configured verifier. |
+| `publicPaths` | string array | `[]` | Exact paths or a trailing `*` prefix. |
+| `providers` | array | `[]` | Must contain at least one accepted verifier for `/v1/*`. |
+
+### `rateLimits[]` object
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `name` | string | yes | Stable rule name, shown in rate-limit headers/logs. |
+| `when` | CEL string | no | Applies only when it evaluates to `true`. |
+| `key` | `user` \| `device` \| `ip` \| `global` \| `expression` | no | Defaults to `user`. |
+| `keyExpression` | CEL string | when `key=expression` | Produces the rate-limit key. |
+| `requests` | `{ limit: positive integer, window: duration }` | one of requests/tokens | Request-window limit. |
+| `tokens` | `{ limit: positive integer, window: duration }` | one of requests/tokens | Prompt + completion token budget. |
+
+### `routing` object
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `routes` | array of `{ name, when, provider, model? }` | `[]` | First CEL `when` that is true wins. |
+| `modelRules` | array of `{ match, provider, model? }` | `[]` | Fallback matching by client model name. |
+| `defaultProvider` | provider ID | omitted | Last fallback; an unmatched request is 404 when omitted. |
+
+See [Model routing](/model-routing/routing) for the CEL request context and a full routing example.
 
 ## Validation and interpolation
 

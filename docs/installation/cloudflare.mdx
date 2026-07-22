@@ -21,15 +21,21 @@ Settings → Variables and Secrets**, add the provider secret and the following 
 | Variable | Value |
 | --- | --- |
 | `OPENAI_API_KEY` | Store as a secret. |
-| `OMNI_STORAGE_JSON` | `{"type":"durable-object","binding":"OMNI_DO"}` |
-| `OMNI_SECURITY_PROVIDERS_JSON` | `[{"type":"firebase-app-check"}]` or another verifier. |
-| `OMNI_PROVIDERS_JSON` | `{"openai":{"type":"openai","apiKey":"${OPENAI_API_KEY}"}}` |
-| `OMNI_DEFAULT_PROVIDER` | `openai` |
+| `OMNI_STORAGE_TYPE` | `durable-object` |
+| `OMNI_STORAGE_DURABLE_OBJECT_BINDING` | `OMNI_DO` |
+| `OMNI_SECURITY_JWT_ENABLED` | `true` |
+| `OMNI_JWT_SECRET` | Store as a secret. |
+| `OMNI_SECURITY_JWT_SECRET` | `${OMNI_JWT_SECRET}` |
+| `OMNI_SECURITY_JWT_ALGORITHMS` | `["HS256"]` |
+| `OMNI_PROVIDERS_DEFAULT_TYPE` | `openai` |
+| `OMNI_PROVIDERS_DEFAULT_API_KEY` | `${OPENAI_API_KEY}` |
 
-For Firebase App Check, include the app IDs in the same JSON block:
+For Firebase App Check, use its named profile instead of the JWT variables:
 
 ```text
-[{"type":"firebase-app-check","projectNumber":"YOUR_PROJECT_NUMBER","appIds":["1:YOUR_PROJECT_NUMBER:ios:YOUR_APP_ID"]}]
+OMNI_SECURITY_FIREBASE_APPCHECK_ENABLED=true
+OMNI_SECURITY_FIREBASE_APPCHECK_PROJECT_NUMBER=YOUR_PROJECT_NUMBER
+OMNI_SECURITY_FIREBASE_APPCHECK_APP_ID=1:YOUR_PROJECT_NUMBER:ios:YOUR_APP_ID
 ```
 
 Deploy a new Worker revision after changing a variable.
@@ -44,10 +50,13 @@ curl -LO https://github.com/tiepvuvan/omni-model/releases/latest/download/worker
 curl -LO https://github.com/tiepvuvan/omni-model/releases/latest/download/wrangler.jsonc
 
 npx wrangler deploy \
-  --var OMNI_STORAGE_JSON:'{"type":"durable-object","binding":"OMNI_DO"}' \
-  --var OMNI_SECURITY_PROVIDERS_JSON:'[{"type":"jwt","secret":"${OMNI_JWT_SECRET}","algorithms":["HS256"]}]' \
-  --var OMNI_PROVIDERS_JSON:'{"openai":{"type":"openai","apiKey":"${OPENAI_API_KEY}"}}' \
-  --var OMNI_DEFAULT_PROVIDER:openai
+  --var OMNI_STORAGE_TYPE:durable-object \
+  --var OMNI_STORAGE_DURABLE_OBJECT_BINDING:OMNI_DO \
+  --var OMNI_SECURITY_JWT_ENABLED:true \
+  --var OMNI_SECURITY_JWT_SECRET:'${OMNI_JWT_SECRET}' \
+  --var OMNI_SECURITY_JWT_ALGORITHMS:'["HS256"]' \
+  --var OMNI_PROVIDERS_DEFAULT_TYPE:openai \
+  --var OMNI_PROVIDERS_DEFAULT_API_KEY:'${OPENAI_API_KEY}'
 
 npx wrangler secret put OPENAI_API_KEY
 npx wrangler secret put OMNI_JWT_SECRET
@@ -61,13 +70,15 @@ The uploaded Worker is self-contained. The `OMNI_DO` binding declared in the dow
 Use Durable Objects for exact shared counters:
 
 ```text
-OMNI_STORAGE_JSON={"type":"durable-object","binding":"OMNI_DO"}
+OMNI_STORAGE_TYPE=durable-object
+OMNI_STORAGE_DURABLE_OBJECT_BINDING=OMNI_DO
 ```
 
 Use Workers KV when approximate, eventually consistent counters are acceptable:
 
 ```text
-OMNI_STORAGE_JSON={"type":"cloudflare-kv","binding":"OMNI_KV"}
+OMNI_STORAGE_TYPE=cloudflare-kv
+OMNI_STORAGE_CLOUDFLARE_KV_BINDING=OMNI_KV
 ```
 
 Declare `OMNI_KV` in `wrangler.jsonc` before selecting it. App Attest state also requires shared

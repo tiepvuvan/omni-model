@@ -70,12 +70,11 @@ pnpm install
 pnpm build
 OPENAI_API_KEY=sk-... \
 OMNI_JWT_SECRET=dev-secret \
-OMNI__STORAGE__TYPE=memory \
-OMNI__SECURITY__PROVIDERS__0__TYPE=jwt \
-OMNI__SECURITY__PROVIDERS__0__SECRET='${OMNI_JWT_SECRET}' \
-OMNI__PROVIDERS__OPENAI__TYPE=openai \
-OMNI__PROVIDERS__OPENAI__API_KEY='${OPENAI_API_KEY}' \
-OMNI__ROUTING__DEFAULT_PROVIDER=openai \
+OMNI_STORAGE_TYPE=memory \
+OMNI_SECURITY_JWT_ENABLED=true \
+OMNI_SECURITY_JWT_SECRET='${OMNI_JWT_SECRET}' \
+OMNI_PROVIDERS_DEFAULT_TYPE=openai \
+OMNI_PROVIDERS_DEFAULT_API_KEY='${OPENAI_API_KEY}' \
 node packages/node/dist/cli.js
 ```
 
@@ -95,19 +94,18 @@ Pull the prebuilt multi-arch image from GHCR and pass environment variables — 
 docker run -p 8787:8787 \
   -e OPENAI_API_KEY=sk-... \
   -e OMNI_JWT_SECRET=replace-with-a-long-random-secret \
-  -e OMNI__STORAGE__TYPE=memory \
-  -e OMNI__SECURITY__PROVIDERS__0__TYPE=jwt \
-  -e 'OMNI__SECURITY__PROVIDERS__0__SECRET=${OMNI_JWT_SECRET}' \
-  -e OMNI__PROVIDERS__OPENAI__TYPE=openai \
-  -e 'OMNI__PROVIDERS__OPENAI__API_KEY=${OPENAI_API_KEY}' \
-  -e OMNI__ROUTING__DEFAULT_PROVIDER=openai \
+  -e OMNI_STORAGE_TYPE=memory \
+  -e OMNI_SECURITY_JWT_ENABLED=true \
+  -e 'OMNI_SECURITY_JWT_SECRET=${OMNI_JWT_SECRET}' \
+  -e OMNI_PROVIDERS_DEFAULT_TYPE=openai \
+  -e 'OMNI_PROVIDERS_DEFAULT_API_KEY=${OPENAI_API_KEY}' \
   ghcr.io/tiepvuvan/omni-model:latest
 ```
 
-Use `OMNI__...` variables for providers, authentication, storage, limits, and routing. The
-[configuration reference](docs/reference/configuration.mdx) maps every configuration path to an
-environment-variable name. `OMNI_CONFIG_JSON` and named JSON blocks such as
-`OMNI_PROVIDERS_JSON` and `OMNI_ROUTING_JSON` make complex configuration concise.
+Use the named `OMNI_STORAGE_*`, `OMNI_PROVIDERS_DEFAULT_*`, and `OMNI_SECURITY_*` variables for a
+one-provider deployment. The [configuration reference](docs/reference/configuration.mdx) maps every
+available setting. `OMNI_CONFIG_JSON`, named JSON blocks, and `OMNI__...` paths cover complex
+multi-provider routing.
 
 **Updating** is just `docker pull ghcr.io/tiepvuvan/omni-model:latest` and a restart — pin to a
 version tag (`:1.2.3` / `:1.2`) for reproducible deploys, or `:edge` to track `main`. To build the
@@ -124,7 +122,8 @@ image yourself instead: `docker build -t omni-model .`.
   provider API keys.
 - **Cloudflare Workers** — the button forks the repo into your account (Workers bindings + secrets
   live there), compiles the workspace packages and provisions the `OMNI_DO` Durable Object for you.
-  Set your `OMNI__...` or `OMNI_*_JSON` configuration variables and provider secrets in the
+  Set your named `OMNI_STORAGE_*`, `OMNI_PROVIDERS_DEFAULT_*`, `OMNI_SECURITY_*`, or advanced JSON
+  configuration variables and provider secrets in the
   Workers dashboard before the first request. Edit those variables to create a new configuration
   revision; no configuration file is bundled into the worker.
 - **Cloud Run** — no fork. The button builds the repository, supplies a working OpenAI + JWT
@@ -140,9 +139,8 @@ of the container image. Download it, supply config at runtime, done:
 curl -LO https://github.com/tiepvuvan/omni-model/releases/latest/download/worker.js
 curl -LO https://github.com/tiepvuvan/omni-model/releases/latest/download/wrangler.jsonc
 npx wrangler deploy \
-  --var OMNI__STORAGE__TYPE:durable-object \
-  --var OMNI__PROVIDERS__OPENAI__TYPE:openai \
-  --var OMNI__ROUTING__DEFAULT_PROVIDER:openai
+  --var OMNI_STORAGE_TYPE:durable-object \
+  --var OMNI_PROVIDERS_DEFAULT_TYPE:openai
 ```
 
 No fork, no clone, no build. You trade push-to-deploy CI for a `curl` + redeploy on updates.

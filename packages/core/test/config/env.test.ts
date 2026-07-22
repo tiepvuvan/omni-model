@@ -86,6 +86,63 @@ describe("environment configuration", () => {
     expect(config.routing.defaultProvider).toBe("fast");
   });
 
+  it("builds storage, a default provider, Firebase Auth, and App Check from ergonomic variables", () => {
+    const config = parseEnvironmentConfig({
+      OMNI_STORAGE_TYPE: "firestore",
+      OMNI_STORAGE_FIRESTORE_COLLECTION: "omni_ratelimits",
+      OMNI_PROVIDERS_DEFAULT_TYPE: "openai-compatible",
+      OMNI_PROVIDERS_DEFAULT_BASE_URL: "https://gateway.example.com/v1",
+      OMNI_PROVIDERS_DEFAULT_API_KEY: "gateway-key",
+      OMNI_SECURITY_MODE: "all",
+      OMNI_SECURITY_FIREBASE_AUTH_ENABLED: "true",
+      OMNI_SECURITY_FIREBASE_AUTH_PROJECT_ID: "my-firebase-project",
+      OMNI_SECURITY_FIREBASE_APPCHECK_ENABLED: "true",
+      OMNI_SECURITY_FIREBASE_APPCHECK_PROJECT_NUMBER: "1234567890",
+      OMNI_SECURITY_FIREBASE_APPCHECK_APP_ID: "1:1234567890:ios:abc123",
+      OMNI_ROUTING_ROUTES: JSON.stringify([
+        {
+          name: "smart",
+          when: 'request.model == "smart"',
+          provider: "default",
+          model: "gpt-4o-mini",
+        },
+      ]),
+    });
+
+    expect(config.storage).toMatchObject({ type: "firestore", collection: "omni_ratelimits" });
+    expect(config.providers.default).toMatchObject({
+      type: "openai-compatible",
+      baseUrl: "https://gateway.example.com/v1",
+      apiKey: "gateway-key",
+    });
+    expect(config.routing).toMatchObject({
+      defaultProvider: "default",
+      routes: [{ name: "smart", provider: "default", model: "gpt-4o-mini" }],
+    });
+    expect(config.security).toMatchObject({
+      mode: "all",
+      providers: [
+        { type: "firebase-auth", projectId: "my-firebase-project" },
+        {
+          type: "firebase-app-check",
+          projectNumber: "1234567890",
+          appIds: ["1:1234567890:ios:abc123"],
+        },
+      ],
+    });
+  });
+
+  it("only adds an enabled security profile and validates its boolean switch", () => {
+    const disabled = environmentConfigDocument({
+      OMNI_SECURITY_FIREBASE_AUTH_ENABLED: "false",
+    });
+    expect(disabled.security).toBeUndefined();
+
+    expect(() => environmentConfigDocument({ OMNI_SECURITY_FIREBASE_AUTH_ENABLED: "yes" })).toThrow(
+      /expected true or false/,
+    );
+  });
+
   it("rejects JSON blocks with an invalid shape", () => {
     expect(() => environmentConfigDocument({ OMNI_CONFIG_JSON: "[]" })).toThrow(
       /full configuration must be a JSON object/,

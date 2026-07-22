@@ -11,9 +11,9 @@ Options:
   -p, --port <n>       Port to listen on (default: $PORT or 8787)
   -h, --help           Show this help and exit
 
-Configuration is read entirely from environment variables. Use OMNI_CONFIG_JSON
-for a complete JSON document, or use OMNI_PROVIDERS_JSON, OMNI_ROUTING_JSON,
-and OMNI__... paths for granular configuration.`;
+Configuration is read entirely from environment variables. For a simple setup, use
+OMNI_STORAGE_TYPE, OMNI_SECURITY_<VERIFIER>_*, and OMNI_PROVIDERS_DEFAULT_*.
+Use JSON blocks or OMNI__... paths for complex multi-provider routing.`;
 
 function parsePort(raw: string): number {
   const port = Number(raw);

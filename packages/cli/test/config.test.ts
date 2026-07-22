@@ -109,9 +109,19 @@ describe("generated config", () => {
       };
       // Interpolation resolved it to the test env value, proving it was a
       // reference in the file rather than a literal.
-      expect(parsed.providers[a.provider.name]?.apiKey).toBe(TEST_ENV[a.provider.envVar]);
+      expect(parsed.providers.default?.apiKey).toBe(TEST_ENV[a.provider.envVar]);
       expect(JSON.stringify(configEnvironment(a))).toContain(`\${${a.provider.envVar}}`);
     }
+  });
+
+  it("uses named aliases for the wizard's storage, provider, and security choices", () => {
+    const env = configEnvironment(answers[0] as Answers);
+    expect(env.OMNI_STORAGE_TYPE).toBeDefined();
+    expect(env.OMNI_PROVIDERS_DEFAULT_TYPE).toBeDefined();
+    expect(Object.keys(env).some((name) => name.endsWith("_ENABLED"))).toBe(true);
+    expect(env.OMNI_STORAGE_JSON).toBeUndefined();
+    expect(env.OMNI_PROVIDERS_JSON).toBeUndefined();
+    expect(env.OMNI_SECURITY_JSON).toBeUndefined();
   });
 
   it("tells the user about every env placeholder the config references", () => {

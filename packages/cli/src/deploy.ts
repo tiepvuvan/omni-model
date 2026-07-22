@@ -130,7 +130,7 @@ async function deployCloudflare(o: DeployOptions): Promise<void> {
     log.info("Skipped. To deploy later:");
     log.message(
       `  npx wrangler deploy --config ${cfgPath} ${Object.keys(o.configEnv)
-        .map((name) => `--var ${name}:<json>`)
+        .map((name) => `--var ${name}:<value>`)
         .join(" ")}`,
     );
     return;
@@ -160,7 +160,7 @@ async function deployDocker(o: DeployOptions): Promise<void> {
   if (!(await confirmRun(`docker run … ${IMAGE}`, o))) {
     log.info(
       `To run later:\n  docker run -p 8787:8787 ${Object.keys(o.configEnv)
-        .map((name) => `-e ${name}=<json>`)
+        .map((name) => `-e ${name}=<value>`)
         .join(" ")} ${IMAGE}`,
     );
     return;
@@ -173,7 +173,7 @@ async function deployDocker(o: DeployOptions): Promise<void> {
 function guideContainer(o: DeployOptions): void {
   envReminder(o.answers);
   const cloudRunEnv = Object.keys(o.configEnv)
-    .map((name) => `  --set-env-vars '${name}=<json>'`)
+    .map((name) => `  --set-env-vars '${name}=<value>'`)
     .join(" \\\n");
   const lines: Record<string, string[]> = {
     "cloud-run": [
@@ -188,12 +188,12 @@ function guideContainer(o: DeployOptions): void {
     fly: [
       `fly launch --image ${IMAGE} --internal-port 8787`,
       `fly secrets set ${Object.keys(o.configEnv)
-        .map((name) => `${name}=<json>`)
+        .map((name) => `${name}=<value>`)
         .join(" ")}`,
     ],
     render: [
       "Render deploys from a Blueprint. Use the repo's render.yaml, or create a",
-      `Web Service from the image ${IMAGE} and set the OMNI_*_JSON variables shown above.`,
+      `Web Service from the image ${IMAGE} and set the OMNI_* variables shown above.`,
     ],
   };
   note(

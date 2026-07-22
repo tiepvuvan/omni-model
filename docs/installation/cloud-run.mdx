@@ -29,15 +29,15 @@ do so.
 </Step>
 
 <Step title="Enter the two required values">
-The deploy form supplies a valid starter configuration as ordinary `OMNI__...` environment
-variables. Enter only:
+The deploy form supplies a valid starter configuration as named `OMNI_*` environment variables.
+Enter only:
 
 - `OPENAI_API_KEY` — the key used only by the configured OpenAI provider.
 - `OMNI_JWT_SECRET` — a long, private random value used to verify HS256 client JWTs. Generate one
   locally with `openssl rand -base64 48` and retain it in your secret manager.
 
-Leave the prefilled `OMNI__...` values in place for the starter. They configure an OpenAI provider,
-a `jwt` verifier, and per-user request and token limits. To change behavior later, edit these
+Leave the prefilled `OMNI_*` values in place for the starter. They configure an OpenAI provider,
+a JWT verifier, and per-user request and token limits. To change behavior later, edit these
 environment variables in the Cloud Run revision—there is no YAML file or YAML environment variable.
 </Step>
 
@@ -130,39 +130,27 @@ and `GOOGLE_CLOUD_PROJECT` automatically; do not add a service-account key file 
 
 ### 3. Choose the runtime environment variables
 
-Every configuration path is represented by an `OMNI__...` variable. Double underscores traverse
-objects; a numeric segment creates an array entry; uppercase snake case becomes the camel-case
-field name. For example, `OMNI__STORAGE__TYPE=firestore` sets `storage.type`, and
-`OMNI__SECURITY__PROVIDERS__0__TYPE=jwt` creates the first security provider.
-
 The production starter below uses Firestore and a JWT with a `sub` claim, so `user` rate limits are
-per caller. These are service environment variables, not a file:
+per caller. It uses the easy named-variable surface; ordered rate-limit rules stay in one JSON array.
+These are service environment variables, not a file:
 
 | Variable | Value |
 | --- | --- |
-| `OMNI__SERVER__LOG_LEVEL` | `info` |
-| `OMNI__STORAGE__TYPE` | `firestore` |
-| `OMNI__STORAGE__COLLECTION` | `omni_ratelimits` |
-| `OMNI__SECURITY__PROVIDERS__0__TYPE` | `jwt` |
-| `OMNI__SECURITY__PROVIDERS__0__SECRET` | `${OMNI_JWT_SECRET}` |
-| `OMNI__SECURITY__PROVIDERS__0__ALGORITHMS` | `["HS256"]` |
-| `OMNI__PROVIDERS__OPENAI__TYPE` | `openai` |
-| `OMNI__PROVIDERS__OPENAI__API_KEY` | `${OPENAI_API_KEY}` |
-| `OMNI__RATE_LIMITS__0__NAME` | `per-user-requests` |
-| `OMNI__RATE_LIMITS__0__KEY` | `user` |
-| `OMNI__RATE_LIMITS__0__REQUESTS__LIMIT` | `60` |
-| `OMNI__RATE_LIMITS__0__REQUESTS__WINDOW` | `1m` |
-| `OMNI__RATE_LIMITS__1__NAME` | `per-user-daily-tokens` |
-| `OMNI__RATE_LIMITS__1__KEY` | `user` |
-| `OMNI__RATE_LIMITS__1__TOKENS__LIMIT` | `200000` |
-| `OMNI__RATE_LIMITS__1__TOKENS__WINDOW` | `1d` |
-| `OMNI__ROUTING__DEFAULT_PROVIDER` | `openai` |
+| `OMNI_SERVER_LOG_LEVEL` | `info` |
+| `OMNI_STORAGE_TYPE` | `firestore` |
+| `OMNI_STORAGE_FIRESTORE_COLLECTION` | `omni_ratelimits` |
+| `OMNI_SECURITY_JWT_ENABLED` | `true` |
+| `OMNI_SECURITY_JWT_SECRET` | `${OMNI_JWT_SECRET}` |
+| `OMNI_SECURITY_JWT_ALGORITHMS` | `["HS256"]` |
+| `OMNI_PROVIDERS_DEFAULT_TYPE` | `openai` |
+| `OMNI_PROVIDERS_DEFAULT_API_KEY` | `${OPENAI_API_KEY}` |
+| `OMNI_RATE_LIMITS_JSON` | `[request rule, token rule]` |
 
 Values that must be arrays or objects use JSON. For example, the algorithms value is `["HS256"]`.
 Bare `true`, `false`, `null`, and JSON numbers become their corresponding types; all other values
 stay strings. Wrap an ambiguous string in JSON quotes, such as `"123"`.
 
-For a production identity provider, replace the simple `jwt` block with Firebase Auth, App Check,
+For a production identity provider, replace the simple JWT profile with Firebase Auth, App Check,
 Supabase, Apple attestation, or your issuer's JWKS. The [security guides](/security/custom-jwt)
 cover each verifier. Never remove all `security.providers`: omni-model refuses to start without an
 authentication verifier.
@@ -176,11 +164,11 @@ configuration.
 
 | Variable | Value |
 | --- | --- |
-| `OMNI__SECURITY__MODE` | `all` |
-| `OMNI__SECURITY__PROVIDERS__0__TYPE` | `firebase-app-check` |
-| `OMNI__SECURITY__PROVIDERS__0__APP_IDS` | `["1:YOUR_PROJECT_NUMBER:ios:YOUR_FIREBASE_APP_ID"]` |
-| `OMNI__SECURITY__PROVIDERS__1__TYPE` | `firebase-auth` |
-| `OMNI__SECURITY__PROVIDERS__1__PROJECT_ID` | `${GOOGLE_CLOUD_PROJECT}` |
+| `OMNI_SECURITY_MODE` | `all` |
+| `OMNI_SECURITY_FIREBASE_APPCHECK_ENABLED` | `true` |
+| `OMNI_SECURITY_FIREBASE_APPCHECK_APP_ID` | `1:YOUR_PROJECT_NUMBER:ios:YOUR_FIREBASE_APP_ID` |
+| `OMNI_SECURITY_FIREBASE_AUTH_ENABLED` | `true` |
+| `OMNI_SECURITY_FIREBASE_AUTH_PROJECT_ID` | `${GOOGLE_CLOUD_PROJECT}` |
 
 This requires both the raw `X-Firebase-AppCheck` token and the Firebase Auth ID token. It attests
 the client app and gives each signed-in user an independent `key: user` rate limit. To accept only
@@ -216,7 +204,7 @@ done
 
 The prompt after `read -r -s` does not echo a value. Generate the JWT secret with
 `openssl rand -base64 48`, then paste it. Cloud Run exposes both secrets as environment variables;
-the `OMNI__...` values in step 3 refer to them at omni-model startup.
+the named `OMNI_*` values in step 3 refer to them at omni-model startup.
 
 If you selected Firebase App Check instead, omit the `omni-jwt-secret` creation, its IAM binding,
 and its `--set-secrets` entry. The OpenAI key remains unchanged.
@@ -235,23 +223,15 @@ gcloud run deploy "$SERVICE" \
   --port 8787 \
   --memory 512Mi \
   --max-instances 20 \
-  --set-env-vars 'OMNI__SERVER__LOG_LEVEL=info' \
-  --set-env-vars 'OMNI__STORAGE__TYPE=firestore' \
-  --set-env-vars 'OMNI__STORAGE__COLLECTION=omni_ratelimits' \
-  --set-env-vars 'OMNI__SECURITY__PROVIDERS__0__TYPE=jwt' \
-  --set-env-vars 'OMNI__SECURITY__PROVIDERS__0__SECRET=${OMNI_JWT_SECRET}' \
-  --set-env-vars 'OMNI__SECURITY__PROVIDERS__0__ALGORITHMS=["HS256"]' \
-  --set-env-vars 'OMNI__PROVIDERS__OPENAI__TYPE=openai' \
-  --set-env-vars 'OMNI__PROVIDERS__OPENAI__API_KEY=${OPENAI_API_KEY}' \
-  --set-env-vars 'OMNI__RATE_LIMITS__0__NAME=per-user-requests' \
-  --set-env-vars 'OMNI__RATE_LIMITS__0__KEY=user' \
-  --set-env-vars 'OMNI__RATE_LIMITS__0__REQUESTS__LIMIT=60' \
-  --set-env-vars 'OMNI__RATE_LIMITS__0__REQUESTS__WINDOW=1m' \
-  --set-env-vars 'OMNI__RATE_LIMITS__1__NAME=per-user-daily-tokens' \
-  --set-env-vars 'OMNI__RATE_LIMITS__1__KEY=user' \
-  --set-env-vars 'OMNI__RATE_LIMITS__1__TOKENS__LIMIT=200000' \
-  --set-env-vars 'OMNI__RATE_LIMITS__1__TOKENS__WINDOW=1d' \
-  --set-env-vars 'OMNI__ROUTING__DEFAULT_PROVIDER=openai' \
+  --set-env-vars 'OMNI_SERVER_LOG_LEVEL=info' \
+  --set-env-vars 'OMNI_STORAGE_TYPE=firestore' \
+  --set-env-vars 'OMNI_STORAGE_FIRESTORE_COLLECTION=omni_ratelimits' \
+  --set-env-vars 'OMNI_SECURITY_JWT_ENABLED=true' \
+  --set-env-vars 'OMNI_SECURITY_JWT_SECRET=${OMNI_JWT_SECRET}' \
+  --set-env-vars 'OMNI_SECURITY_JWT_ALGORITHMS=["HS256"]' \
+  --set-env-vars 'OMNI_PROVIDERS_DEFAULT_TYPE=openai' \
+  --set-env-vars 'OMNI_PROVIDERS_DEFAULT_API_KEY=${OPENAI_API_KEY}' \
+  --set-env-vars 'OMNI_RATE_LIMITS_JSON=[{"name":"per-user-requests","key":"user","requests":{"limit":60,"window":"1m"}},{"name":"per-user-daily-tokens","key":"user","tokens":{"limit":200000,"window":"1d"}}]' \
   --set-secrets "\
 OPENAI_API_KEY=omni-openai-api-key:1,\
 OMNI_JWT_SECRET=omni-jwt-secret:1"
@@ -263,7 +243,7 @@ container; the configured JWT verifier remains responsible for API-client authen
 
 <Warning>
 Pin secret versions as shown. Environment-variable secrets are resolved when a new instance starts,
-so blindly using `latest` can make revisions non-reproducible. An `OMNI__...` change also creates a
+so blindly using `latest` can make revisions non-reproducible. An `OMNI_*` change also creates a
 new revision, so deploy after changing any setting.
 </Warning>
 
@@ -309,7 +289,7 @@ per minute:
 ```sh
 gcloud run services update "$SERVICE" \
   --region "$REGION" \
-  --update-env-vars 'OMNI__RATE_LIMITS__0__REQUESTS__LIMIT=100'
+  --update-env-vars 'OMNI_RATE_LIMITS_JSON=[{"name":"per-user-requests","key":"user","requests":{"limit":100,"window":"1m"}},{"name":"per-user-daily-tokens","key":"user","tokens":{"limit":200000,"window":"1d"}}]'
 ```
 
 To rotate `OPENAI_API_KEY` or `OMNI_JWT_SECRET`, add a Secret Manager version and update the
@@ -333,16 +313,16 @@ To skip a source build, replace `--source .` in step 5 with a release-pinned ima
 ```
 
 Use an actual released tag or digest rather than `latest` for reproducibility. The same service
-account, secret bindings, Firestore configuration, and `OMNI__...` environment variables apply.
+account, secret bindings, Firestore configuration, and `OMNI_*` environment variables apply.
 
 ## Troubleshooting
 
 | Symptom | Likely cause and fix |
 | --- | --- |
-| Revision never becomes ready | Read startup logs with `gcloud run services logs read "$SERVICE" --region "$REGION" --limit 50`. A missing `OMNI__...` value, missing `${VAR}`, or an empty `security.providers` is reported before the server binds. |
+| Revision never becomes ready | Read startup logs with `gcloud run services logs read "$SERVICE" --region "$REGION" --limit 50`. A missing `OMNI_*` value, missing `${VAR}`, or an empty `security.providers` is reported before the server binds. |
 | Firestore `PERMISSION_DENIED` | Verify that the **runtime** service account, not only the deployer, has `roles/datastore.user` and that the Firestore database exists. |
 | `401` from `/v1/*` | Expected without a JWT. Confirm the token is HS256, is signed by `OMNI_JWT_SECRET`, and includes a non-empty `sub` claim. |
-| Rate limits reset or differ by instance | The service is still using `memory` storage or has more than one instance. Set `OMNI__STORAGE__TYPE=firestore` and the Firestore variables above. |
+| Rate limits reset or differ by instance | The service is still using `memory` storage or has more than one instance. Set `OMNI_STORAGE_TYPE=firestore` and the Firestore variables above. |
 | `403` before omni-model responds | Cloud Run IAM rejected the request. Either grant the caller Cloud Run Invoker for a private service or make the service public and let omni-model's verifier authenticate API clients. |
 
 <CardGroup cols={2}>

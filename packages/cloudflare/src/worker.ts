@@ -97,10 +97,10 @@ export function createWorker(options: CreateWorkerOptions = {}): OmniWorker {
       // For a prebuilt-bundle deploy this is the first thing the operator sees,
       // so it carries the literal fix rather than a description of one.
       throw new ConfigError(
-        "no configuration found: set OMNI__... environment variables, for example:\n" +
-          "  OMNI__STORAGE__TYPE=memory\n" +
-          "  OMNI__SECURITY__PROVIDERS__0__TYPE=jwt\n" +
-          "  OMNI__PROVIDERS__OPENAI__TYPE=openai\n" +
+        "no configuration found: set named environment variables, for example:\n" +
+          "  OMNI_STORAGE_TYPE=memory\n" +
+          "  OMNI_SECURITY_JWT_ENABLED=true\n" +
+          "  OMNI_PROVIDERS_DEFAULT_TYPE=openai\n" +
           "or configure a full document with OMNI_CONFIG_JSON.",
       );
     }

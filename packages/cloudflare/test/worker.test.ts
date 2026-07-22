@@ -419,7 +419,7 @@ describe("createWorker", () => {
       const error = await errorBody(response);
       expect(error.type).toBe("api_error");
       expect(error.message).toContain("OMNI_CONFIG_JSON");
-      expect(error.message).toContain("OMNI__");
+      expect(error.message).toContain("OMNI_STORAGE_TYPE");
       expect(errorSpy).toHaveBeenCalled();
     } finally {
       errorSpy.mockRestore();

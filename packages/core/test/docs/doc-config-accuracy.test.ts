@@ -160,6 +160,11 @@ describe("full config examples in the reference page parse", () => {
       "OMNI_RATE_LIMITS_JSON",
       "OMNI_PROVIDERS_JSON",
       "OMNI_ROUTING_JSON",
+      "OMNI_STORAGE_FIRESTORE_COLLECTION",
+      "OMNI_PROVIDERS_DEFAULT_TYPE",
+      "OMNI_SECURITY_FIREBASE_AUTH_ENABLED",
+      "OMNI_SECURITY_FIREBASE_APPCHECK_ENABLED",
+      "OMNI_ROUTING_DEFAULT_PROVIDER",
       "OMNI__",
     ]) {
       expect(md).toContain(variable);
@@ -174,23 +179,20 @@ describe("full config examples in the reference page parse", () => {
 describe("the Cloud Run production configuration", () => {
   it("uses environment variables for Firestore storage and JWT authentication", () => {
     const cloudRunPage = repoFile("docs/installation/cloud-run.mdx");
-    expect(cloudRunPage).toContain("OMNI__STORAGE__TYPE=firestore");
-    expect(cloudRunPage).toContain("OMNI__SECURITY__PROVIDERS__0__TYPE=jwt");
+    expect(cloudRunPage).toContain("OMNI_STORAGE_TYPE=firestore");
+    expect(cloudRunPage).toContain("OMNI_SECURITY_JWT_ENABLED=true");
 
     const config = parseEnvironmentConfig({
       ...TEST_ENV,
-      OMNI__STORAGE__TYPE: "firestore",
-      OMNI__STORAGE__COLLECTION: "omni_ratelimits",
-      OMNI__SECURITY__PROVIDERS__0__TYPE: "jwt",
-      OMNI__SECURITY__PROVIDERS__0__SECRET: "$" + "{OMNI_JWT_SECRET}",
-      OMNI__SECURITY__PROVIDERS__0__ALGORITHMS: '["HS256"]',
-      OMNI__PROVIDERS__OPENAI__TYPE: "openai",
-      OMNI__PROVIDERS__OPENAI__API_KEY: "$" + "{OPENAI_API_KEY}",
-      OMNI__RATE_LIMITS__0__NAME: "per-user-requests",
-      OMNI__RATE_LIMITS__0__KEY: "user",
-      OMNI__RATE_LIMITS__0__REQUESTS__LIMIT: "60",
-      OMNI__RATE_LIMITS__0__REQUESTS__WINDOW: "1m",
-      OMNI__ROUTING__DEFAULT_PROVIDER: "openai",
+      OMNI_STORAGE_TYPE: "firestore",
+      OMNI_STORAGE_FIRESTORE_COLLECTION: "omni_ratelimits",
+      OMNI_SECURITY_JWT_ENABLED: "true",
+      OMNI_SECURITY_JWT_SECRET: "$" + "{OMNI_JWT_SECRET}",
+      OMNI_SECURITY_JWT_ALGORITHMS: '["HS256"]',
+      OMNI_PROVIDERS_DEFAULT_TYPE: "openai",
+      OMNI_PROVIDERS_DEFAULT_API_KEY: "$" + "{OPENAI_API_KEY}",
+      OMNI_RATE_LIMITS_JSON:
+        '[{"name":"per-user-requests","key":"user","requests":{"limit":60,"window":"1m"}}]',
     });
     expect(config.storage.type).toBe("firestore");
     expect(config.security.providers).toMatchObject([{ type: "jwt" }]);

@@ -24,8 +24,8 @@ export interface ConfigSource {
 export function resolveConfigSource(args: ResolveConfigSourceArgs): ConfigSource {
   if (hasEnvironmentConfig(args.env) === false) {
     throw new ConfigError(
-      "no configuration found; set OMNI_CONFIG_JSON, a JSON block such as OMNI_PROVIDERS_JSON, " +
-        "or OMNI__... environment variables",
+      "no configuration found; set named variables such as OMNI_STORAGE_TYPE, " +
+        "OMNI_SECURITY_JWT_ENABLED, and OMNI_PROVIDERS_DEFAULT_TYPE, or use OMNI_CONFIG_JSON",
     );
   }
   return { config: environmentConfigDocument(args.env), source: "environment variables" };

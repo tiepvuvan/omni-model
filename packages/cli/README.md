@@ -79,11 +79,13 @@ are referenced with `${ENV}`, which the proxy resolves at startup, and the CLI t
 to set:
 
 ```sh
-OMNI_PROVIDERS_JSON='{"openai":{"type":"openai","apiKey":"${OPENAI_API_KEY}"}}'
+OMNI_PROVIDERS_DEFAULT_TYPE=openai
+OMNI_PROVIDERS_DEFAULT_API_KEY='${OPENAI_API_KEY}'
 # set the actual key with: wrangler secret put OPENAI_API_KEY
 ```
 
-The emitted `OMNI_*_JSON` values are safe to commit, paste in an issue, or hand to a colleague.
+The emitted `OMNI_*` values are safe to commit, paste in an issue, or hand to a colleague: they
+contain only configuration and `${ENV}` references, never secret values.
 
 ## Commands
 
