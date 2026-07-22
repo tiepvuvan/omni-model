@@ -9,14 +9,9 @@
     "max-instances": 1
   },
   "env": {
-    "OPENAI_API_KEY": {
-      "description": "OpenAI API key for the starter OpenAI provider",
-      "required": true,
-      "order": 10
-    },
     "OMNI_JWT_SECRET": {
-      "description": "A long random secret for signing client JWTs (HS256)",
-      "required": true,
+      "description": "Fallback JWT secret for clients that do not use App Check",
+      "generator": "secret",
       "order": 20
     },
     "OMNI_SERVER_LOG_LEVEL": {
@@ -26,10 +21,16 @@
       "order": 30
     },
     "OMNI_STORAGE_TYPE": {
-      "description": "Rate-limit storage type; memory is for the one-instance starter",
-      "value": "memory",
+      "description": "Choose firestore (recommended) or memory for rate limits",
+      "value": "firestore",
       "required": false,
       "order": 40
+    },
+    "OMNI_STORAGE_FIRESTORE_COLLECTION": {
+      "description": "Firestore collection for rate-limit counters",
+      "value": "omni_ratelimits",
+      "required": false,
+      "order": 45
     },
     "OMNI_SECURITY_JWT_ENABLED": {
       "description": "Enable the starter JWT authentication verifier",
@@ -49,15 +50,33 @@
       "required": false,
       "order": 70
     },
+    "OMNI_SECURITY_FIREBASE_APPCHECK_ENABLED": {
+      "description": "Use Firebase App Check? Enter true or false (true is recommended)",
+      "value": "true",
+      "required": false,
+      "order": 75
+    },
+    "OMNI_SECURITY_FIREBASE_APPCHECK_APP_ID": {
+      "description": "Optional Firebase App ID allowlist; leave blank for every app in this project",
+      "value": "",
+      "required": false,
+      "order": 76
+    },
     "OMNI_PROVIDERS_DEFAULT_TYPE": {
-      "description": "Upstream provider type",
-      "value": "openai",
+      "description": "Default upstream type; openai-compatible accepts any compatible endpoint",
+      "value": "openai-compatible",
       "required": false,
       "order": 80
     },
+    "OMNI_PROVIDERS_DEFAULT_BASE_URL": {
+      "description": "Optional OpenAI-compatible endpoint URL; change it later in Cloud Run",
+      "value": "https://api.openai.com/v1",
+      "required": false,
+      "order": 85
+    },
     "OMNI_PROVIDERS_DEFAULT_API_KEY": {
-      "description": "OpenAI provider API key reference",
-      "value": "${OPENAI_API_KEY}",
+      "description": "Optional upstream API key; leave blank for an unauthenticated endpoint",
+      "value": "",
       "required": false,
       "order": 90
     },

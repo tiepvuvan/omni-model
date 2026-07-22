@@ -143,6 +143,25 @@ describe("environment configuration", () => {
     );
   });
 
+  it("omits empty optional compatible-provider credentials and App Check app IDs", () => {
+    const config = parseEnvironmentConfig({
+      OMNI_PROVIDERS_DEFAULT_TYPE: "openai-compatible",
+      OMNI_PROVIDERS_DEFAULT_BASE_URL: "https://gateway.example.com/v1",
+      OMNI_PROVIDERS_DEFAULT_API_KEY: "",
+      OMNI_SECURITY_FIREBASE_APPCHECK_ENABLED: "true",
+      OMNI_SECURITY_FIREBASE_APPCHECK_PROJECT_NUMBER: "1234567890",
+      OMNI_SECURITY_FIREBASE_APPCHECK_APP_ID: "",
+    });
+
+    expect(config.providers.default).toEqual({
+      type: "openai-compatible",
+      baseUrl: "https://gateway.example.com/v1",
+    });
+    expect(config.security.providers).toEqual([
+      { type: "firebase-app-check", projectNumber: "1234567890" },
+    ]);
+  });
+
   it("rejects JSON blocks with an invalid shape", () => {
     expect(() => environmentConfigDocument({ OMNI_CONFIG_JSON: "[]" })).toThrow(
       /full configuration must be a JSON object/,

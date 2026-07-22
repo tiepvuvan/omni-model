@@ -8,10 +8,10 @@ servers. The repository includes a **Run on Google Cloud** button for a working 
 a `Dockerfile` for a fully controlled deployment.
 
 <Warning>
-Cloud Run may start more than one instance. `memory` storage is local to an instance, so it cannot
-enforce a shared rate limit or token budget. The one-click service deliberately caps itself at one
-instance for a quick evaluation. Use the Firestore setup below before production or before raising
-the instance limit.
+The one-click form defaults to Firestore, but it cannot create a Firestore database or grant its
+runtime service account access on your behalf. If that setup is not already present, choose `memory`
+for an evaluation deployment, then follow the Firestore setup below before raising the instance
+limit.
 </Warning>
 
 ## One-click starter
@@ -28,17 +28,23 @@ region. Cloud Run enables the services it needs during the guided flow if your a
 do so.
 </Step>
 
-<Step title="Enter the two required values">
-The deploy form supplies a valid starter configuration as named `OMNI_*` environment variables.
-Enter only:
+<Step title="Choose storage, App Check, and an upstream">
+The deploy form supplies named `OMNI_*` environment variables. It has no conditional controls, so
+make these choices directly in the values:
 
-- `OPENAI_API_KEY` — the key used only by the configured OpenAI provider.
-- `OMNI_JWT_SECRET` — a long, private random value used to verify HS256 client JWTs. Generate one
-  locally with `openssl rand -base64 48` and retain it in your secret manager.
+- `OMNI_STORAGE_TYPE`: leave `firestore` for shared counters, or enter `memory` for an evaluation
+  without Firestore.
+- `OMNI_SECURITY_FIREBASE_APPCHECK_ENABLED`: leave `true` to accept Firebase App Check tokens, or
+  enter `false` to use the generated JWT fallback alone. On Cloud Run, the Firebase project number
+  is discovered from GCP metadata; an App ID allowlist is optional.
+- `OMNI_PROVIDERS_DEFAULT_BASE_URL` and `OMNI_PROVIDERS_DEFAULT_API_KEY`: both are editable later.
+  The form defaults to the OpenAI-compatible OpenAI endpoint and permits a blank key so an
+  unauthenticated compatible endpoint can be used. With the default endpoint, add an API key before
+  serving model requests.
 
-Leave the prefilled `OMNI_*` values in place for the starter. They configure an OpenAI provider,
-a JWT verifier, and per-user request and token limits. To change behavior later, edit these
-environment variables in the Cloud Run revision—there is no YAML file or YAML environment variable.
+The button generates `OMNI_JWT_SECRET` for its fallback HS256 verifier. It creates a valid service
+even when no upstream key is entered; update the service environment variables (and preferably use
+Secret Manager) before sending model traffic. There is no YAML file or YAML environment variable.
 </Step>
 
 <Step title="Wait for the revision and verify health">
@@ -56,19 +62,20 @@ return a `401`, which confirms the proxy is not an open relay.
 
 ### What the button creates
 
-`app.json` is the deploy-button contract. Its default environment variables select `memory`
-storage, cap Cloud Run at **one instance**, let the service listen on Cloud Run's `PORT`, and make
-the service public at the network layer. The application still protects every `/v1/*` endpoint with
-your HS256 JWT secret; only `/healthz` is unauthenticated.
+`app.json` is the deploy-button contract. Its default environment variables select Firestore,
+enable Firebase App Check, retain a generated JWT fallback, cap Cloud Run at **one instance**, let
+the service listen on Cloud Run's `PORT`, and make the service public at the network layer. The
+application protects every `/v1/*` endpoint with either a valid App Check token or a JWT; only
+`/healthz` is unauthenticated.
 
-This is purposeful: it makes the first deployment work without provisioning a database, while
-keeping provider credits behind an application credential. Memory counters disappear when an
-instance is replaced, so this is an evaluation configuration rather than durable quota enforcement.
+Firestore is the GCP-friendly choice for durable shared counters. If it is unavailable, changing
+the form to `memory` still makes the first deployment useful, but its counters disappear when an
+instance is replaced. The service remains capped at one instance until you complete the production
+Firestore and IAM setup.
 
 <Info>
-The Cloud Run button passes values as service environment variables. For long-lived credentials,
-use the Secret Manager production path below. Google recommends Secret Manager for API keys and
-other sensitive values.
+The Cloud Run button passes values as service environment variables. For long-lived API keys,
+replace the optional form value with a Secret Manager binding using the production path below.
 </Info>
 
 ## Production deployment: Firestore + Secret Manager

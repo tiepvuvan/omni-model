@@ -431,7 +431,16 @@ function applyDefaultProviderValues(
   if (hasDefaultProviderValue === false) return;
 
   const provider = providerDocument(root, "default");
-  applyObjectValues(provider, env, DEFAULT_PROVIDER_VALUES);
+  for (const [name, field] of DEFAULT_PROVIDER_VALUES) {
+    const value = env[name];
+    // Cloud Run Button submits an empty optional form field as an environment
+    // value. An empty compatible-provider API key means "no API key", rather
+    // than an invalid empty credential.
+    if (value === undefined || (name === "OMNI_PROVIDERS_DEFAULT_API_KEY" && value.trim() === "")) {
+      continue;
+    }
+    provider[field] = shortcutValue(value, name);
+  }
   setPath(root, ["routing", "defaultProvider"], "default", "OMNI_PROVIDERS_DEFAULT_*", true);
 }
 
@@ -479,11 +488,15 @@ function applySecurityProfiles(
 
     const provider: Record<string, unknown> = { type: profile.type };
     applyObjectValues(provider, env, profile.values);
-    if (profile.appId !== undefined && env[profile.appId] !== undefined) {
-      provider.appIds = [env[profile.appId]];
+    if (profile.appId !== undefined) {
+      const appId = env[profile.appId];
+      if (appId !== undefined && appId.trim() !== "") provider.appIds = [appId];
     }
-    if (profile.appIds !== undefined && env[profile.appIds] !== undefined) {
-      provider.appIds = parseEnvironmentValue(env[profile.appIds] as string, profile.appIds);
+    if (profile.appIds !== undefined) {
+      const appIds = env[profile.appIds];
+      if (appIds !== undefined && appIds.trim() !== "") {
+        provider.appIds = parseEnvironmentValue(appIds, profile.appIds);
+      }
     }
 
     const providers = securityProvidersDocument(root);
