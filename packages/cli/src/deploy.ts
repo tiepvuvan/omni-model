@@ -31,7 +31,8 @@ const ARTIFACT_DIR = ".omni-model";
 
 export interface DeployOptions {
   answers: Answers;
-  configPath: string;
+  /** Environment variables holding the generated omni-model configuration. */
+  configEnv: Record<string, string>;
   serviceName: string;
   /** Skip the confirmation prompt. */
   yes: boolean;
@@ -120,12 +121,17 @@ async function deployCloudflare(o: DeployOptions): Promise<void> {
   );
 
   envReminder(o.answers);
-  const omniConfig = readFileSync(o.configPath, "utf8");
-  const args = ["wrangler", "deploy", "--config", cfgPath, "--var", `OMNI_CONFIG:${omniConfig}`];
+  const configArgs = Object.entries(o.configEnv).flatMap(([name, value]) => [
+    "--var",
+    `${name}:${value}`,
+  ]);
+  const args = ["wrangler", "deploy", "--config", cfgPath, ...configArgs];
   if (!(await confirmRun(`npx ${args.join(" ").slice(0, 60)}…`, o))) {
     log.info("Skipped. To deploy later:");
     log.message(
-      `  npx wrangler deploy --config ${cfgPath} --var OMNI_CONFIG:"$(cat ${o.configPath})"`,
+      `  npx wrangler deploy --config ${cfgPath} ${Object.keys(o.configEnv)
+        .map((name) => `--var ${name}:<json>`)
+        .join(" ")}`,
     );
     return;
   }
@@ -139,23 +145,23 @@ async function deployCloudflare(o: DeployOptions): Promise<void> {
   }
 }
 
-/** Docker: run the published image locally, config via OMNI_CONFIG. */
+/** Docker: run the published image locally, config via environment variables. */
 async function deployDocker(o: DeployOptions): Promise<void> {
   envReminder(o.answers);
-  const omniConfig = readFileSync(o.configPath, "utf8");
   const args = [
     "run",
     "--rm",
     "-p",
     "8787:8787",
-    "-e",
-    `OMNI_CONFIG=${omniConfig}`,
+    ...Object.entries(o.configEnv).flatMap(([name, value]) => ["-e", `${name}=${value}`]),
     ...envVarsFor(o.answers).flatMap((v) => ["-e", v]), // forwarded from your shell
     IMAGE,
   ];
   if (!(await confirmRun(`docker run … ${IMAGE}`, o))) {
     log.info(
-      `To run later:\n  docker run -p 8787:8787 -e OMNI_CONFIG="$(cat ${o.configPath})" ${IMAGE}`,
+      `To run later:\n  docker run -p 8787:8787 ${Object.keys(o.configEnv)
+        .map((name) => `-e ${name}=<json>`)
+        .join(" ")} ${IMAGE}`,
     );
     return;
   }
@@ -166,12 +172,14 @@ async function deployDocker(o: DeployOptions): Promise<void> {
 /** Container platforms: generate the config and hand over the exact commands. */
 function guideContainer(o: DeployOptions): void {
   envReminder(o.answers);
-  const c = o.configPath;
+  const cloudRunEnv = Object.keys(o.configEnv)
+    .map((name) => `  --set-env-vars '${name}=<json>'`)
+    .join(" \\\n");
   const lines: Record<string, string[]> = {
     "cloud-run": [
       `gcloud run deploy ${o.serviceName} \\`,
       `  --image ${IMAGE} --port 8787 --allow-unauthenticated \\`,
-      `  --set-env-vars OMNI_CONFIG="$(cat ${c})"`,
+      cloudRunEnv,
       "",
       "Firestore storage also needs the service account to have Firestore access:",
       "  gcloud projects add-iam-policy-binding $(gcloud config get-value project) \\",
@@ -179,11 +187,13 @@ function guideContainer(o: DeployOptions): void {
     ],
     fly: [
       `fly launch --image ${IMAGE} --internal-port 8787`,
-      `fly secrets set OMNI_CONFIG="$(cat ${c})"`,
+      `fly secrets set ${Object.keys(o.configEnv)
+        .map((name) => `${name}=<json>`)
+        .join(" ")}`,
     ],
     render: [
       "Render deploys from a Blueprint. Use the repo's render.yaml, or create a",
-      `Web Service from the image ${IMAGE} and set OMNI_CONFIG to the contents of ${c}.`,
+      `Web Service from the image ${IMAGE} and set the OMNI_*_JSON variables shown above.`,
     ],
   };
   note(

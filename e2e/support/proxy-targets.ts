@@ -16,13 +16,13 @@ export interface RunningTarget {
   stop: () => Promise<void>;
 }
 
-/** Boot the Node server with an inline YAML config. */
+/** Boot the Node server with a JSON configuration document. */
 export async function startNodeTarget(
-  configYaml: string,
+  configJson: string,
   env: NodeJS.ProcessEnv,
 ): Promise<RunningTarget> {
   const server: RunningServer = await startServer({
-    configYaml,
+    config: JSON.parse(configJson) as Record<string, unknown>,
     env,
     port: 0,
     hostname: "127.0.0.1",
@@ -56,8 +56,8 @@ async function waitForHealthz(base: string, deadlineMs: number, log: () => strin
 }
 
 export interface WorkerTargetOptions {
-  /** Full YAML config, injected as the OMNI_CONFIG var (overrides the bundle). */
-  omniConfig: string;
+  /** Full JSON config, injected through the normal `OMNI_CONFIG_JSON` variable. */
+  omniConfigJson: string;
   /** Extra vars for `${...}` interpolation (secrets + ids). Never written to disk. */
   vars: Record<string, string>;
   port: number;
@@ -65,13 +65,13 @@ export interface WorkerTargetOptions {
 
 /**
  * Boot the real worker in workerd via `wrangler dev`, reconfigured at runtime
- * with `OMNI_CONFIG` (the same override a deployer uses without a rebuild). The
+ * with `OMNI_CONFIG_JSON` (the same configuration path a deployer uses). The
  * config + secrets are passed as `--var`, so nothing lands in a `.dev.vars`
  * file. Requires a prior `pnpm build` (the worker bundles the built dist).
  */
 export async function startWorkerTarget(opts: WorkerTargetOptions): Promise<RunningTarget> {
   const config = fileURLToPath(new URL("../cloudflare/wrangler.jsonc", import.meta.url));
-  const varArgs = Object.entries({ ...opts.vars, OMNI_CONFIG: opts.omniConfig }).flatMap(
+  const varArgs = Object.entries({ ...opts.vars, OMNI_CONFIG_JSON: opts.omniConfigJson }).flatMap(
     ([k, v]) => ["--var", `${k}:${v}`],
   );
   const child: ChildProcess = spawn(

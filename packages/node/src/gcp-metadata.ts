@@ -3,16 +3,13 @@ const DEFAULT_METADATA_HOST = "metadata.google.internal";
 const METADATA_PREFIX = "/computeMetadata/v1/project/";
 const METADATA_TIMEOUT_MS = 500;
 
-const FIRESTORE_TYPE = /(?:^|\n)\s*type\s*:\s*["']?firestore["']?\s*(?:#.*)?$/m;
-const APP_CHECK_TYPE = /(?:^|\n)\s*(?:-\s*)?type\s*:\s*["']?firebase-app-check["']?\s*(?:#.*)?$/m;
-const PROJECT_NUMBER_FIELD = /(?:^|\n)\s*projectNumber\s*:/m;
 const PROJECT_ID_REFERENCE = /\$\{GOOGLE_CLOUD_PROJECT(?::-[^}]*)?\}/;
 const PROJECT_NUMBER_REFERENCE = /\$\{OMNI_GCP_PROJECT_NUMBER(?::-[^}]*)?\}/;
 
 /** Arguments for {@link enrichGcpEnvironment}. */
 export interface GcpEnvironmentOptions {
-  /** Raw configuration document, used to avoid metadata requests when GCP values are irrelevant. */
-  configYaml: string;
+  /** Raw environment-derived configuration, used to avoid irrelevant metadata requests. */
+  config: Record<string, unknown>;
   /** Existing environment values. They are never mutated. */
   env: Record<string, string | undefined>;
   /** Fetch implementation, injectable for deterministic tests. */
@@ -20,27 +17,46 @@ export interface GcpEnvironmentOptions {
 }
 
 function requiresGcpMetadata(options: GcpEnvironmentOptions): boolean {
-  const { configYaml, env } = options;
-  if (PROJECT_ID_REFERENCE.test(configYaml) && env.GOOGLE_CLOUD_PROJECT === undefined) return true;
-  if (PROJECT_NUMBER_REFERENCE.test(configYaml) && env.OMNI_GCP_PROJECT_NUMBER === undefined) {
+  const { config, env } = options;
+  const serialized = JSON.stringify(config);
+  if (PROJECT_ID_REFERENCE.test(serialized) && env.GOOGLE_CLOUD_PROJECT === undefined) return true;
+  if (PROJECT_NUMBER_REFERENCE.test(serialized) && env.OMNI_GCP_PROJECT_NUMBER === undefined) {
     return true;
   }
+  const storage = config.storage;
+  const security = config.security;
+  const isFirestore =
+    typeof storage === "object" &&
+    storage !== null &&
+    (storage as { type?: unknown }).type === "firestore";
+  const appCheck =
+    typeof security === "object" &&
+    security !== null &&
+    Array.isArray((security as { providers?: unknown }).providers) &&
+    (security as { providers: unknown[] }).providers.some(
+      (provider) =>
+        typeof provider === "object" &&
+        provider !== null &&
+        (provider as { type?: unknown }).type === "firebase-app-check",
+    );
+  const hasProjectNumber =
+    typeof security === "object" &&
+    security !== null &&
+    Array.isArray((security as { providers?: unknown }).providers) &&
+    (security as { providers: unknown[] }).providers.some(
+      (provider) =>
+        typeof provider === "object" &&
+        provider !== null &&
+        (provider as { projectNumber?: unknown }).projectNumber !== undefined,
+    );
   const hasFirestoreProjectId =
     env.GOOGLE_CLOUD_PROJECT !== undefined ||
     env.FIREBASE_PROJECT_ID !== undefined ||
     env.GCLOUD_PROJECT !== undefined;
-  if (
-    FIRESTORE_TYPE.test(configYaml) &&
-    hasFirestoreProjectId === false &&
-    env.FIRESTORE_EMULATOR_HOST === undefined
-  ) {
+  if (isFirestore && hasFirestoreProjectId === false && env.FIRESTORE_EMULATOR_HOST === undefined) {
     return true;
   }
-  return (
-    APP_CHECK_TYPE.test(configYaml) &&
-    PROJECT_NUMBER_FIELD.test(configYaml) === false &&
-    env.OMNI_GCP_PROJECT_NUMBER === undefined
-  );
+  return appCheck && hasProjectNumber === false && env.OMNI_GCP_PROJECT_NUMBER === undefined;
 }
 
 function metadataUrl(env: Record<string, string | undefined>, path: string): string {
@@ -73,9 +89,9 @@ async function readMetadata(
  * account key; local and non-GCP deployments simply retain their original env.
  *
  * `GOOGLE_CLOUD_PROJECT` is a conventional project-id variable. The numeric
- * project number is exposed as `OMNI_GCP_PROJECT_NUMBER` so App Check YAML can
- * omit `projectNumber` on GCP while retaining an explicit cross-project escape
- * hatch. Caller-provided values always win over metadata.
+ * project number is exposed as `OMNI_GCP_PROJECT_NUMBER` so App Check
+ * environment configuration can omit `projectNumber` on GCP while retaining
+ * an explicit cross-project escape hatch. Caller-provided values always win.
  */
 export async function enrichGcpEnvironment(
   options: GcpEnvironmentOptions,

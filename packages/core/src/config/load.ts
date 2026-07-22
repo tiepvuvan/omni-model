@@ -1,4 +1,3 @@
-import { parse as parseYaml } from "yaml";
 import { z } from "zod";
 import { ConfigError } from "../errors.js";
 import { type OmniConfig, omniConfigSchema } from "./schema.js";
@@ -46,20 +45,14 @@ function interpolateDeep(
 }
 
 /**
- * Parse and validate a YAML configuration document. Environment references
- * are interpolated before validation, so secrets never need to live in the
- * config file itself.
+ * Validate a parsed configuration document. Environment references are
+ * interpolated before validation, so environment-derived configuration can
+ * reference values from the platform secret store.
  */
-export function parseConfig(
-  yamlSource: string,
+export function parseConfigObject(
+  document: unknown,
   env: Record<string, string | undefined> = {},
 ): OmniConfig {
-  let document: unknown;
-  try {
-    document = parseYaml(yamlSource);
-  } catch (error) {
-    throw new ConfigError(`invalid YAML: ${error instanceof Error ? error.message : error}`);
-  }
   if (document === null || document === undefined) {
     throw new ConfigError("configuration is empty");
   }

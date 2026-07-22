@@ -1,198 +1,88 @@
 ---
 title: Cloudflare Workers
-description: Deploy omni-model to the edge on Cloudflare Workers, with either Durable Object or KV storage for rate limits.
+description: Deploy omni-model to Cloudflare Workers and configure it entirely through Worker variables and secrets.
 ---
 
-The deployable worker lives in `apps/cloudflare` and is driven by the root `wrangler.jsonc`. It
-adds the two Workers storage backends from `@omni-model/cloudflare` on top of the default registry,
-so rate-limit counters can live in a **Durable Object** (exact) or **Workers KV** (approximate).
-
-## One-click deploy
-
-The **Deploy to Cloudflare** button in the README forks the repo into your GitHub account and sets
-up [Workers Builds](https://developers.cloudflare.com/workers/ci-cd/builds/), which runs
-`wrangler deploy` on each push to `main`. Bindings and secrets live in your account, so point the
-button at your own fork.
-
-Two things are handled for you:
-
-- **The build.** The worker imports the workspace packages, which resolve to their compiled `dist/`
-  — absent on a fresh clone. `wrangler.jsonc` declares a `build.command`, so wrangler compiles them
-  before bundling. Without it the deploy fails with `Could not resolve "@omni-model/cloudflare"`.
-- **The Durable Object.** The `OMNI_DO` binding and its SQLite migration are declared in
-  `wrangler.jsonc`, so the deploy provisions the rate-limit store (free-plan friendly).
+Cloudflare Workers run omni-model at the edge. Configuration is read entirely from Worker variables
+and secrets; no application configuration file is bundled into the Worker.
 
 <Warning>
-**One step is left, and the proxy tells you so.** The bundled `apps/cloudflare/omni.yaml` references
-`${OPENAI_API_KEY}`; until that secret exists, every request answers `missing environment variable
-"OPENAI_API_KEY" referenced at $.providers.openai.apiKey`. That's deliberate — it fails fast with the
-fix in the message instead of booting with an empty key and returning an opaque upstream 401. Finish
-with:
-
-```sh
-pnpm --filter omni-model-cloudflare exec wrangler secret put OPENAI_API_KEY
-```
-
-Then add a [security provider](/security/custom-jwt) — with an empty `security.providers` the proxy
-**refuses to start**, because a proxy that authenticates nobody is an open relay on your credits.
+Configure a security provider before exposing the Worker. omni-model refuses to start without one,
+which prevents an unauthenticated proxy from spending your upstream provider credits.
 </Warning>
 
-## Forkless deploy (prebuilt bundle)
+## Deploy from the repository
 
-Don't want a fork? Every release ships a **prebuilt worker** — the Cloudflare counterpart of the
-[container image](/installation/cloud-run): download an immutable artifact, supply config at runtime,
-update with a re-download. No fork, no clone, no build, no `node_modules`.
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/tiepvuvan/omni-model)
 
-<Steps>
-<Step title="Grab the two files">
-```sh
-V=v1.2.3   # a release tag
-curl -LO https://github.com/tiepvuvan/omni-model/releases/download/$V/worker.js
-curl -LO https://github.com/tiepvuvan/omni-model/releases/download/$V/wrangler.jsonc
-# optional: verify
-curl -LO https://github.com/tiepvuvan/omni-model/releases/download/$V/SHA256SUMS && sha256sum -c SHA256SUMS
-```
-</Step>
+The button provisions the `OMNI_DO` Durable Object binding. In **Workers & Pages → your Worker →
+Settings → Variables and Secrets**, add the provider secret and the following configuration values:
 
-<Step title="Write your config">
-Put your [configuration](/reference/configuration) in `omni.yaml` next to them. The bundle has **no
-baked config** — it reads the `OMNI_CONFIG` var, exactly like the image reads `OMNI_CONFIG`.
-</Step>
+| Variable | Value |
+| --- | --- |
+| `OPENAI_API_KEY` | Store as a secret. |
+| `OMNI_STORAGE_JSON` | `{"type":"durable-object","binding":"OMNI_DO"}` |
+| `OMNI_SECURITY_PROVIDERS_JSON` | `[{"type":"firebase-app-check"}]` or another verifier. |
+| `OMNI_PROVIDERS_JSON` | `{"openai":{"type":"openai","apiKey":"${OPENAI_API_KEY}"}}` |
+| `OMNI_DEFAULT_PROVIDER` | `openai` |
 
-<Step title="Deploy">
-```sh
-npx wrangler deploy --var OMNI_CONFIG:"$(cat omni.yaml)"
-npx wrangler secret put OPENAI_API_KEY     # any ${...} your config references
+For Firebase App Check, include the app IDs in the same JSON block:
+
+```text
+[{"type":"firebase-app-check","projectNumber":"YOUR_PROJECT_NUMBER","appIds":["1:YOUR_PROJECT_NUMBER:ios:YOUR_APP_ID"]}]
 ```
 
-That's the whole deploy. `wrangler.jsonc` already sets `no_bundle` (the script is prebuilt) and
-declares the `OMNI_DO` Durable Object, so the rate-limit store is provisioned for you.
-</Step>
-</Steps>
+Deploy a new Worker revision after changing a variable.
 
-<Note>
-Config is a **var**, not a secret, on purpose: `${...}` interpolation means the config holds no
-secret *values* — only references — so keeping it readable makes it auditable, dashboard-editable,
-and part of the version snapshot you can roll back to. The referenced secrets stay secrets.
-</Note>
+## Forkless prebuilt Worker
 
-**What you trade away:** push-to-deploy CI. With the button, editing `omni.yaml` in your fork
-redeploys automatically; here, updating is `curl` + `wrangler deploy`. Pick the fork if you want CI,
-the bundle if you want no fork.
-
-## Deploy from a fork (CLI)
-
-The steps below cover a CLI deploy from a fork.
-
-## Storage backends
-
-<Tabs>
-<Tab title="Durable Object (default)">
-`durable-object` (`OmniStorageDurableObject`) serializes each key through its own Durable Object,
-so counters are **exact**. Choose this when token budgets and quotas must not overshoot. Slightly
-higher latency/cost. This is the default in the bundled `wrangler.jsonc` and `apps/cloudflare/omni.yaml`:
-
-```yaml
-storage:
-  type: durable-object
-  binding: OMNI_DO
-```
-
-The migration in `wrangler.jsonc` uses SQLite-backed Durable Objects — the kind available on the
-Workers **free** plan.
-</Tab>
-
-<Tab title="Workers KV">
-`cloudflare-kv` is cheap and global, but `increment` is a non-atomic read-modify-write on an
-eventually consistent store, so rate-limit counts are **approximate**. Fine for best-effort
-limiting.
-
-Create a namespace, uncomment the `kv_namespaces` binding in `wrangler.jsonc` and paste the id,
-then switch the config:
+Every release publishes `worker.js` and `wrangler.jsonc`. Download them and deploy without a fork,
+clone, or build:
 
 ```sh
-pnpm --filter omni-model-cloudflare exec wrangler kv namespace create OMNI_KV
+curl -LO https://github.com/tiepvuvan/omni-model/releases/latest/download/worker.js
+curl -LO https://github.com/tiepvuvan/omni-model/releases/latest/download/wrangler.jsonc
+
+npx wrangler deploy \
+  --var OMNI_STORAGE_JSON:'{"type":"durable-object","binding":"OMNI_DO"}' \
+  --var OMNI_SECURITY_PROVIDERS_JSON:'[{"type":"jwt","secret":"${OMNI_JWT_SECRET}","algorithms":["HS256"]}]' \
+  --var OMNI_PROVIDERS_JSON:'{"openai":{"type":"openai","apiKey":"${OPENAI_API_KEY}"}}' \
+  --var OMNI_DEFAULT_PROVIDER:openai
+
+npx wrangler secret put OPENAI_API_KEY
+npx wrangler secret put OMNI_JWT_SECRET
 ```
 
-```yaml
-storage:
-  type: cloudflare-kv
-  binding: OMNI_KV
-```
-</Tab>
-</Tabs>
+The uploaded Worker is self-contained. The `OMNI_DO` binding declared in the downloaded
+`wrangler.jsonc` provides exact rate-limit and token-budget counters.
 
-## Deploy
+## Storage choices
 
-<Steps>
-<Step title="Fork, install, and build">
-```sh
-pnpm install
-pnpm build
+Use Durable Objects for exact shared counters:
+
+```text
+OMNI_STORAGE_JSON={"type":"durable-object","binding":"OMNI_DO"}
 ```
 
-The build is **required**: wrangler bundles the compiled workspace packages
-(`@omni-model/core`, `@omni-model/cloudflare`), whose `dist/` output does not exist on a fresh
-clone until you build.
-</Step>
+Use Workers KV when approximate, eventually consistent counters are acceptable:
 
-<Step title="Edit the worker config">
-Edit `apps/cloudflare/omni.yaml`. Pick your storage backend and match the binding name in
-`wrangler.jsonc`. Add at least one [security provider](/security/custom-jwt): with an empty
-`security.providers` the proxy **refuses to start** rather than serve as an open relay on your
-credits.
-</Step>
-
-<Step title="Set provider secrets">
-Provider keys go in Worker secrets — they are exposed to `${...}` interpolation as env vars.
-`wrangler` is a dependency of `apps/cloudflare` (not the repo root), so invoke it through that
-package:
-
-```sh
-pnpm --filter omni-model-cloudflare exec wrangler secret put OPENAI_API_KEY
-pnpm --filter omni-model-cloudflare exec wrangler secret put ANTHROPIC_API_KEY
-```
-</Step>
-
-<Step title="Deploy">
-```sh
-cd apps/cloudflare
-pnpm run deploy   # wrangler deploy --config ../../wrangler.jsonc
+```text
+OMNI_STORAGE_JSON={"type":"cloudflare-kv","binding":"OMNI_KV"}
 ```
 
-`pnpm run dev` starts a local `wrangler dev` session.
-</Step>
-</Steps>
+Declare `OMNI_KV` in `wrangler.jsonc` before selecting it. App Attest state also requires shared
+storage, so use Durable Objects for a typical mobile application.
 
-## Config without a redeploy
+## Providers and routing
 
-The `apps/cloudflare/omni.yaml` file is bundled into the worker at deploy time. To change
-configuration without rebuilding, set the entire YAML document as the `OMNI_CONFIG` secret — it
-overrides the bundled file:
+Set provider endpoints and aliases with JSON blocks. This example sends `smart` requests to an
+OpenAI-compatible endpoint and all other requests to OpenAI:
 
-```sh
-pnpm --filter omni-model-cloudflare exec wrangler secret put OMNI_CONFIG < my-omni.yaml
+```text
+OMNI_PROVIDERS_JSON={"openai":{"type":"openai","apiKey":"${OPENAI_API_KEY}"},"fast":{"type":"openai-compatible","baseUrl":"https://api.groq.com/openai/v1","apiKey":"${GROQ_API_KEY}"}}
+OMNI_ROUTING_JSON={"routes":[{"name":"smart","when":"request.model == \"smart\"","provider":"fast","model":"llama-3.3-70b-versatile"}],"defaultProvider":"openai"}
 ```
 
-## Updating
-
-Pull upstream changes into your fork, then `pnpm build` and `pnpm run deploy` again. Provider key
-rotation is a `wrangler secret put`; config-only changes can go through the `OMNI_CONFIG` secret
-with no rebuild.
-
-<Note>
-A live [end-to-end suite](https://github.com/tiepvuvan/omni-model/tree/main/e2e) runs the **real
-worker in `workerd`** via `wrangler dev` against an upstream model — asserting the runtime boots,
-outbound `fetch` reaches the provider, **SSE streaming** survives workerd, and the **Durable
-Object** rate limiter counts across requests. It's opt-in (`OPENROUTER_API_KEY=... pnpm test:e2e`),
-so the edge path stays verified, not just assumed.
-</Note>
-
-<CardGroup cols={2}>
-<Card title="Configuration reference" icon="gear" href="/reference/configuration">
-Every YAML block: storage, security, providers, routing.
-</Card>
-<Card title="Model routing" icon="route" href="/model-routing/routing">
-CEL rules for choosing an upstream per request.
-</Card>
-</CardGroup>
+Store `OPENAI_API_KEY` and `GROQ_API_KEY` as Worker secrets. See the
+[configuration reference](/reference/configuration) for all provider, routing, security, and
+rate-limit fields.

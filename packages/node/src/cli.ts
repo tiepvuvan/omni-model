@@ -8,13 +8,12 @@ const USAGE = `omni-model — self-hosted OpenAI-compatible AI proxy
 Usage: omni-model [options]
 
 Options:
-  -c, --config <path>  Path to the YAML configuration file
   -p, --port <n>       Port to listen on (default: $PORT or 8787)
   -h, --help           Show this help and exit
 
-Configuration is resolved from, in order: --config, the OMNI_CONFIG
-environment variable (inline YAML), the OMNI_CONFIG_PATH environment
-variable (a file path), or ./omni.yaml.`;
+Configuration is read entirely from environment variables. Use OMNI_CONFIG_JSON
+for a complete JSON document, or use OMNI_PROVIDERS_JSON, OMNI_ROUTING_JSON,
+and OMNI__... paths for granular configuration.`;
 
 function parsePort(raw: string): number {
   const port = Number(raw);
@@ -28,7 +27,6 @@ async function main(): Promise<void> {
   const { values } = parseArgs({
     args: process.argv.slice(2),
     options: {
-      config: { type: "string", short: "c" },
       port: { type: "string", short: "p" },
       help: { type: "boolean", short: "h" },
     },
@@ -40,12 +38,8 @@ async function main(): Promise<void> {
   }
 
   const port = values.port === undefined ? undefined : parsePort(values.port);
-  const { yaml, source } = await resolveConfigSource({
-    cliPath: values.config,
-    env: process.env,
-    cwd: process.cwd(),
-  });
-  const server = await startServer({ configYaml: yaml, env: process.env, port });
+  const { config, source } = resolveConfigSource({ env: process.env });
+  const server = await startServer({ config, env: process.env, port });
   console.log(
     `omni-model listening on http://${server.hostname}:${server.port} (config: ${source})`,
   );

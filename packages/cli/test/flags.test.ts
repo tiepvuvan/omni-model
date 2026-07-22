@@ -2,10 +2,10 @@ import {
   createDefaultRegistry,
   createOmniApp,
   MemoryStorageAdapter,
-  parseConfig,
+  parseEnvironmentConfig,
 } from "@omni-model/core";
 import { describe, expect, it } from "vitest";
-import { toYaml } from "../src/config.js";
+import { configEnvironment } from "../src/config.js";
 import { answersFromFlags, FlagError, hasFlags } from "../src/flags.js";
 
 /**
@@ -115,15 +115,15 @@ describe("non-interactive flags", () => {
     ).toThrowError(/--base-url must be an http\(s\) URL/);
   });
 
-  it("omits identity values so the config emits ${VAR} references instead", () => {
+  it("omits identity values so the config emits environment references instead", () => {
     const withId = answersFromFlags({
       target: "docker",
       auth: "firebase-auth",
       firebaseProjectId: "my-project",
     });
-    expect(toYaml(withId)).toContain("projectId: my-project");
+    expect(JSON.stringify(configEnvironment(withId))).toContain("my-project");
     const withoutId = answersFromFlags({ target: "docker", auth: "firebase-auth" });
-    expect(toYaml(withoutId)).toContain("${FIREBASE_PROJECT_ID}");
+    expect(JSON.stringify(configEnvironment(withoutId))).toContain("$" + "{FIREBASE_PROJECT_ID}");
   });
 
   it("produces a config that parses AND builds a real app", async () => {
@@ -133,7 +133,7 @@ describe("non-interactive flags", () => {
       requestsPerMinute: "30",
       tokensPerDay: "1000",
     });
-    const config = parseConfig(toYaml(a), TEST_ENV);
+    const config = parseEnvironmentConfig({ ...TEST_ENV, ...configEnvironment(a) });
     await expect(
       createOmniApp({
         config,

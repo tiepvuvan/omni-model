@@ -17,7 +17,7 @@ import { authHeaders } from "./support/auth.js";
  */
 const KEY = process.env.OPENROUTER_API_KEY;
 const MODEL = process.env.OMNI_E2E_MODEL ?? "openai/gpt-4o-mini";
-const configYaml = readFileSync(fileURLToPath(new URL("./omni.e2e.yaml", import.meta.url)), "utf8");
+const configJson = readFileSync(fileURLToPath(new URL("./omni.e2e.json", import.meta.url)), "utf8");
 
 interface ChatMessage {
   role: string;
@@ -31,7 +31,7 @@ describe.skipIf(!KEY)("E2E: omni-model proxy → OpenRouter", () => {
 
   beforeAll(async () => {
     server = await startServer({
-      configYaml,
+      config: JSON.parse(configJson) as Record<string, unknown>,
       env: process.env,
       port: 0,
       hostname: "127.0.0.1",

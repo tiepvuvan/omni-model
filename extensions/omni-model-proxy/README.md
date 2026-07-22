@@ -35,14 +35,14 @@ app  ──httpsCallable──▶  ext-<id>-chat / -embeddings  ──▶  OpenA
 | `REQUIRE_APP_CHECK` | select | `true` | Require a valid App Check token. |
 | `REQUIRE_AUTH` | select | `true` | Require a signed-in Firebase user. |
 | `FIRESTORE_COLLECTION` | string | `omni_ratelimits` | Firestore collection for rate-limit counters. |
-| `ADVANCED_CONFIG_YAML` | string | — | Full `omni.yaml` override (custom routing / extra OpenAI-compatible providers). When set, it supersedes all provider/rate-limit/storage params. |
+| `ADVANCED_CONFIG_JSON` | string | — | Full JSON configuration override (custom routing / extra OpenAI-compatible providers). When set, it supersedes all provider/rate-limit/storage params. |
 
 > Integer and boolean params are strings/selects because the Firebase Extensions param
 > system only supports `string`, `select`, `multiSelect`, `secret`, and `selectresource`.
 
 ### Advanced configuration
 
-Set `ADVANCED_CONFIG_YAML` to a complete omni-model configuration to unlock CEL-based
+Set `ADVANCED_CONFIG_JSON` to a complete JSON omni-model configuration to unlock CEL-based
 routing, tiered rate limits, or extra OpenAI-compatible upstreams. It supports `${ENV}`
 interpolation against the function environment (so you can reference the secret params).
 See the [configuration reference](https://github.com/tiepvuvan/omni-model/blob/main/docs/configuration.md).
@@ -131,7 +131,7 @@ provides them.
 ## How it works
 
 - `functions/src/config.ts` turns the extension params into a validated omni-model
-  `OmniConfig` (or parses `ADVANCED_CONFIG_YAML` directly).
+  `OmniConfig` (or parses `ADVANCED_CONFIG_JSON` directly).
 - `functions/src/index.ts` initializes the Admin SDK, lazily builds the callables via
   `@omni-model/firebase`'s `createOmniCallables`, and exports `chat` and `embeddings`
   as `onCall` handlers, translating adapter `CallableError`s into `HttpsError`s.

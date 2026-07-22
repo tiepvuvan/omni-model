@@ -1,10 +1,11 @@
 // omni-model — forkless Cloudflare deploy.
 //
-// Download this file and `worker.js` from a release, drop your config in
-// `omni.yaml` next to them, then:
+// Download this file and `worker.js` from a release, then deploy with your
+// configuration variables and provider secrets:
 //
-//   wrangler deploy --var OMNI_CONFIG:"$(cat omni.yaml)"
-//   wrangler secret put OPENAI_API_KEY        # any ${...} your config references
+//   wrangler deploy --var OMNI__STORAGE__TYPE:durable-object \
+//     --var OMNI__SECURITY__PROVIDERS__0__TYPE:firebase-app-check
+//   wrangler secret put OPENAI_API_KEY
 //
 // No fork, no clone, no build — `worker.js` is a prebuilt, self-contained
 // script. Updating is a re-download + redeploy.

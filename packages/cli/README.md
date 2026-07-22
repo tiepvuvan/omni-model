@@ -8,7 +8,7 @@ npx omni-model deploy
 ```
 
 The wizard asks where to deploy, where rate-limit counters should live, how clients authenticate and
-what the limits are; writes an `omni.yaml`; and ships it.
+what the limits are; produces environment variables; and ships them with the deployment.
 
 ```
 ◆  Where do you want to deploy?
@@ -43,7 +43,7 @@ Add `--dry-run` to print the deploy command instead of running it.
 Two deliberate behaviours:
 
 - **`--auth` is required.** There is no default, because defaulting to "no auth" would silently
-  publish an open proxy anyone can spend your credits on. Say `--auth none` if that's what you want.
+  publish an open proxy anyone can spend your credits on.
 - **It never prompts without a TTY.** Piping stdin (as CI does) and omitting `--target` fails with
   the flags you need, rather than hanging forever waiting on a prompt.
 
@@ -59,7 +59,7 @@ Exit codes: `0` success, `2` a flag problem (message names the valid values), `1
 | `--auth` | *required* — comma-separated verifiers, or `none` |
 | `--firebase-project-id` · `--firebase-project-number` · `--apple-team-id` · `--apple-bundle-id` | omitted → the config emits a `${VAR}` reference to read at runtime |
 | `--requests-per-minute` · `--tokens-per-day` | `60` · `200000` (`0` disables) |
-| `-c, --config` · `--name` · `-y, --yes` · `--dry-run` | `omni.yaml` · `omni-model` · off · off |
+| `--name` · `-y, --yes` · `--dry-run` | `omni-model` · off · off |
 
 Invalid combinations are refused up front — `--target cloudflare --storage firestore` tells you
 Cloudflare can't run Firestore instead of shipping a config that dies on the first request.
@@ -70,40 +70,38 @@ Cloudflare can't run Firestore instead of shipping a config that dies on the fir
 | --- | --- |
 | **Cloudflare Workers** | Downloads the **prebuilt worker** from a release and `wrangler deploy`s it — no fork, no clone, no build. |
 | **Docker** | Runs the published `ghcr.io` image locally. |
-| **Cloud Run · Fly.io · Render** | Generates the config and hands you the exact commands. |
+| **Cloud Run · Fly.io · Render** | Generates environment configuration and hands you the exact commands. |
 
 ## Your keys stay yours
 
-The CLI **never writes a secret into your config.** Provider keys and the Apple `.p8` are emitted as
-`${ENV}` references that the proxy resolves at startup, and the CLI tells you which ones to set:
+The CLI **never writes a secret into the generated configuration.** Provider keys and the Apple `.p8`
+are referenced with `${ENV}`, which the proxy resolves at startup, and the CLI tells you which ones
+to set:
 
-```yaml
-providers:
-  openai:
-    type: openai
-    apiKey: ${OPENAI_API_KEY}   # set with: wrangler secret put OPENAI_API_KEY
+```sh
+OMNI_PROVIDERS_JSON='{"openai":{"type":"openai","apiKey":"${OPENAI_API_KEY}"}}'
+# set the actual key with: wrangler secret put OPENAI_API_KEY
 ```
 
-So the generated `omni.yaml` is safe to commit, paste in an issue, or hand to a colleague.
+The emitted `OMNI_*_JSON` values are safe to commit, paste in an issue, or hand to a colleague.
 
 ## Commands
 
 ```sh
 npx omni-model deploy          # configure + deploy (default)
-npx omni-model init            # write omni.yaml and stop
+npx omni-model init            # print environment variables and stop
 npx omni-model deploy --yes    # accept defaults, skip confirmations
-npx omni-model deploy -c my.yaml
 ```
 
 Nothing is deployed without showing you the command first.
 
 ## Test it locally
 
-The wizard itself deploys nothing — run it and inspect the config it writes:
+The wizard itself deploys nothing — run it and inspect the environment variables it prints:
 
 ```sh
 pnpm build
-node packages/cli/dist/index.js init        # wizard → writes omni.yaml, stops
+node packages/cli/dist/index.js init        # wizard → prints OMNI_* variables, stops
 ```
 
 `--dry-run` walks the whole deploy path and prints the command instead of running it:

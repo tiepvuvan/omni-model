@@ -1,6 +1,6 @@
 {
   "name": "omni-model",
-  "description": "Self-hosted OpenAI-compatible AI proxy with YAML-configured auth, rate limits and model routing.",
+  "description": "Self-hosted OpenAI-compatible AI proxy with environment-configured auth, rate limits and model routing.",
   "repository": "https://github.com/tiepvuvan/omni-model",
   "options": {
     "allow-unauthenticated": true,
@@ -19,11 +19,101 @@
       "required": true,
       "order": 20
     },
-    "OMNI_CONFIG": {
-      "description": "Starter YAML: edit it only when changing providers, authentication, limits, or storage",
-      "value": "version: 1\nserver:\n  logLevel: info\nstorage:\n  type: memory\nsecurity:\n  providers:\n    - type: jwt\n      secret: ${OMNI_JWT_SECRET}\n      algorithms: [HS256]\nproviders:\n  openai:\n    type: openai\n    apiKey: ${OPENAI_API_KEY}\nrateLimits:\n  - name: per-user-requests\n    key: user\n    requests: { limit: 60, window: 1m }\n  - name: per-user-daily-tokens\n    key: user\n    tokens: { limit: 200000, window: 1d }\nrouting:\n  defaultProvider: openai\n",
+    "OMNI__SERVER__LOG_LEVEL": {
+      "description": "Log level for omni-model",
+      "value": "info",
       "required": false,
       "order": 30
+    },
+    "OMNI__STORAGE__TYPE": {
+      "description": "Rate-limit storage type; memory is for the one-instance starter",
+      "value": "memory",
+      "required": false,
+      "order": 40
+    },
+    "OMNI__SECURITY__PROVIDERS__0__TYPE": {
+      "description": "Starter authentication verifier type",
+      "value": "jwt",
+      "required": false,
+      "order": 50
+    },
+    "OMNI__SECURITY__PROVIDERS__0__SECRET": {
+      "description": "JWT verifier secret reference",
+      "value": "${OMNI_JWT_SECRET}",
+      "required": false,
+      "order": 60
+    },
+    "OMNI__SECURITY__PROVIDERS__0__ALGORITHMS": {
+      "description": "Allowed JWT algorithms (JSON array)",
+      "value": "[\"HS256\"]",
+      "required": false,
+      "order": 70
+    },
+    "OMNI__PROVIDERS__OPENAI__TYPE": {
+      "description": "Upstream provider type",
+      "value": "openai",
+      "required": false,
+      "order": 80
+    },
+    "OMNI__PROVIDERS__OPENAI__API_KEY": {
+      "description": "OpenAI provider API key reference",
+      "value": "${OPENAI_API_KEY}",
+      "required": false,
+      "order": 90
+    },
+    "OMNI__RATE_LIMITS__0__NAME": {
+      "description": "Request rate-limit rule name",
+      "value": "per-user-requests",
+      "required": false,
+      "order": 100
+    },
+    "OMNI__RATE_LIMITS__0__KEY": {
+      "description": "Identity key for the request rate limit",
+      "value": "user",
+      "required": false,
+      "order": 110
+    },
+    "OMNI__RATE_LIMITS__0__REQUESTS__LIMIT": {
+      "description": "Requests allowed in each window",
+      "value": "60",
+      "required": false,
+      "order": 120
+    },
+    "OMNI__RATE_LIMITS__0__REQUESTS__WINDOW": {
+      "description": "Request rate-limit window",
+      "value": "1m",
+      "required": false,
+      "order": 130
+    },
+    "OMNI__RATE_LIMITS__1__NAME": {
+      "description": "Token-budget rate-limit rule name",
+      "value": "per-user-daily-tokens",
+      "required": false,
+      "order": 140
+    },
+    "OMNI__RATE_LIMITS__1__KEY": {
+      "description": "Identity key for the token budget",
+      "value": "user",
+      "required": false,
+      "order": 150
+    },
+    "OMNI__RATE_LIMITS__1__TOKENS__LIMIT": {
+      "description": "Tokens allowed in each window",
+      "value": "200000",
+      "required": false,
+      "order": 160
+    },
+    "OMNI__RATE_LIMITS__1__TOKENS__WINDOW": {
+      "description": "Token-budget rate-limit window",
+      "value": "1d",
+      "required": false,
+      "order": 170
+    },
+    "OMNI__ROUTING__DEFAULT_PROVIDER": {
+      "description": "Provider ID used when no routing rule matches",
+      "value": "openai",
+      "required": false,
+      "order": 180
     }
   }
 }

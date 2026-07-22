@@ -8,9 +8,7 @@
 // keeps wrangler's bundler from having to resolve a workspace package from
 // e2e/, which isn't a pnpm workspace member. Requires a prior `pnpm build`.
 import { createWorker, OmniStorageDurableObject } from "../../packages/cloudflare/dist/index.js";
-import configYaml from "./omni.e2e.worker.yaml";
-
-export default createWorker({ configYaml });
+export default createWorker();
 
 // The DO class must be exported from the entry so the runtime can bind OMNI_DO.
 export { OmniStorageDurableObject };

@@ -1,10 +1,8 @@
 # omni-model — container image for Fly.io, Cloud Run, AWS App Runner, or plain Docker.
 #
-# Config resolution at runtime (first match wins):
-#   1. OMNI_CONFIG        — inline YAML in an env var
-#   2. OMNI_CONFIG_PATH   — path to a YAML file (mount or bake one in)
-#   3. /app/omni.yaml     — an omni.yaml committed at the repo root (one-click deploys)
-# With none of these the server exits with a message explaining the options.
+# Configuration is read entirely from environment variables. Use
+# OMNI_CONFIG_JSON for a full JSON document, named JSON blocks such as
+# OMNI_PROVIDERS_JSON and OMNI_ROUTING_JSON, or granular OMNI__... paths.
 
 # --- Stage 1: build every package -------------------------------------------
 FROM node:22-alpine AS build
@@ -35,7 +33,7 @@ FROM node:22-alpine
 # OCI labels: link the published GHCR package to the repo and describe it.
 # (docker/metadata-action overrides these with commit-accurate values in CI.)
 LABEL org.opencontainers.image.source="https://github.com/tiepvuvan/omni-model" \
-      org.opencontainers.image.description="Self-hosted OpenAI-compatible AI proxy with YAML-configured auth, rate limits and model routing." \
+      org.opencontainers.image.description="Self-hosted OpenAI-compatible AI proxy with environment-configured auth, rate limits and model routing." \
       org.opencontainers.image.licenses="MIT"
 ENV NODE_ENV=production
 WORKDIR /app
@@ -46,13 +44,6 @@ COPY --from=build /repo/packages/storage-postgres/dist /app/packages/storage-pos
 COPY --from=build /repo/packages/storage-firestore/dist /app/packages/storage-firestore/dist
 COPY --from=build /repo/packages/cloudflare/dist /app/packages/cloudflare/dist
 COPY --from=build /repo/packages/node/dist /app/packages/node/dist
-# A root-level omni.yaml (if the deployer committed one) becomes the default config.
-# `package.json` is always present, so this COPY always has a source — that keeps
-# the classic Docker builder (e.g. Cloud Build without BuildKit) from erroring
-# with "no source files were specified" when no root omni.yaml exists. The
-# omni.yaml* glob stays optional; /app/package.json is simply rewritten with the
-# identical file it already has.
-COPY package.json omni.yaml* /app/
 EXPOSE 8787
 USER node
 CMD ["node", "packages/node/dist/cli.js"]

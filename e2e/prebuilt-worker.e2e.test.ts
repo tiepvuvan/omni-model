@@ -17,7 +17,7 @@ import { authHeaders } from "./support/auth.js";
  *
  * Two regressions this pins:
  *  1. **The artifact must stay a single self-contained file.** Re-adding a
- *     `.yaml` import to the prebuilt entry would make wrangler emit a separate
+ *     configuration-file import to the prebuilt entry would make wrangler emit a separate
  *     hashed sidecar, silently turning the release into two coupled files.
  *  2. **The Durable Object binding must actually work.** Rate limiting is
  *     fail-open (CLAUDE.md rule 7), so a dead OMNI_DO would let every request
@@ -30,27 +30,25 @@ const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 const PORT = Number(process.env.OMNI_E2E_PREBUILT_PORT ?? 8830);
 const BASE = `http://127.0.0.1:${PORT}`;
 
-/** The whole configuration a forkless deployer supplies — one var, no file. */
-const OMNI_CONFIG = `version: 1
-storage:
-  type: durable-object
-  binding: OMNI_DO
-security:
-  providers:
-    - type: jwt
-      secret: omni-e2e-shared-secret-not-a-real-credential
-      algorithms: [HS256]
-rateLimits:
-  - name: per-ip
-    key: ip
-    requests: { limit: 1, window: 1m }
-providers:
-  stub:
-    type: openai-compatible
-    baseUrl: http://127.0.0.1:9
-routing:
-  defaultProvider: stub
-`;
+/** The whole configuration a forkless deployer supplies — one env var, no file. */
+const OMNI_CONFIG_JSON = JSON.stringify({
+  version: 1,
+  storage: { type: "durable-object", binding: "OMNI_DO" },
+  security: {
+    providers: [
+      {
+        type: "jwt",
+        secret: "omni-e2e-shared-secret-not-a-real-credential",
+        algorithms: ["HS256"],
+      },
+    ],
+  },
+  rateLimits: [{ name: "per-ip", key: "ip", requests: { limit: 1, window: "1m" } }],
+  providers: {
+    stub: { type: "openai-compatible", baseUrl: "http://127.0.0.1:9" },
+  },
+  routing: { defaultProvider: "stub" },
+});
 
 function wranglerBin(): string {
   const anchor = join(repoRoot, "apps/cloudflare/package.json");
@@ -94,7 +92,7 @@ describe("E2E: prebuilt worker artifact (forkless deploy)", () => {
       join(userDir, "wrangler.jsonc"),
     );
 
-    // 3. Serve it — no build, no deps, config from the OMNI_CONFIG var only.
+    // 3. Serve it — no build, no deps, config from the OMNI_CONFIG_JSON var only.
     child = spawn(
       process.execPath,
       [
@@ -108,7 +106,7 @@ describe("E2E: prebuilt worker artifact (forkless deploy)", () => {
         "--log-level",
         "warn",
         "--var",
-        `OMNI_CONFIG:${OMNI_CONFIG}`,
+        `OMNI_CONFIG_JSON:${OMNI_CONFIG_JSON}`,
       ],
       {
         cwd: userDir,
@@ -147,19 +145,18 @@ describe("E2E: prebuilt worker artifact (forkless deploy)", () => {
     }
   });
 
-  it("emits exactly one self-contained .js (no yaml sidecar, no imports)", () => {
+  it("emits exactly one self-contained .js (no configuration sidecar, no imports)", () => {
     expect(emitted, `emitted: ${emitted.join(", ")}`).toHaveLength(1);
-    // A re-added `import ... from "../omni.yaml"` would show up as a top-level
+    // A re-added configuration-file import would show up as a top-level
     // import and a separate emitted file — the release would silently break.
     expect(bundle.match(/^\s*import\s+.*?from\s+["'][^"']+["']/m)).toBeNull();
     expect(bundle.match(/\brequire\(["'][^"']+["']\)/)).toBeNull();
     // Node builtins would mean it can't run on workerd. Match real module
-    // specifiers only — a bare "node:" substring also hits the YAML library's
-    // `node: null` properties.
+    // specifiers only.
     expect(bundle.match(/["']node:[a-z_/]+["']/)).toBeNull();
   });
 
-  it("serves from the shipped template with config from OMNI_CONFIG alone", async () => {
+  it("serves from the shipped template with config from OMNI_CONFIG_JSON alone", async () => {
     const res = await fetch(`${BASE}/healthz`);
     expect(res.status).toBe(200);
   });

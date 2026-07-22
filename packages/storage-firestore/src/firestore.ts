@@ -157,7 +157,8 @@ const firestoreOptionsSchema = z.strictObject({
  * Storage factory for `storage: { type: firestore, collection? }`.
  *
  * The Firestore instance is supplied by the embedder (it carries credentials
- * and project config), so it is passed here rather than built from YAML. The
+ * and project config), so the Node runtime passes it here rather than
+ * constructing it from declarative configuration. The
  * adapter's counters are atomic via `runTransaction` with an idempotent,
  * retry-safe callback; note that Firestore TTL is cleanup-only (correctness
  * comes from the stored `expiresAt`) and that a document sustains only

@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "server": { "logLevel": "warn" },
+  "storage": { "type": "memory" },
+  "security": {
+    "providers": [
+      {
+        "type": "jwt",
+        "secret": "omni-e2e-shared-secret-not-a-real-credential",
+        "algorithms": ["HS256"]
+      }
+    ]
+  },
+  "rateLimits": [
+    { "name": "per-ip-requests", "key": "ip", "requests": { "limit": 120, "window": "1m" } }
+  ],
+  "providers": {
+    "openrouter": {
+      "type": "openai-compatible",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "apiKey": "${OPENROUTER_API_KEY}",
+      "headers": {
+        "HTTP-Referer": "https://github.com/tiepvuvan/omni-model",
+        "X-Title": "omni-model e2e"
+      }
+    }
+  },
+  "routing": { "defaultProvider": "openrouter" }
+}

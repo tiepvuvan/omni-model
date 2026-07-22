@@ -5,9 +5,10 @@ description: A self-hosted, OpenAI-compatible AI proxy for your mobile and web a
 
 omni-model is an **OpenAI-compatible AI proxy you run yourself**. Your provider API keys stay on
 your infrastructure — never inside an app binary. Clients authenticate with what they already have
-(Firebase App Check, Apple App Attest / DeviceCheck, Firebase Auth, Supabase, or any JWT), and one
-YAML file configures rate limits (request windows **and** token budgets) plus CEL-expression model
-routing across OpenAI, Anthropic, Google Gemini, and any OpenAI-compatible endpoint.
+(Firebase App Check, Apple App Attest / DeviceCheck, Firebase Auth, Supabase, or any JWT).
+Environment variables configure rate limits (request windows **and** token budgets) plus
+CEL-expression model routing across OpenAI, Anthropic, Google Gemini, and any OpenAI-compatible
+endpoint.
 
 ## Two ways to run it
 
@@ -73,6 +74,6 @@ streaming included — so your client keeps speaking one protocol everywhere.
     Get a working proxy and make your first request in a few minutes.
   </Card>
   <Card title="Configuration reference" icon="book" href="/reference/configuration">
-    Every option in the one YAML file, with defaults and constraints.
+    Every environment variable, JSON block, provider, and routing option.
   </Card>
 </CardGroup>

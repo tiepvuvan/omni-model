@@ -8,8 +8,8 @@
 // use `apps/cloudflare/prebuilt/wrangler.jsonc` instead (the template they
 // download alongside it).
 //
-// Deliberately no `rules` block: the prebuilt entry imports no .yaml, which is
-// what keeps the artifact a single self-contained file.
+// Deliberately no `rules` block: the prebuilt entry imports no configuration
+// file, which keeps the artifact a single self-contained file.
 {
   "$schema": "../../node_modules/wrangler/config-schema.json",
   "name": "omni-model",

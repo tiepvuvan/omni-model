@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "server": { "logLevel": "warn" },
+  "storage": { "type": "firestore", "collection": "omni_ratelimits_e2e" },
+  "security": {
+    "providers": [
+      {
+        "type": "jwt",
+        "secret": "omni-e2e-shared-secret-not-a-real-credential",
+        "algorithms": ["HS256"]
+      }
+    ]
+  },
+  "rateLimits": [
+    { "name": "per-ip-requests", "key": "ip", "requests": { "limit": 3, "window": "1m" } }
+  ],
+  "providers": {
+    "openrouter": {
+      "type": "openai-compatible",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "apiKey": "${OPENROUTER_API_KEY}"
+    }
+  },
+  "routing": { "defaultProvider": "openrouter" }
+}

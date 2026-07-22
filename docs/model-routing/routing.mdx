@@ -51,23 +51,18 @@ per rule as a config smell, so watch your logs if a route silently never fires.
 
 ## A full routing block
 
-```yaml
-routing:
-  routes:
-    - name: smart-for-pro
-      when: 'request.model == "smart" && has(user.claims.tier) && user.claims.tier == "pro"'
-      provider: anthropic
-      model: claude-sonnet-4-5
-    - name: smart-default
-      when: 'request.model == "smart"'
-      provider: openai
-      model: gpt-4o-mini
-  modelRules:
-    - match: 'request.model.startsWith("claude-")'
-      provider: anthropic
-    - match: 'request.model.startsWith("gemini-")'
-      provider: google
-  defaultProvider: openai
+```sh
+export OMNI_ROUTING_JSON='{
+  "routes":[
+    {"name":"smart-for-pro","when":"request.model == \"smart\" && has(user.claims.tier) && user.claims.tier == \"pro\"","provider":"anthropic","model":"claude-sonnet-4-5"},
+    {"name":"smart-default","when":"request.model == \"smart\"","provider":"openai","model":"gpt-4o-mini"}
+  ],
+  "modelRules":[
+    {"match":"request.model.startsWith(\"claude-\")","provider":"anthropic"},
+    {"match":"request.model.startsWith(\"gemini-\")","provider":"google"}
+  ],
+  "defaultProvider":"openai"
+}'
 ```
 
 This config says: a Pro user asking for `"smart"` gets Anthropic's Sonnet; everyone else asking
@@ -82,17 +77,13 @@ or Google under its own name; anything else falls through to OpenAI.
 different users. The client always sends `"model": "smart"`; the tier lives in the auth token's
 claims.
 
-```yaml
-routing:
-  routes:
-    - name: smart-pro
-      when: 'request.model == "smart" && has(user.claims.tier) && user.claims.tier == "pro"'
-      provider: anthropic
-      model: claude-sonnet-4-5
-    - name: smart-free
-      when: 'request.model == "smart"'
-      provider: openai
-      model: gpt-4o-mini
+```sh
+export OMNI_ROUTING_JSON='{
+  "routes":[
+    {"name":"smart-pro","when":"request.model == \"smart\" && has(user.claims.tier) && user.claims.tier == \"pro\"","provider":"anthropic","model":"claude-sonnet-4-5"},
+    {"name":"smart-free","when":"request.model == \"smart\"","provider":"openai","model":"gpt-4o-mini"}
+  ]
+}'
 ```
 
 Order matters: the more specific `smart-pro` route comes first, because the first `true` wins. The
@@ -104,14 +95,14 @@ would make the expression throw, and the route would silently be skipped.
 `modelRules` map whole families of model names to the provider that owns them, keeping the client's
 exact model name. Pair this with a `defaultProvider` so unmatched names still resolve.
 
-```yaml
-routing:
-  modelRules:
-    - match: 'request.model.startsWith("claude-")'
-      provider: anthropic
-    - match: 'request.model.startsWith("gemini-")'
-      provider: google
-  defaultProvider: openai
+```sh
+export OMNI_ROUTING_JSON='{
+  "modelRules":[
+    {"match":"request.model.startsWith(\"claude-\")","provider":"anthropic"},
+    {"match":"request.model.startsWith(\"gemini-\")","provider":"google"}
+  ],
+  "defaultProvider":"openai"
+}'
 ```
 
 Here `claude-opus-4-1` goes to the `anthropic` provider under that exact name, `gemini-2.0-flash`

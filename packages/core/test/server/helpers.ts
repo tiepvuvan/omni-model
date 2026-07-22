@@ -1,5 +1,6 @@
+import { parse as parseYaml } from "yaml";
 import type { AuthResult, AuthVerifierFactory, Identity } from "../../src/auth/types.js";
-import { parseConfig } from "../../src/config/load.js";
+import { parseConfigObject } from "../../src/config/load.js";
 import { silentLogger } from "../../src/logging.js";
 import type {
   ChatCompletion,
@@ -283,7 +284,7 @@ export interface TestAppOptions {
 }
 
 /**
- * Build an app from YAML config with the "fake" provider and "fake-auth"
+ * Build an app from a legacy test fixture with the "fake" provider and "fake-auth"
  * verifier registered, a banned fetch, a fixed clock and a waitUntil
  * collector for asserting post-response work.
  */
@@ -294,7 +295,7 @@ export async function createTestApp(options: TestAppOptions) {
   registry.auth.set("fake-auth", createFakeAuthFactory());
   registry.auth.set("test-authenticated", createAlwaysAuthenticatedFactory());
   const collector = createWaitUntilCollector();
-  const config = parseConfig(options.yaml, options.env ?? {});
+  const config = parseConfigObject(parseYaml(options.yaml), options.env ?? {});
   if (config.security.providers.length === 0 && (options.injectVerifier ?? true)) {
     config.security.providers = [{ type: "test-authenticated" }];
   }

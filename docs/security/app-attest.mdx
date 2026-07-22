@@ -31,14 +31,16 @@ attestation certificate chain to Apple's App Attestation Root CA, the nonce
 binding, the key id, the App ID hash, the environment AAGUID, and the credential
 id, then stores the device's public key.
 
-```yaml
-security:
-  mode: any
-  providers:
-    - type: apple-app-attest
-      teamId: ABCDE12345
-      bundleId: com.example.app
-      environment: production
+```sh
+export OMNI_SECURITY_JSON='{
+  "mode":"any",
+  "providers":[{
+    "type":"apple-app-attest",
+    "teamId":"ABCDE12345",
+    "bundleId":"com.example.app",
+    "environment":"production"
+  }]
+}'
 ```
 
 <ParamField path="teamId" type="string" required>
@@ -146,13 +148,15 @@ Verifies Apple DeviceCheck device tokens by calling Apple's
 DeviceCheck `.p8` key. Successful validations are cached in storage for
 `cacheTtl` so hot devices don't hit Apple on every request.
 
-```yaml
-security:
-  providers:
-    - type: apple-device-check
-      teamId: ABCDE12345
-      keyId: FGHIJ67890
-      privateKey: ${APPLE_DEVICECHECK_KEY}
+```sh
+export OMNI_SECURITY_PROVIDERS_JSON='[
+  {
+    "type":"apple-device-check",
+    "teamId":"ABCDE12345",
+    "keyId":"FGHIJ67890",
+    "privateKey":"${APPLE_DEVICECHECK_KEY}"
+  }
+]'
 ```
 
 <ParamField path="teamId" type="string" required>
@@ -203,6 +207,6 @@ so the raw token never leaks into logs or error bodies.
     Cross-platform app attestation.
   </Card>
   <Card title="Configuration reference" icon="gear" href="/reference/configuration">
-    The full YAML surface.
+    The full environment-variable surface.
   </Card>
 </CardGroup>

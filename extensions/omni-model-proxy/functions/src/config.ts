@@ -1,4 +1,4 @@
-import { type OmniConfig, omniConfigSchema, parseConfig } from "@omni-model/core";
+import { type OmniConfig, omniConfigSchema, parseConfigObject } from "@omni-model/core";
 
 /**
  * The three upstream providers this extension can wire up, keyed by the env var
@@ -40,17 +40,24 @@ function parseIntParam(name: string, raw: string | undefined, fallback: number):
  * Build the {@link OmniConfig} for this extension instance from its runtime
  * environment (the params are mounted as env vars named after their param id).
  *
- * If `ADVANCED_CONFIG_YAML` is provided, it is treated as a full `omni.yaml`
- * override and parsed as-is (with `${ENV}` interpolation against the same env).
+ * If `ADVANCED_CONFIG_JSON` is provided, it is treated as a full JSON
+ * configuration override (with `${ENV}` interpolation against the same env).
  * Otherwise a config is assembled from the individual params: one provider per
  * API key that is present, a Firestore-backed rate limiter, and per-user
  * request + daily-token budgets. Validation goes through `omniConfigSchema` so
  * a bad combination throws at startup.
  */
 export function buildOmniConfig(env: NodeJS.ProcessEnv): OmniConfig {
-  const advanced = env.ADVANCED_CONFIG_YAML?.trim();
+  const advanced = env.ADVANCED_CONFIG_JSON?.trim();
   if (advanced !== undefined && advanced !== "") {
-    return parseConfig(advanced, env);
+    let document: unknown;
+    try {
+      document = JSON.parse(advanced);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(`omni-model-proxy: ADVANCED_CONFIG_JSON must be valid JSON (${message})`);
+    }
+    return parseConfigObject(document, env);
   }
 
   const providers: Record<string, { type: string; apiKey: string }> = {};
@@ -63,7 +70,7 @@ export function buildOmniConfig(env: NodeJS.ProcessEnv): OmniConfig {
   if (Object.keys(providers).length === 0) {
     throw new Error(
       "omni-model-proxy: no provider API key configured — set at least one of " +
-        "OPENAI_API_KEY, ANTHROPIC_API_KEY or GEMINI_API_KEY (or provide ADVANCED_CONFIG_YAML).",
+        "OPENAI_API_KEY, ANTHROPIC_API_KEY or GEMINI_API_KEY (or provide ADVANCED_CONFIG_JSON).",
     );
   }
 

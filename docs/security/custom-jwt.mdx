@@ -26,15 +26,17 @@ Verifies arbitrary JWTs from any issuer against a JWKS endpoint, a shared secret
 (HS\*), or a pinned SPKI public key. Provide **exactly one** of `jwksUrl`,
 `secret`, or `publicKey`.
 
-```yaml
-security:
-  mode: any
-  providers:
-    - type: jwt
-      jwksUrl: https://auth.example.com/.well-known/jwks.json
-      issuer: https://auth.example.com
-      audience: omni-model
-      algorithms: ["RS256"]
+```sh
+export OMNI_SECURITY_JSON='{
+  "mode":"any",
+  "providers":[{
+    "type":"jwt",
+    "jwksUrl":"https://auth.example.com/.well-known/jwks.json",
+    "issuer":"https://auth.example.com",
+    "audience":"omni-model",
+    "algorithms":["RS256"]
+  }]
+}'
 ```
 
 <ParamField path="header" type="string" default="authorization">
@@ -84,11 +86,10 @@ Verifies Firebase Authentication ID tokens (RS256) against Google's
 secure-token JWKS. The Firebase uid (`sub`) becomes `user.id`. Clients send
 `Authorization: Bearer <ID token>`.
 
-```yaml
-security:
-  providers:
-    - type: firebase-auth
-      projectId: my-app-12345
+```sh
+export OMNI_SECURITY_PROVIDERS_JSON='[
+  {"type":"firebase-auth","projectId":"my-app-12345"}
+]'
 ```
 
 <ParamField path="projectId" type="string" required>
@@ -109,11 +110,10 @@ JWT secret (HS256) or against the project's JWKS for asymmetric signing keys.
 `sub` becomes `user.id`; Supabase claims like `role` and `app_metadata` are
 available under `user.claims`.
 
-```yaml
-security:
-  providers:
-    - type: supabase
-      url: https://abcdefgh.supabase.co
+```sh
+export OMNI_SECURITY_PROVIDERS_JSON='[
+  {"type":"supabase","url":"https://abcdefgh.supabase.co"}
+]'
 ```
 
 <ParamField path="url" type="URL">
@@ -186,14 +186,14 @@ Verifiers are consulted in config order. The first one that **accepts** wins;
 a verifier whose credential is absent is skipped. Use this to accept tokens
 from more than one issuer.
 
-```yaml
-security:
-  mode: any
-  providers:
-    - type: firebase-auth
-      projectId: my-app-12345
-    - type: supabase
-      url: https://abcdefgh.supabase.co
+```sh
+export OMNI_SECURITY_JSON='{
+  "mode":"any",
+  "providers":[
+    {"type":"firebase-auth","projectId":"my-app-12345"},
+    {"type":"supabase","url":"https://abcdefgh.supabase.co"}
+  ]
+}'
 ```
 </Tab>
 <Tab title="mode: all">
@@ -201,14 +201,14 @@ security:
 token *and* an app-attestation credential on the same request. Identities are
 merged; the first defined `user.id`/`device.id` in config order wins.
 
-```yaml
-security:
-  mode: all
-  providers:
-    - type: firebase-auth
-      projectId: my-app-12345
-    - type: firebase-app-check
-      projectNumber: "1234567890"
+```sh
+export OMNI_SECURITY_JSON='{
+  "mode":"all",
+  "providers":[
+    {"type":"firebase-auth","projectId":"my-app-12345"},
+    {"type":"firebase-app-check","projectNumber":"1234567890"}
+  ]
+}'
 ```
 </Tab>
 </Tabs>
@@ -216,11 +216,8 @@ security:
 `publicPaths` bypasses authentication for exact paths, or by prefix when the
 pattern ends with `*`:
 
-```yaml
-security:
-  publicPaths:
-    - /v1/models       # exact
-    - /v1/models*      # prefix
+```sh
+OMNI__SECURITY__PUBLIC_PATHS='["/v1/models","/v1/models*"]'
 ```
 
 <Note>
@@ -243,6 +240,6 @@ at startup.
     Route on `user.claims` with CEL expressions.
   </Card>
   <Card title="Configuration reference" icon="gear" href="/reference/configuration">
-    The full YAML surface.
+    The full environment-variable surface.
   </Card>
 </CardGroup>

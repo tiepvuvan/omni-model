@@ -23,8 +23,8 @@ import { type RunningTarget, startNodeTarget } from "./support/proxy-targets.js"
 const EMULATOR = process.env.FIRESTORE_EMULATOR_HOST;
 const READY = Boolean(EMULATOR);
 
-const configYaml = readFileSync(
-  fileURLToPath(new URL("./omni.firestore.e2e.yaml", import.meta.url)),
+const configJson = readFileSync(
+  fileURLToPath(new URL("./omni.firestore.e2e.json", import.meta.url)),
   "utf8",
 );
 
@@ -32,7 +32,7 @@ describe.skipIf(!READY)("E2E: Node + Firestore storage (emulator)", () => {
   let proxy: RunningTarget;
 
   beforeAll(async () => {
-    proxy = await startNodeTarget(configYaml, {
+    proxy = await startNodeTarget(configJson, {
       ...process.env,
       // firebase-admin needs a project id even against the emulator.
       GOOGLE_CLOUD_PROJECT: process.env.GOOGLE_CLOUD_PROJECT ?? "omni-e2e",

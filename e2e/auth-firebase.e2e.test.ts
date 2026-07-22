@@ -35,15 +35,15 @@ const MODEL = process.env.OMNI_E2E_MODEL ?? "openai/gpt-4o-mini";
 const READY = Boolean(OPENROUTER && API_KEY && PROJECT_ID && PROJECT_NUMBER);
 const APP_CHECK_READY = Boolean(READY && APP_ID && DEBUG_TOKEN);
 
-const nodeConfig = readFileSync(
-  fileURLToPath(new URL("./omni.auth.e2e.yaml", import.meta.url)),
+const nodeConfigJson = readFileSync(
+  fileURLToPath(new URL("./omni.auth.e2e.json", import.meta.url)),
   "utf8",
 );
 // Same config, but Durable Object storage for the worker.
-const workerConfig = nodeConfig.replace(
-  "storage:\n  type: memory",
-  "storage:\n  type: durable-object\n  binding: OMNI_DO",
-);
+const workerConfigJson = JSON.stringify({
+  ...(JSON.parse(nodeConfigJson) as Record<string, unknown>),
+  storage: { type: "durable-object", binding: "OMNI_DO" },
+});
 
 interface Target {
   name: string;
@@ -53,13 +53,13 @@ interface Target {
 const TARGETS: Target[] = [
   {
     name: "Node container",
-    start: () => startNodeTarget(nodeConfig, process.env),
+    start: () => startNodeTarget(nodeConfigJson, process.env),
   },
   {
     name: "Cloudflare Worker (workerd)",
     start: () =>
       startWorkerTarget({
-        omniConfig: workerConfig,
+        omniConfigJson: workerConfigJson,
         vars: {
           OPENROUTER_API_KEY: OPENROUTER ?? "",
           FIREBASE_PROJECT_ID: PROJECT_ID ?? "",

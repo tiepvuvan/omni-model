@@ -16,44 +16,29 @@ import type {
 import { DurableObjectStorageAdapter, OmniStorageDurableObject } from "../src/durable-object.js";
 import { createWorker, type WorkerEnv } from "../src/worker.js";
 
-const MEMORY_YAML = `
-version: 1
-security:
-  providers:
-    - type: test-authenticated
-storage:
-  type: memory
-providers:
-  openai:
-    type: openai
-    apiKey: \${OPENAI_API_KEY}
-routing:
-  defaultProvider: openai
-`;
+const OPENAI_API_KEY_REFERENCE = "$" + "{OPENAI_API_KEY}";
+
+const MEMORY_CONFIG = {
+  version: 1,
+  security: { providers: [{ type: "test-authenticated" }] },
+  storage: { type: "memory" },
+  providers: { openai: { type: "openai", apiKey: OPENAI_API_KEY_REFERENCE } },
+  routing: { defaultProvider: "openai" },
+};
 
 // 1h windows keep both chat calls inside one fixed window without an
 // injectable clock (createWorker uses the platform clock).
-const DO_YAML = `
-version: 1
-security:
-  providers:
-    - type: test-authenticated
-storage:
-  type: durable-object
-  binding: OMNI_DO
-rateLimits:
-  - name: burst
-    key: user
-    requests: { limit: 1, window: 1h }
-  - name: budget
-    key: user
-    tokens: { limit: 1000, window: 1h }
-providers:
-  fake:
-    type: fake
-routing:
-  defaultProvider: fake
-`;
+const DO_CONFIG = {
+  version: 1,
+  security: { providers: [{ type: "test-authenticated" }] },
+  storage: { type: "durable-object", binding: "OMNI_DO" },
+  rateLimits: [
+    { name: "burst", key: "user", requests: { limit: 1, window: "1h" } },
+    { name: "budget", key: "user", tokens: { limit: 1000, window: "1h" } },
+  ],
+  providers: { fake: { type: "fake" } },
+  routing: { defaultProvider: "fake" },
+};
 
 /**
  * A verifier is mandatory, so every fixture declares one. These tests exercise
@@ -78,26 +63,20 @@ const alwaysAuthenticated = {
 
 const FAKE_USAGE_TOTAL = 7;
 
+function configEnv(config: Record<string, unknown>): WorkerEnv {
+  return { OMNI_CONFIG_JSON: JSON.stringify(config) };
+}
+
 // durable-object storage + a token budget: lets the streaming test read back
 // the counter the post-response usage recording wrote.
-const STREAM_DO_YAML = `
-version: 1
-security:
-  providers:
-    - type: test-authenticated
-storage:
-  type: durable-object
-  binding: OMNI_DO
-rateLimits:
-  - name: budget
-    key: user
-    tokens: { limit: 1000, window: 1h }
-providers:
-  fake-stream:
-    type: fake-stream
-routing:
-  defaultProvider: fake-stream
-`;
+const STREAM_DO_CONFIG = {
+  version: 1,
+  security: { providers: [{ type: "test-authenticated" }] },
+  storage: { type: "durable-object", binding: "OMNI_DO" },
+  rateLimits: [{ name: "budget", key: "user", tokens: { limit: 1000, window: "1h" } }],
+  providers: { "fake-stream": { type: "fake-stream" } },
+  routing: { defaultProvider: "fake-stream" },
+};
 
 function fakeCompletion(model: string): ChatCompletion {
   return {
@@ -253,12 +232,12 @@ async function errorBody(response: Response): Promise<{ message: string; type: s
 }
 
 describe("createWorker", () => {
-  it("boots from the OMNI_CONFIG env var and serves /healthz", async () => {
+  it("boots from OMNI_CONFIG_JSON and serves /healthz", async () => {
     const registry = createDefaultRegistry();
     registry.auth.set("test-authenticated", alwaysAuthenticated);
     const worker = createWorker({ logger: silentLogger, registry });
     const env: WorkerEnv = {
-      OMNI_CONFIG: MEMORY_YAML,
+      ...configEnv(MEMORY_CONFIG),
       OPENAI_API_KEY: "sk-test",
       // Non-string bindings must be filtered out of the interpolation env.
       SOME_BINDING: { get: () => null },
@@ -268,24 +247,29 @@ describe("createWorker", () => {
     expect(await response.json()).toEqual({ status: "ok" });
   });
 
-  it("falls back to options.configYaml when OMNI_CONFIG is absent or blank", async () => {
+  it("boots entirely from OMNI__ environment variables", async () => {
     const registry = createDefaultRegistry();
     registry.auth.set("test-authenticated", alwaysAuthenticated);
-    const absent = createWorker({ configYaml: MEMORY_YAML, logger: silentLogger, registry });
-    const env: WorkerEnv = { OPENAI_API_KEY: "sk-test" };
-    expect((await absent.fetch(healthzRequest(), env, createCtx().ctx)).status).toBe(200);
-
-    const blank = createWorker({ configYaml: MEMORY_YAML, logger: silentLogger, registry });
-    const blankEnv: WorkerEnv = { OMNI_CONFIG: "  \n", OPENAI_API_KEY: "sk-test" };
-    expect((await blank.fetch(healthzRequest(), blankEnv, createCtx().ctx)).status).toBe(200);
+    const worker = createWorker({ logger: silentLogger, registry });
+    const env: WorkerEnv = {
+      OPENAI_API_KEY: "sk-test",
+      OMNI__STORAGE__TYPE: "memory",
+      OMNI__SECURITY__PROVIDERS__0__TYPE: "test-authenticated",
+      OMNI__PROVIDERS__OPENAI__TYPE: "openai",
+      OMNI__PROVIDERS__OPENAI__API_KEY: OPENAI_API_KEY_REFERENCE,
+      OMNI__ROUTING__DEFAULT_PROVIDER: "openai",
+    };
+    const response = await worker.fetch(healthzRequest(), env, createCtx().ctx);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ status: "ok" });
   });
 
   it("serves /healthz with durable-object storage bound from env", async () => {
     const registry = createDefaultRegistry();
     registry.providers.set("fake", createFakeProviderFactory());
     registry.auth.set("test-authenticated", alwaysAuthenticated);
-    const worker = createWorker({ configYaml: DO_YAML, registry, logger: silentLogger });
-    const env: WorkerEnv = { OMNI_DO: new FakeNamespace() };
+    const worker = createWorker({ registry, logger: silentLogger });
+    const env: WorkerEnv = { ...configEnv(DO_CONFIG), OMNI_DO: new FakeNamespace() };
     const response = await worker.fetch(healthzRequest(), env, createCtx().ctx);
     expect(response.status).toBe(200);
   });
@@ -295,8 +279,8 @@ describe("createWorker", () => {
     const registry = createDefaultRegistry();
     registry.providers.set("fake", createFakeProviderFactory());
     registry.auth.set("test-authenticated", alwaysAuthenticated);
-    const worker = createWorker({ configYaml: DO_YAML, registry, logger: silentLogger });
-    const env: WorkerEnv = { OMNI_DO: namespace };
+    const worker = createWorker({ registry, logger: silentLogger });
+    const env: WorkerEnv = { ...configEnv(DO_CONFIG), OMNI_DO: namespace };
     const { ctx, flush } = createCtx();
 
     const first = await worker.fetch(chatRequest(), env, ctx);
@@ -325,8 +309,8 @@ describe("createWorker", () => {
     const registry = createDefaultRegistry();
     registry.providers.set("fake-stream", createFakeStreamingProviderFactory());
     registry.auth.set("test-authenticated", alwaysAuthenticated);
-    const worker = createWorker({ configYaml: STREAM_DO_YAML, registry, logger: silentLogger });
-    const env: WorkerEnv = { OMNI_DO: namespace };
+    const worker = createWorker({ registry, logger: silentLogger });
+    const env: WorkerEnv = { ...configEnv(STREAM_DO_CONFIG), OMNI_DO: namespace };
     const { ctx, flush } = createCtx();
 
     const response = await worker.fetch(chatRequest(true), env, ctx);
@@ -351,25 +335,16 @@ describe("createWorker", () => {
   });
 
   it("serves requests with cloudflare-kv storage under a custom binding name", async () => {
-    const yaml = `
-version: 1
-security:
-  providers:
-    - type: test-authenticated
-storage:
-  type: cloudflare-kv
-  binding: MY_KV
-providers:
-  openai:
-    type: openai
-    apiKey: sk-test
-routing:
-  defaultProvider: openai
-`;
+    const config = {
+      security: { providers: [{ type: "test-authenticated" }] },
+      storage: { type: "cloudflare-kv", binding: "MY_KV" },
+      providers: { openai: { type: "openai", apiKey: "sk-test" } },
+      routing: { defaultProvider: "openai" },
+    };
     const registry = createDefaultRegistry();
     registry.auth.set("test-authenticated", alwaysAuthenticated);
-    const worker = createWorker({ configYaml: yaml, logger: silentLogger, registry });
-    const env: WorkerEnv = { MY_KV: fakeKVNamespace() };
+    const worker = createWorker({ logger: silentLogger, registry });
+    const env: WorkerEnv = { ...configEnv(config), MY_KV: fakeKVNamespace() };
     const response = await worker.fetch(healthzRequest(), env, createCtx().ctx);
     expect(response.status).toBe(200);
   });
@@ -377,22 +352,17 @@ routing:
   it("returns a 500 ConfigError naming the missing Durable Object binding", async () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     try {
-      const yaml = `
-version: 1
-security:
-  providers:
-    - type: test-authenticated
-storage:
-  type: durable-object
-providers:
-  openai:
-    type: openai
-    apiKey: sk-test
-routing:
-  defaultProvider: openai
-`;
-      const worker = createWorker({ configYaml: yaml, logger: silentLogger });
-      const response = await worker.fetch(healthzRequest(), {}, createCtx().ctx);
+      const worker = createWorker({ logger: silentLogger });
+      const response = await worker.fetch(
+        healthzRequest(),
+        configEnv({
+          security: { providers: [{ type: "test-authenticated" }] },
+          storage: { type: "durable-object" },
+          providers: { openai: { type: "openai", apiKey: "sk-test" } },
+          routing: { defaultProvider: "openai" },
+        }),
+        createCtx().ctx,
+      );
       expect(response.status).toBe(500);
       const error = await errorBody(response);
       expect(error.type).toBe("api_error");
@@ -416,24 +386,18 @@ routing:
   it("returns a 500 ConfigError naming the missing KV binding", async () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     try {
-      const yaml = `
-version: 1
-security:
-  providers:
-    - type: test-authenticated
-storage:
-  type: cloudflare-kv
-providers:
-  openai:
-    type: openai
-    apiKey: sk-test
-routing:
-  defaultProvider: openai
-`;
-      const worker = createWorker({ configYaml: yaml, logger: silentLogger });
+      const worker = createWorker({ logger: silentLogger });
       // Present but wrong-shaped: without get/put functions the binding does
       // not look like a KV namespace and must be rejected.
-      const env: WorkerEnv = { OMNI_KV: { idFromName: () => null } };
+      const env: WorkerEnv = {
+        ...configEnv({
+          security: { providers: [{ type: "test-authenticated" }] },
+          storage: { type: "cloudflare-kv" },
+          providers: { openai: { type: "openai", apiKey: "sk-test" } },
+          routing: { defaultProvider: "openai" },
+        }),
+        OMNI_KV: { idFromName: () => null },
+      };
       const response = await worker.fetch(healthzRequest(), env, createCtx().ctx);
       expect(response.status).toBe(500);
       const error = await errorBody(response);
@@ -454,8 +418,8 @@ routing:
       expect(response.status).toBe(500);
       const error = await errorBody(response);
       expect(error.type).toBe("api_error");
-      expect(error.message).toContain("OMNI_CONFIG");
-      expect(error.message).toContain("configYaml");
+      expect(error.message).toContain("OMNI_CONFIG_JSON");
+      expect(error.message).toContain("OMNI__");
       expect(errorSpy).toHaveBeenCalled();
     } finally {
       errorSpy.mockRestore();

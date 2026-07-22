@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "server": { "logLevel": "warn" },
+  "storage": { "type": "memory" },
+  "security": {
+    "mode": "any",
+    "providers": [
+      { "type": "firebase-auth", "projectId": "${FIREBASE_PROJECT_ID}" },
+      { "type": "firebase-app-check", "projectNumber": "${FIREBASE_PROJECT_NUMBER}" }
+    ]
+  },
+  "rateLimits": [
+    { "name": "per-user-requests", "key": "user", "requests": { "limit": 120, "window": "1m" } }
+  ],
+  "providers": {
+    "openrouter": {
+      "type": "openai-compatible",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "apiKey": "${OPENROUTER_API_KEY}",
+      "headers": {
+        "HTTP-Referer": "https://github.com/tiepvuvan/omni-model",
+        "X-Title": "omni-model auth e2e"
+      }
+    }
+  },
+  "routing": { "defaultProvider": "openrouter" }
+}

@@ -75,7 +75,7 @@ firebase ext:dev:emulators:start --test-params=test-params.env
 | Parameter | Default | Notes |
 | --- | --- | --- |
 | `LOCATION` | `us-central1` | Function region. **Immutable** — cannot change after install. |
-| `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` | — | Secret. Set at least one (unless you supply `ADVANCED_CONFIG_YAML`). |
+| `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` | — | Secret. Set at least one (unless you supply `ADVANCED_CONFIG_JSON`). |
 | `DEFAULT_PROVIDER` | `openai` | Provider used when no route matches. Falls back to the first configured provider if its key is absent. |
 | `REQUESTS_PER_MINUTE` | `60` | Per-user request limit per minute. Positive integer. |
 | `DAILY_TOKEN_BUDGET` | `200000` | Per-user daily token budget (prompt + completion). Positive integer. |
@@ -83,7 +83,7 @@ firebase ext:dev:emulators:start --test-params=test-params.env
 | `REQUIRE_AUTH` | `true` | Reject calls without a signed-in Firebase user. |
 | `CONSUME_APP_CHECK_TOKEN` | `false` | Enforce single-use App Check tokens. Enable **only** if your app requests limited-use tokens. |
 | `FIRESTORE_COLLECTION` | `omni_ratelimits` | Firestore collection for rate-limit / token-budget counters. |
-| `ADVANCED_CONFIG_YAML` | — | A full [omni.yaml](/reference/configuration) that overrides everything above (CEL routing, extra providers, tiered limits). |
+| `ADVANCED_CONFIG_JSON` | — | A complete JSON configuration that overrides everything above (CEL routing, extra providers, tiered limits). |
 
 <Note>
 Integer and boolean parameters are strings/selects because the Firebase Extensions param system
@@ -91,8 +91,8 @@ only supports `string`, `select`, `multiSelect`, `secret`, and `selectresource`.
 </Note>
 
 <AccordionGroup>
-<Accordion title="Advanced configuration (ADVANCED_CONFIG_YAML)">
-Set `ADVANCED_CONFIG_YAML` to a complete omni-model configuration to unlock
+<Accordion title="Advanced configuration (ADVANCED_CONFIG_JSON)">
+Set `ADVANCED_CONFIG_JSON` to a complete JSON omni-model configuration to unlock
 [CEL-based routing](/model-routing/routing), tiered rate limits, or extra OpenAI-compatible
 upstreams. When set, it supersedes all of the individual provider / rate-limit / storage
 parameters. It supports `${ENV}` interpolation against the function environment, so you can

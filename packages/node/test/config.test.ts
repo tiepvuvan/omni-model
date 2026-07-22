@@ -1,130 +1,41 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-import { ConfigError, createOmniApp, parseConfig, silentLogger } from "@omni-model/core";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { ConfigError, createOmniApp, parseConfigObject, silentLogger } from "@omni-model/core";
+import { describe, expect, it } from "vitest";
 import { resolveConfigSource } from "../src/config.js";
 
-async function rejection(promise: Promise<unknown>): Promise<unknown> {
-  try {
-    await promise;
-  } catch (error) {
-    return error;
-  }
-  throw new Error("expected the promise to reject");
-}
-
 describe("resolveConfigSource", () => {
-  let dir: string;
-
-  beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), "omni-node-config-"));
-  });
-
-  afterEach(async () => {
-    await rm(dir, { recursive: true, force: true });
-  });
-
-  it("prefers --config over every other source", async () => {
-    const cliFile = join(dir, "cli.yaml");
-    await writeFile(cliFile, "version: 1 # from-cli\n", "utf8");
-    await writeFile(join(dir, "omni.yaml"), "version: 1 # from-fallback\n", "utf8");
-
-    const result = await resolveConfigSource({
-      cliPath: cliFile,
+  it("combines full JSON, named JSON blocks and flat overrides", () => {
+    const result = resolveConfigSource({
       env: {
-        OMNI_CONFIG: "version: 1 # from-inline-env",
-        OMNI_CONFIG_PATH: join(dir, "omni.yaml"),
+        OMNI_CONFIG_JSON: '{"storage":{"type":"memory"},"security":{"providers":[]}}',
+        OMNI_SECURITY_PROVIDERS_JSON: '[{"type":"jwt","secret":"test-jwt-secret"}]',
+        OMNI_PROVIDERS_JSON: '{"main":{"type":"openai","apiKey":"sk-test"}}',
+        OMNI_DEFAULT_PROVIDER: "main",
+        OMNI__SERVER__LOG_LEVEL: "silent",
       },
-      cwd: dir,
     });
 
-    expect(result.yaml).toContain("from-cli");
-    expect(result.source).toBe(`--config ${cliFile}`);
+    expect(result.source).toBe("environment variables");
+    expect(result.config).toMatchObject({
+      storage: { type: "memory" },
+      security: { providers: [{ type: "jwt" }] },
+      providers: { main: { type: "openai" } },
+      routing: { defaultProvider: "main" },
+      server: { logLevel: "silent" },
+    });
   });
 
-  it("resolves a relative --config path against cwd", async () => {
-    await writeFile(join(dir, "relative.yaml"), "version: 1 # relative\n", "utf8");
-
-    const result = await resolveConfigSource({ cliPath: "relative.yaml", env: {}, cwd: dir });
-
-    expect(result.yaml).toContain("relative");
-    expect(result.source).toBe("--config relative.yaml");
-  });
-
-  it("throws ConfigError when --config names a missing file", async () => {
-    const error = await rejection(
-      resolveConfigSource({ cliPath: join(dir, "missing.yaml"), env: {}, cwd: dir }),
+  it("rejects missing environment configuration and ignores removed YAML variables", () => {
+    expect(() => resolveConfigSource({ env: {} })).toThrow(ConfigError);
+    expect(() => resolveConfigSource({ env: { OMNI_CONFIG: "version: 1" } })).toThrow(
+      /OMNI_CONFIG_JSON/,
     );
-
-    expect(error).toBeInstanceOf(ConfigError);
-    expect((error as ConfigError).message).toContain("missing.yaml");
-  });
-
-  it("uses inline YAML from OMNI_CONFIG", async () => {
-    const result = await resolveConfigSource({
-      env: { OMNI_CONFIG: "version: 1 # inline" },
-      cwd: dir,
-    });
-
-    expect(result.yaml).toBe("version: 1 # inline");
-    expect(result.source).toBe("OMNI_CONFIG env");
-  });
-
-  it("reads the file named by OMNI_CONFIG_PATH", async () => {
-    const file = join(dir, "from-env.yaml");
-    await writeFile(file, "version: 1 # from-env-path\n", "utf8");
-
-    const result = await resolveConfigSource({ env: { OMNI_CONFIG_PATH: file }, cwd: dir });
-
-    expect(result.yaml).toContain("from-env-path");
-    expect(result.source).toBe(`OMNI_CONFIG_PATH ${file}`);
-  });
-
-  it("throws ConfigError when OMNI_CONFIG_PATH names a missing file", async () => {
-    const error = await rejection(
-      resolveConfigSource({ env: { OMNI_CONFIG_PATH: join(dir, "nope.yaml") }, cwd: dir }),
-    );
-
-    expect(error).toBeInstanceOf(ConfigError);
-    expect((error as ConfigError).message).toContain("OMNI_CONFIG_PATH");
-  });
-
-  it("falls back to omni.yaml in cwd", async () => {
-    await writeFile(join(dir, "omni.yaml"), "version: 1 # cwd-fallback\n", "utf8");
-
-    const result = await resolveConfigSource({ env: {}, cwd: dir });
-
-    expect(result.yaml).toContain("cwd-fallback");
-    expect(result.source).toBe(join(dir, "omni.yaml"));
-  });
-
-  it("explains all four options when nothing is found", async () => {
-    const error = await rejection(resolveConfigSource({ env: {}, cwd: dir }));
-
-    expect(error).toBeInstanceOf(ConfigError);
-    const message = (error as ConfigError).message;
-    expect(message).toContain("--config");
-    expect(message).toContain("OMNI_CONFIG ");
-    expect(message).toContain("OMNI_CONFIG_PATH");
-    expect(message).toContain("omni.yaml");
-  });
-
-  it("treats empty OMNI_CONFIG and OMNI_CONFIG_PATH as unset", async () => {
-    await writeFile(join(dir, "omni.yaml"), "version: 1 # despite-empty-env\n", "utf8");
-
-    const result = await resolveConfigSource({
-      env: { OMNI_CONFIG: "", OMNI_CONFIG_PATH: "" },
-      cwd: dir,
-    });
-
-    expect(result.yaml).toContain("despite-empty-env");
   });
 });
 
 describe("Cloud Run deploy button", () => {
-  it("ships a valid authenticated starter configuration", async () => {
+  it("ships a valid authenticated environment-only starter configuration", async () => {
     const appJsonPath = fileURLToPath(new URL("../../../app.json", import.meta.url));
     const appJson = JSON.parse(await readFile(appJsonPath, "utf8")) as {
       env: Record<string, { required?: boolean; value?: string }>;
@@ -136,25 +47,20 @@ describe("Cloud Run deploy button", () => {
     expect(appJson.options["max-instances"]).toBe(1);
     expect(appJson.env.OPENAI_API_KEY?.required).toBe(true);
     expect(appJson.env.OMNI_JWT_SECRET?.required).toBe(true);
+    expect(appJson.env.OMNI_CONFIG).toBeUndefined();
 
-    const configYaml = appJson.env.OMNI_CONFIG?.value;
-    expect(configYaml).toBeTypeOf("string");
-    if (configYaml === undefined) {
-      throw new Error("app.json must provide a default OMNI_CONFIG value");
-    }
-    const config = parseConfig(configYaml, {
-      OPENAI_API_KEY: "sk-test",
-      OMNI_JWT_SECRET: "test-jwt-secret",
-    });
+    const env = Object.fromEntries(
+      Object.entries(appJson.env).map(([key, definition]) => [key, definition.value]),
+    );
+    env.OPENAI_API_KEY = "sk-test";
+    env.OMNI_JWT_SECRET = "test-jwt-secret";
+    const source = resolveConfigSource({ env });
+    const config = parseConfigObject(source.config, env);
 
     expect(config.storage.type).toBe("memory");
     expect(config.security.providers).toMatchObject([{ type: "jwt" }]);
 
-    const app = await createOmniApp({
-      config,
-      env: { OPENAI_API_KEY: "sk-test", OMNI_JWT_SECRET: "test-jwt-secret" },
-      logger: silentLogger,
-    });
+    const app = await createOmniApp({ config, env, logger: silentLogger });
     expect(app.request("http://omni.test/healthz")).toMatchObject({ status: 200 });
   });
 });

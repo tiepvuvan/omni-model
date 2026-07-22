@@ -48,22 +48,16 @@ describe("buildOmniConfig", () => {
     expect(config.routing.defaultProvider).toBe("anthropic");
   });
 
-  it("parses ADVANCED_CONFIG_YAML as a full config override", () => {
-    const yaml = [
-      "version: 1",
-      "storage:",
-      "  type: memory",
-      "providers:",
-      "  openai:",
-      "    type: openai",
-      // biome-ignore lint/suspicious/noTemplateCurlyInString: literal omni.yaml ${ENV} placeholder resolved by parseConfig.
-      "    apiKey: ${OPENAI_API_KEY}",
-      "routing:",
-      "  defaultProvider: openai",
-    ].join("\n");
+  it("parses ADVANCED_CONFIG_JSON as a full config override", () => {
+    const advanced = JSON.stringify({
+      version: 1,
+      storage: { type: "memory" },
+      providers: { openai: { type: "openai", apiKey: "$" + "{OPENAI_API_KEY}" } },
+      routing: { defaultProvider: "openai" },
+    });
 
     const config = buildOmniConfig({
-      ADVANCED_CONFIG_YAML: yaml,
+      ADVANCED_CONFIG_JSON: advanced,
       OPENAI_API_KEY: "sk-from-env",
       // Individual params are ignored when the advanced override is present.
       GEMINI_API_KEY: "ignored",

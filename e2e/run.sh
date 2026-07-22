@@ -30,7 +30,8 @@ echo "         (chat, streaming, tool calling, Durable Object rate limiting)"
 pnpm test:e2e
 
 echo "==> Starting the proxy on :8788 for the Swift suites"
-PORT=8788 node packages/node/dist/cli.js --config e2e/omni.e2e.yaml >/tmp/omni-e2e-server.log 2>&1 &
+PORT=8788 OMNI_CONFIG_JSON="$(tr -d '\n' < e2e/omni.e2e.json)" \
+  node packages/node/dist/cli.js >/tmp/omni-e2e-server.log 2>&1 &
 SERVER_PID=$!
 trap 'kill "$SERVER_PID" 2>/dev/null || true' EXIT
 for _ in $(seq 1 40); do

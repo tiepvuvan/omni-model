@@ -20,7 +20,7 @@ Requests are routed to the provider you configure, and each user is held to a
 - One or more provider API keys (OpenAI / Anthropic / Gemini) — at least one is required.
 - A default provider and per-user rate limits.
 - Whether Firebase Auth and App Check are required (both strongly recommended).
-- Optionally, a full advanced `omni.yaml` configuration for custom routing rules or
+- Optionally, a full advanced JSON configuration for custom routing rules or
   additional OpenAI-compatible providers.
 
 # Prerequisites

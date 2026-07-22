@@ -170,10 +170,10 @@ params:
     default: omni_ratelimits
     required: true
 
-  - param: ADVANCED_CONFIG_YAML
-    label: Advanced configuration (omni.yaml)
+  - param: ADVANCED_CONFIG_JSON
+    label: Advanced configuration (JSON)
     description: >-
-      Optional. A full omni-model YAML configuration that overrides all of the
+      Optional. A full omni-model JSON configuration that overrides all of the
       individual settings above (providers, routing, rate limits, storage). Use
       this for custom routing rules or additional OpenAI-compatible providers.
       Supports ${ENV} interpolation against the function environment.

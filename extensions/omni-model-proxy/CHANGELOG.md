@@ -10,5 +10,5 @@ Initial release of the **omni-model AI proxy** Firebase Extension.
   configured default provider.
 - Per-user request-per-minute and daily-token-budget rate limits, backed by
   Cloud Firestore (fail-open).
-- `ADVANCED_CONFIG_YAML` parameter for a full `omni.yaml` override (custom
+- `ADVANCED_CONFIG_JSON` parameter for a full JSON configuration override (custom
   routing rules, additional OpenAI-compatible providers).

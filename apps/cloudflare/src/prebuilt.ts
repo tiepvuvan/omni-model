@@ -7,17 +7,12 @@ import { createWorker, OmniStorageDurableObject } from "@omni-model/cloudflare";
  * immutable `worker.js` and `wrangler deploy` it, with no fork, no clone and no
  * build. Updates are a re-download + redeploy.
  *
- * The one difference from `index.ts` (the fork-and-edit entry) is what is NOT
- * here: no `import configYaml from "../omni.yaml"`. That import is what makes
- * wrangler emit the config as a *separate hashed sidecar* file, which would
- * make the release artifact two coupled files with a build-dependent name.
- * Without it the bundle is a single self-contained script, and configuration
- * arrives at runtime through the `OMNI_CONFIG` var — exactly how the container
- * image takes its config.
+ * The bundle is a single self-contained script, and configuration arrives at
+ * runtime through environment variables — exactly how the container image
+ * takes its config.
  *
- * `createWorker()` with no `configYaml` is a supported shape: it resolves
- * `OMNI_CONFIG` from the environment, and throws a ConfigError naming the fix
- * when neither is present.
+ * `createWorker()` throws a ConfigError naming the environment-variable fix
+ * when no configuration is present.
  */
 const worker = createWorker();
 

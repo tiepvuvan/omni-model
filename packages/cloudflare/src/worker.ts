@@ -1,5 +1,11 @@
 import type { Logger, OmniRegistry } from "@omni-model/core";
-import { ConfigError, createDefaultRegistry, createOmniApp, parseConfig } from "@omni-model/core";
+import {
+  ConfigError,
+  createDefaultRegistry,
+  createOmniApp,
+  hasEnvironmentConfig,
+  parseEnvironmentConfig,
+} from "@omni-model/core";
 import type { DurableObjectNamespaceLike, KVNamespaceLike } from "./cf-types.js";
 import { createDurableObjectStorageFactory } from "./durable-object.js";
 import { createKVStorageFactory } from "./kv.js";
@@ -16,12 +22,6 @@ export interface WorkerEnv {
 
 /** Options for {@link createWorker}. */
 export interface CreateWorkerOptions {
-  /**
-   * YAML configuration bundled at build time (e.g. imported as a Text
-   * module). The `OMNI_CONFIG` var/secret, when set and non-empty, takes
-   * precedence so a deployment can be reconfigured without rebuilding.
-   */
-  configYaml?: string;
   /** Component factories; defaults to `createDefaultRegistry()`. */
   registry?: OmniRegistry;
   /** Defaults to the console logger at the configured log level. */
@@ -80,8 +80,7 @@ function isDurableObjectNamespace(value: unknown): value is DurableObjectNamespa
  * surfaces as a 500 with an OpenAI-style error body instead of an opaque
  * exception, and is logged via `console.error`.
  *
- * Config resolution order: the `OMNI_CONFIG` var/secret (non-empty string)
- * wins over `options.configYaml`. When the resolved config selects
+ * Configuration is read entirely from environment variables. When it selects
  * `cloudflare-kv` or `durable-object` storage, the corresponding namespace
  * binding (default `OMNI_KV` / `OMNI_DO`, overridable via `storage.binding`)
  * is pulled from `env` and registered as the storage factory.
@@ -94,25 +93,19 @@ export function createWorker(options: CreateWorkerOptions = {}): OmniWorker {
       Object.entries(env).filter(([, value]) => typeof value === "string"),
     ) as Record<string, string>;
 
-    const inlineYaml =
-      typeof env.OMNI_CONFIG === "string" && env.OMNI_CONFIG.trim() !== ""
-        ? env.OMNI_CONFIG
-        : undefined;
-    const yaml = inlineYaml ?? options.configYaml;
-    if (yaml === undefined) {
+    if (hasEnvironmentConfig(stringEnv) === false) {
       // For a prebuilt-bundle deploy this is the first thing the operator sees,
       // so it carries the literal fix rather than a description of one.
       throw new ConfigError(
-        "no configuration found: this worker has no bundled config, so it reads " +
-          "the OMNI_CONFIG var. Set it to your YAML config and redeploy:\n" +
-          '  wrangler deploy --var OMNI_CONFIG:"$(cat omni.yaml)"\n' +
-          "(or add OMNI_CONFIG under `vars` in wrangler.jsonc, or paste it in the " +
-          "dashboard under Settings -> Variables). Embedders can instead bundle one " +
-          "at build time via createWorker({ configYaml }).",
+        "no configuration found: set OMNI__... environment variables, for example:\n" +
+          "  OMNI__STORAGE__TYPE=memory\n" +
+          "  OMNI__SECURITY__PROVIDERS__0__TYPE=jwt\n" +
+          "  OMNI__PROVIDERS__OPENAI__TYPE=openai\n" +
+          "or configure a full document with OMNI_CONFIG_JSON.",
       );
     }
 
-    const config = parseConfig(yaml, stringEnv);
+    const config = parseEnvironmentConfig(stringEnv);
     const registry = options.registry ?? createDefaultRegistry();
 
     // Namespace bindings only exist on the Workers `env`, so the two

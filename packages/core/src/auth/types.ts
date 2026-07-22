@@ -54,7 +54,7 @@ export interface AuthVerifier {
 export interface AuthVerifierFactory {
   readonly type: string;
   /**
-   * `options` is one entry of `security.providers` from the YAML config;
+   * `options` is one entry of `security.providers` from the environment configuration;
    * factories validate their own options with zod.
    */
   create(options: Record<string, unknown>, runtime: RuntimeContext): AuthVerifier;

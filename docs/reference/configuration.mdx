@@ -1,765 +1,302 @@
 ---
 title: Configuration reference
-description: Every option in the single YAML file that configures omni-model — server, storage, security, rate limits, providers, and routing.
+description: Configure omni-model entirely with environment variables, including providers, security, rate limits, and model routing.
 ---
 
-omni-model is configured with a single YAML file. Every option below is validated at startup —
-unknown keys, bad types, unresolvable expressions and references to unknown providers all throw a
-`ConfigError` before the server accepts a single request, never mid-request.
+omni-model reads its configuration entirely from environment variables. It does not read YAML files,
+mounted configuration files, or an inline YAML variable. Every configuration change is a platform
+environment change and creates a new deployment revision on platforms such as Cloud Run.
 
 <Info>
-Config is supplied to a deployed proxy either inline through the `OMNI_CONFIG` environment
-variable or by mounting a file at `/app/omni.yaml`. See [Deploy](/quickstart) for
-platform specifics.
+Keep credentials in your platform's secret store. Configuration values can reference them with
+`${VAR}` interpolation, so a provider block can use `${OPENAI_API_KEY}` without copying the key
+into a JSON configuration value.
 </Info>
 
-## Top-level shape
+## Choose the right environment shape
 
-A config file has six top-level blocks plus a `version`. Most blocks have sane defaults, so the
-smallest valid file is tiny — but always give `storage` an explicit `type`, and `security` at least
-one verifier.
+Use the smallest shape that fits the change:
 
-```yaml
-version: 1                # config format version (only 1 exists; may be omitted)
-server: {}                # CORS, log level, proxy trust, body limit
-storage:                  # where counters, budgets and attestation keys live
-  type: memory
-security: {}              # client authentication
-rateLimits: []            # request windows + token budgets
-providers: {}             # upstream model providers, keyed by your own ids
-routing: {}               # which provider serves which request
-```
-
-A minimal but complete skeleton that parses and starts. `security` is the one block with no safe
-default — at least one verifier is required, so the smallest working file still configures one:
-
-```yaml
-version: 1
-storage:
-  type: memory
-security:
-  providers:
-    - type: jwt
-      secret: ${OMNI_DEV_SECRET}
-      algorithms: [HS256]
-providers:
-  openai:
-    type: openai
-    apiKey: ${OPENAI_API_KEY}
-routing:
-  defaultProvider: openai
-```
-
-<Warning>
-Write `storage:` with a `type`, e.g. `type: memory`. An empty mapping (`storage: {}`) fails
-validation because the `type` discriminator is required.
-</Warning>
-
-All string values support [environment variable interpolation](#environment-variable-interpolation).
-
-## `version`
-
-<ParamField path="version" type="1" default="1">
-Config format version. Only `1` is valid, and it may be omitted.
-</ParamField>
-
-## `server`
-
-```yaml
-server:
-  logLevel: info
-  cors:
-    allowOrigins: ["https://app.example.com"]
-```
-
-| Option | Type | Default | Description |
-| --- | --- | --- | --- |
-| `logLevel` | `debug` \| `info` \| `warn` \| `error` \| `silent` | `info` | Level for the built-in console logger. |
-| `cors` | object | _(none)_ | When present, CORS middleware is applied to every route. When absent, no CORS headers are sent. |
-| `trustProxyHeaders` | boolean | `false` | Trust client-suppliable forwarding headers (`cf-connecting-ip`, `x-forwarded-for`, `x-real-ip`) when deriving the client IP used by `key: ip` rate limits and the `http.ip` CEL variable. |
-| `maxBodyBytes` | positive integer | `2000000` | Maximum accepted request body size, in bytes (~2 MB). A larger body is rejected with HTTP 413 before it reaches a provider. |
-
-<Warning>
-**`trustProxyHeaders`.** The `cf-connecting-ip`, `x-forwarded-for` and `x-real-ip` headers are set
-by whoever sends the request, so a client connecting directly to the proxy can forge any value —
-minting a fresh IP per request to slip past `key: ip` rate limits or poison the `http.ip` a CEL
-rule reads. With `trustProxyHeaders: false` (the default) these headers are ignored: the client IP
-comes from the connection socket where the platform exposes it (for example the Node server), and
-is `null` otherwise. Set it to `true` **only** when the proxy runs behind a trusted reverse proxy
-or CDN that overwrites these headers on every request. On Cloudflare Workers, Cloudflare sets
-`cf-connecting-ip` itself, so enable it there if you rely on IP-based limits.
-</Warning>
-
-### `server.cors`
-
-| Option | Type | Default | Description |
-| --- | --- | --- | --- |
-| `allowOrigins` | `string[]` | `["*"]` | Allowed origins. If the list contains `"*"`, all origins are allowed. |
-| `allowMethods` | `string[]` | library default | Allowed methods for preflight responses. |
-| `allowHeaders` | `string[]` | library default | Allowed request headers. |
-| `exposeHeaders` | `string[]` | _(none)_ | Response headers exposed to browser scripts. |
-| `maxAge` | positive integer | _(none)_ | Preflight cache lifetime in seconds. |
-| `credentials` | boolean | _(none)_ | Sets `Access-Control-Allow-Credentials`. |
-
-## `storage`
-
-Storage holds rate-limit counters, token budgets, App Attest challenges/keys and the DeviceCheck
-validation cache. The block is discriminated by `type`; each backend validates its own options.
-Defaults to `{ type: memory }` when omitted — but always spell out the `type`.
-
-The **atomicity** of `increment` is what determines whether limits are exact or approximate under
-concurrency. Pick a backend accordingly.
-
-<Tabs>
-<Tab title="memory">
-
-Built into core. No options.
-
-```yaml
-storage:
-  type: memory
-```
-
-In-process storage: state is neither shared across instances nor persisted across restarts.
-`increment` is exact within the single process. Use for local development or a single long-lived
-instance where approximate limits after a restart are acceptable.
-
-</Tab>
-<Tab title="redis">
-
-`@omni-model/storage-redis`.
-
-```yaml
-storage:
-  type: redis
-  url: ${REDIS_URL}
-  keyPrefix: "omni:"
-```
-
-| Option | Type | Default | Description |
-| --- | --- | --- | --- |
-| `url` | string | required | A `redis://` or `rediss://` URL. |
-| `keyPrefix` | string | `"omni:"` | Prefix applied to every key so several apps can share one Redis. |
-
-**Atomicity:** increments run as a single server-side Lua script (`INCRBY` + conditional
-`EXPIRE`), so counters are **exact under concurrency** across any number of proxy instances.
-Sub-second TTLs round up to one second. Registered by the Node server entry; not part of
-`createDefaultRegistry()`.
-
-</Tab>
-<Tab title="postgres">
-
-`@omni-model/storage-postgres`.
-
-```yaml
-storage:
-  type: postgres
-  url: ${DATABASE_URL}
-  table: omni_kv
-  migrate: true
-```
-
-| Option | Type | Default | Description |
-| --- | --- | --- | --- |
-| `url` | string | required | Postgres connection string. |
-| `table` | string | `omni_kv` | Backing table name; must match `[a-zA-Z_][a-zA-Z0-9_]*`. |
-| `migrate` | boolean | `true` | Create the table and expiry index at startup. Disable if you manage schema yourself. |
-
-**Atomicity:** every operation, including `increment`, is a single SQL statement (an upsert that
-serializes on the row), so counters are **exact under concurrency** across instances. Expired rows
-are filtered from reads immediately and physically swept in the background. Registered by the Node
-server entry, not by `createDefaultRegistry()`.
-
-</Tab>
-<Tab title="cloudflare-kv">
-
-`@omni-model/cloudflare`.
-
-```yaml
-storage:
-  type: cloudflare-kv
-  binding: OMNI_KV
-```
-
-| Option | Type | Default | Description |
-| --- | --- | --- | --- |
-| `binding` | string | worker-defined | Name of the KV namespace binding in your wrangler config. Consumed by the worker entry. |
-
-**Atomicity:** `increment` is a **non-atomic** read-modify-write on an eventually consistent
-store. Concurrent increments from different isolates or edge locations can lose updates — counts
-are approximate. Good enough for best-effort rate limiting, **not** for strict quotas; use
-`durable-object` when limits must be exact. KV also enforces a minimum TTL of 60 seconds, so
-shorter windows are clamped up, and every counter write re-applies the window TTL (busy windows
-expire later, erring toward stricter limiting).
-
-</Tab>
-<Tab title="durable-object">
-
-`@omni-model/cloudflare`.
-
-```yaml
-storage:
-  type: durable-object
-  binding: OMNI_DO
-```
-
-| Option | Type | Default | Description |
-| --- | --- | --- | --- |
-| `binding` | string | worker-defined | Name of the Durable Object namespace binding in your wrangler config. Consumed by the worker entry. |
-| `name` | string | _(none)_ | Logical store name prefixed onto every object name, so several deployments can share one namespace. |
-
-**Atomicity:** every storage key routes to its own Durable Object, and the runtime serializes
-operations per object — counters are **exact**. Slightly higher latency and cost than KV; the
-right choice when token budgets must not overshoot.
-
-</Tab>
-<Tab title="firestore">
-
-`@omni-model/storage-firestore`.
-
-```yaml
-storage:
-  type: firestore
-  collection: omni_ratelimits   # optional
-```
-
-| Option | Type | Default | Description |
-| --- | --- | --- | --- |
-| `collection` | string | `omni_ratelimits` | Firestore collection holding the counter documents. |
-
-The Firestore client is injected by the embedder (it carries credentials, so it can't come from
-YAML) — the Firebase Extension and `createOmniCallables` register it for you; a bare setup calls
-`createFirestoreStorageFactory(getFirestore())`. **Atomicity:** `increment` runs in a
-`runTransaction` and is **exact**; window expiry is computed on read (Firestore TTL is best-effort
-cleanup only). A single document sustains ~1 write/sec, so this backend suits **per-user** keys —
-see [Firebase Extension](/installation/firebase) for the serverless, no-backend setup.
-
-</Tab>
-</Tabs>
-
-## `security`
-
-Client authentication for everything under `/v1/*`. `/healthz` and verifier-contributed routes
-(such as `/auth/app-attest/*`) are never behind authentication.
-
-```yaml
-security:
-  mode: any
-  publicPaths: []
-  providers:
-    - type: firebase-app-check
-      projectNumber: "1234567890"
-```
-
-| Option | Type | Default | Description |
-| --- | --- | --- | --- |
-| `mode` | `any` \| `all` | `any` | How multiple verifiers combine (below). |
-| `publicPaths` | `string[]` | `[]` | Paths that bypass authentication: exact match, or prefix match when the pattern ends with `*` (e.g. `/v1/models*`). |
-| `providers` | array | `[]` | Verifier blocks, discriminated by `type`. **At least one is required.** |
-
-<Warning>
-**At least one verifier is required, and there is no opt-out.** With `providers: []` the proxy
-**refuses to start** — one that authenticates nobody is an open relay on your provider credits, and
-offers a caller nothing that calling the upstream API directly wouldn't. Since that is the whole
-reason omni-model exists, running without authentication is not a supported mode.
-
-For local development, the `jwt` verifier with a shared secret needs no external service:
-
-```yaml
-security:
-  providers:
-    - type: jwt
-      secret: ${OMNI_DEV_SECRET}
-      algorithms: [HS256]
-```
-
-To leave a specific path open (a health probe, say), use `publicPaths` rather than removing
-authentication wholesale.
-</Warning>
-
-Each verifier inspects the request for its own credential and returns one of three outcomes:
-*absent* (its credential is not on the request), *accepted*, or *rejected* (present but invalid).
-
-<AccordionGroup>
-<Accordion title="mode: any — first accept wins">
-
-Verifiers are consulted in config order:
-
-- The first verifier that **accepts** wins; its identity is attached to the request.
-- A verifier whose credential is **absent** is skipped and the next one is tried.
-- A **rejection** is remembered but the chain continues; the request fails with the *first*
-  rejection's reason unless a later verifier positively accepts it.
-- If every verifier reports its credential absent, the request is rejected with
-  `authentication required` (HTTP 401).
-
-</Accordion>
-<Accordion title="mode: all — every verifier must accept">
-
-- A missing credential fails with `credential missing for <name>` (401).
-- Any rejection fails with that verifier's reason (401).
-- The accepted identities are merged: the first defined `userId`/`deviceId` (in config order)
-  wins; `provider` is taken from the identity that supplied `userId` (falling back to the first);
-  the first identity's claims are flattened at the top level of `user.claims`, then every
-  verifier's claims are additionally namespaced under its `name` (`user.claims[verifierName]`). A
-  namespaced key overwrites a same-named top-level claim, so pick verifier names that do not
-  collide with claim names.
-
-</Accordion>
-</AccordionGroup>
-
-Every verifier block accepts an optional `name` (defaults to its `type`) used in error messages,
-claim namespacing, and logs. Deep guides for each verifier live under
-[Security](/security/custom-jwt).
-
-### `type: jwt`
-
-Verifies arbitrary JWTs against a JWKS endpoint, a shared secret (HS\*) or a pinned public key.
-Token claims are exposed to CEL rules as `user.claims`. Client sends `Authorization: Bearer <token>`
-(header and scheme configurable).
-
-```yaml
-- type: jwt
-  jwksUrl: https://auth.example.com/.well-known/jwks.json
-  issuer: https://auth.example.com
-  audience: omni-model
-```
-
-| Option | Type | Default | Description |
-| --- | --- | --- | --- |
-| `header` | string | `authorization` | Header carrying the token. |
-| `scheme` | `bearer` \| `none` | `bearer` | `bearer` strips a `Bearer ` prefix; `none` uses the raw header value. |
-| `jwksUrl` | URL | — | Remote JWKS endpoint for asymmetric keys. |
-| `secret` | string | — | Shared secret for HS\* algorithms. |
-| `publicKey` | string | — | SPKI PEM public key; requires `algorithms` with exactly one entry. |
-| `algorithms` | `string[]` | _(any)_ | Allowed JWS algorithms, e.g. `["RS256"]`. |
-| `issuer` | string | _(unchecked)_ | Expected `iss` claim. |
-| `audience` | string \| `string[]` | _(unchecked)_ | Expected `aud` claim. |
-| `userIdClaim` | string | `sub` | Claim mapped to `user.id`. |
-| `deviceIdClaim` | string | _(none)_ | Claim mapped to `device.id`. |
-| `clockToleranceSeconds` | integer ≥ 0 | `60` | Allowed clock skew. |
-
-Exactly **one** of `jwksUrl`, `secret` or `publicKey` must be provided. See
-[Custom JWT](/security/custom-jwt).
-
-### `type: firebase-auth`
-
-Verifies Firebase Authentication ID tokens (RS256) against Google's JWKS. The Firebase uid becomes
-`user.id`. Clients send `Authorization: Bearer <ID token>`.
-
-| Option | Type | Default | Description |
-| --- | --- | --- | --- |
-| `projectId` | string | required | Firebase project id, e.g. `my-app-12345`. |
-| `header` | string | `authorization` | Header carrying the ID token as `Bearer <token>`. |
-| `clockToleranceSeconds` | integer ≥ 0 | `60` | Allowed clock skew. |
-
-See [Firebase Auth](/security/custom-jwt).
-
-### `type: supabase`
-
-Verifies Supabase Auth access tokens, either with the project's legacy shared JWT secret (HS256)
-or against the project's JWKS. `sub` becomes `user.id`; Supabase claims like `role` and
-`app_metadata` are available under `user.claims`. Clients send `Authorization: Bearer <token>`.
-
-```yaml
-- type: supabase
-  url: https://abcdefgh.supabase.co
-```
-
-| Option | Type | Default | Description |
-| --- | --- | --- | --- |
-| `url` | URL | — | Supabase project URL; used to derive the JWKS endpoint and issuer. |
-| `jwtSecret` | string | — | Legacy shared JWT secret (HS256). |
-| `jwksUrl` | URL | `<url>/auth/v1/.well-known/jwks.json` | Explicit JWKS endpoint. |
-| `issuer` | string | `<url>/auth/v1` | Expected issuer. |
-| `audience` | string \| `string[]` | `authenticated` | Expected audience. |
-| `header` | string | `authorization` | Header carrying the token as `Bearer <token>`. |
-| `clockToleranceSeconds` | integer ≥ 0 | `60` | Allowed clock skew. |
-
-Provide `jwtSecret` **or** `jwksUrl` (not both); with neither, `url` is required to derive the
-JWKS endpoint. See [Supabase](/security/custom-jwt).
-
-### `type: firebase-app-check`
-
-Verifies Firebase App Check tokens, attesting that requests come from an authentic instance of
-your app (iOS, Android or web). App Check tokens carry no user, so the Firebase app id becomes
-`device.id` and `user.id` stays unset. Clients send the raw token as `X-Firebase-AppCheck`.
-
-```yaml
-- type: firebase-app-check
-  # Omit projectNumber on Cloud Run / GCE when this is the Firebase project.
-  projectNumber: "1234567890"
-```
-
-| Option | Type | Default | Description |
-| --- | --- | --- | --- |
-| `projectNumber` | string | GCP metadata | The **numeric** Firebase project number (not the project id). Required outside Node deployments on GCP; set it explicitly for a different Firebase project. |
-| `appIds` | `string[]` | _(any app)_ | Allowlist of Firebase app ids (matched against the token `sub`). |
-| `header` | string | `x-firebase-appcheck` | Header carrying the raw App Check token (no `Bearer` prefix). |
-| `clockToleranceSeconds` | integer ≥ 0 | `60` | Allowed clock skew. |
-
-See [Firebase App Check](/security/firebase-app-check).
-
-### `type: apple-device-check`
-
-Verifies Apple DeviceCheck device tokens by calling Apple's `validate_device_token` endpoint,
-authenticated with an ES256 JWT signed by your DeviceCheck key. Successful validations are cached
-in storage for `cacheTtl` so hot devices don't hit Apple on every request. Clients send the device
-token as `X-Apple-Device-Token`.
-
-```yaml
-- type: apple-device-check
-  teamId: ABCDE12345
-  keyId: FGHIJ67890
-  privateKey: ${APPLE_DEVICECHECK_KEY}
-```
-
-| Option | Type | Default | Description |
-| --- | --- | --- | --- |
-| `teamId` | string | required | Apple Developer team identifier. |
-| `keyId` | string | required | Key id of the DeviceCheck `.p8` key. |
-| `privateKey` | string | required | PKCS8 PEM contents of the `.p8` key (must contain `-----BEGIN PRIVATE KEY-----`), typically `${APPLE_DEVICECHECK_KEY}`. |
-| `development` | boolean | `false` | Use Apple's development DeviceCheck endpoint. |
-| `header` | string | `x-apple-device-token` | Header carrying the device token. |
-| `cacheTtl` | duration | `5m` | How long a validated token is cached. |
-
-Apple 4xx responses reject the request with Apple's error text; network failures and Apple 5xx map
-to a generic "device check unavailable" rejection (the raw token is never logged or echoed). See
-[Apple DeviceCheck](/security/app-attest).
-
-### `type: apple-app-attest`
-
-Verifies Apple App Attest hardware-backed assertions — the strongest iOS attestation. Each device
-registers a Secure Enclave key once, then signs every API request. The verifier mounts two public
-routes: `POST /auth/app-attest/challenge` and `POST /auth/app-attest/register`. Per-request the
-client sends `x-appattest-keyid`, `x-appattest-assertion` and `x-appattest-challenge`; the key id
-becomes `device.id`.
-
-```yaml
-- type: apple-app-attest
-  teamId: ABCDE12345
-  bundleId: com.example.app
-```
-
-| Option | Type | Default | Description |
-| --- | --- | --- | --- |
-| `teamId` | string | required | Apple Developer team id; the App ID is `<teamId>.<bundleId>`. |
-| `bundleId` | string | required | Your app's bundle identifier. |
-| `environment` | `production` \| `development` | `production` | Which App Attest environment produced the keys (checked via the attestation AAGUID). |
-| `challengeTtl` | duration | `5m` | Lifetime of issued challenges. |
-| `keyIdHeader` | string | `x-appattest-keyid` | Per-request header carrying the key id. |
-| `assertionHeader` | string | `x-appattest-assertion` | Per-request header carrying the assertion. |
-| `challengeHeader` | string | `x-appattest-challenge` | Per-request header carrying the challenge. |
-| `rootCaPem` | string | Apple's published root | Trust-anchor override (for tests). |
-
-The full challenge/register/assert client protocol is documented in
-[Apple App Attest](/security/app-attest).
-
-## `rateLimits`
-
-An ordered list of rules; **every applicable rule is enforced** (they are not first-match). Each
-rule needs at least one of `requests` or `tokens`.
-
-```yaml
-rateLimits:
-  - name: per-user-requests
-    key: user
-    requests: { limit: 60, window: 1m }
-  - name: per-user-daily-tokens
-    key: user
-    tokens: { limit: 200000, window: 1d }
-  - name: free-tier
-    when: 'has(user.claims.tier) && user.claims.tier == "free"'
-    key: user
-    requests: { limit: 10, window: 1m }
-```
-
-| Option | Type | Default | Description |
-| --- | --- | --- | --- |
-| `name` | string | required | Unique rule name. Names isolate counter keyspaces; **duplicates are rejected at startup**. |
-| `when` | CEL expression | _(always applies)_ | Rule applies only when this evaluates to exactly `true` (see [the CEL context](#the-cel-expression-context)). An expression that throws means the rule does not apply to that request. |
-| `key` | `user` \| `device` \| `ip` \| `global` \| `expression` | `user` | What the counter is scoped to. |
-| `keyExpression` | CEL expression | — | Required when `key: expression`; its result (stringified) is the counter key. If it throws, the rule is skipped for that request. |
-| `requests` | `{ limit, window }` | _(none)_ | Max requests per window. `limit` is a positive integer; `window` a duration like `30s`, `5m`, `1h`, `1d`. |
-| `tokens` | `{ limit, window }` | _(none)_ | Max total tokens (prompt + completion) per window. |
-
-**Key kinds and fallback chains** — when the preferred identity attribute is missing, the key
-falls back so unauthenticated traffic is still limited:
-
-| `key` | Counter scoped to |
-| --- | --- |
-| `user` | `user.id` → `device.id` → client IP → `"anonymous"` |
-| `device` | `device.id` → client IP → `"anonymous"` |
-| `ip` | client IP → `"unknown"` |
-| `global` | one shared counter for all traffic |
-| `expression` | the stringified result of `keyExpression` |
-
-<AccordionGroup>
-<Accordion title="Fixed windows">
-
-Windows are aligned to the epoch (`floor(now / window) * window`), not sliding. A violation
-returns HTTP 429 with `Retry-After` (seconds until the window rolls), `x-ratelimit-limit` and
-`x-ratelimit-rule` headers, and an OpenAI-style error body.
-
-</Accordion>
-<Accordion title="Token budgets consume after the response">
-
-Budgets are pre-checked read-only before the request runs; actual usage is recorded *after* the
-response from the provider's reported `usage` (for streams, from the final usage chunk), in the
-background. A budget can therefore overshoot by the in-flight requests' tokens — pair a token
-budget with a `requests` window to bound the overshoot. A request rejected on an exhausted budget
-does not consume request-window slots.
-
-</Accordion>
-<Accordion title="Rejected requests still count">
-
-Every applicable request window is incremented even when an earlier rule already rejected the
-request — hammering an exhausted limit never earns extra throughput.
-
-</Accordion>
-<Accordion title="Fail-open">
-
-If storage cannot be read or written, the affected rule passes and the failure is logged at error
-level. A Redis outage must not take your API down.
-
-</Accordion>
-</AccordionGroup>
-
-See [Rate limits](/reference/configuration) for worked examples.
-
-## `providers`
-
-A map from **your own provider ids** (the names routing refers to) to provider blocks
-discriminated by `type`. The same type may appear multiple times under different ids.
-
-<Tabs>
-<Tab title="openai">
-
-Passthrough to the OpenAI API. Requests and stream bytes are forwarded unmodified.
-
-```yaml
-providers:
-  openai:
-    type: openai
-    apiKey: ${OPENAI_API_KEY}
-```
-
-| Option | Type | Default | Description |
-| --- | --- | --- | --- |
-| `apiKey` | string | required | OpenAI API key. |
-| `baseUrl` | URL | `https://api.openai.com/v1` | API base URL. |
-| `organization` | string | _(none)_ | Sent as `OpenAI-Organization`. |
-| `headers` | map | `{}` | Extra headers merged over the computed ones. |
-| `models` | `string[]` | `[]` | Static model list served when the upstream `/models` call fails. |
-| `includeStreamUsage` | boolean | `true` | Inject `stream_options.include_usage` into streaming requests so the final chunk carries usage for token budgets. A client-sent `include_usage: false` wins. |
-
-</Tab>
-<Tab title="openai-compatible">
-
-Any endpoint speaking the OpenAI wire format: Groq, Together, Mistral, OpenRouter, Azure OpenAI,
-vLLM, Ollama, and so on.
-
-```yaml
-providers:
-  groq:
-    type: openai-compatible
-    baseUrl: https://api.groq.com/openai/v1
-    apiKey: ${GROQ_API_KEY}
-```
-
-Same options as `type: openai`, except:
-
-| Option | Type | Default | Description |
-| --- | --- | --- | --- |
-| `baseUrl` | URL | required | No sensible default exists. |
-| `apiKey` | string | _(none)_ | Optional — local servers (Ollama, vLLM) often need none. |
-
-</Tab>
-<Tab title="anthropic">
-
-Translation provider for the Anthropic Messages API: clients keep speaking OpenAI chat completions;
-requests and responses (streaming included) are converted in both directions.
-
-```yaml
-providers:
-  anthropic:
-    type: anthropic
-    apiKey: ${ANTHROPIC_API_KEY}
-```
-
-| Option | Type | Default | Description |
-| --- | --- | --- | --- |
-| `apiKey` | string | required | Anthropic API key (sent as `x-api-key`). |
-| `baseUrl` | string | `https://api.anthropic.com` | API base URL. |
-| `version` | string | `2023-06-01` | Sent as the `anthropic-version` header. |
-| `maxTokensDefault` | positive integer | `4096` | Anthropic requires `max_tokens`; used when the client sends neither `max_tokens` nor `max_completion_tokens`. |
-
-<Accordion title="Translation notes">
-
-- `system`/`developer` messages become the Anthropic `system` prompt; consecutive same-role
-  messages are merged (Anthropic rejects them).
-- `temperature` is **clamped to 0..1** (OpenAI allows 0..2).
-- `stop` → `stop_sequences`; `user` → `metadata.user_id`.
-- Tools map to Anthropic tools; `tool_choice: "auto" | "required" | {function}` map to
-  `auto | any | tool`; `tool_choice: "none"` drops the tools entirely (Anthropic has no "none").
-- Image parts: `data:` URLs become base64 blocks, `http(s)` URLs become URL blocks.
-- Stop reasons map to OpenAI finish reasons (`max_tokens` → `length`, `tool_use` → `tool_calls`,
-  `refusal` → `content_filter`, everything else → `stop`).
-- **`n > 1` is rejected** with a 400.
-- Streaming usage is emitted as a final usage-only chunk when the client sends
-  `stream_options: { include_usage: true }` (and is always captured internally for token budgets).
-- No embeddings support: `/v1/embeddings` routed here returns 404 `unsupported_endpoint`.
-
-</Accordion>
-
-</Tab>
-<Tab title="google">
-
-Translation provider for the Google Gemini API (`generateContent`, streaming included).
-
-```yaml
-providers:
-  google:
-    type: google
-    apiKey: ${GEMINI_API_KEY}
-```
-
-| Option | Type | Default | Description |
-| --- | --- | --- | --- |
-| `apiKey` | string | required | Gemini API key (sent as the `x-goog-api-key` header, never in the URL). |
-| `baseUrl` | string | `https://generativelanguage.googleapis.com/v1beta` | API base URL. |
-
-<Accordion title="Translation notes">
-
-- `system`/`developer` messages become `systemInstruction`; consecutive same-role messages are
-  merged into one turn (Gemini requires alternating user/model turns).
-- A `models/` prefix on the model name is stripped, so `models/gemini-2.0-flash` and
-  `gemini-2.0-flash` both work.
-- Tool schemas are sanitized: `$schema` and `additionalProperties` are stripped, and nullable type
-  unions (`type: ["string", "null"]`) are rewritten to `type: "string", nullable: true`.
-- `response_format: json_object | json_schema` map to `responseMimeType: application/json`
-  (+ `responseSchema`).
-- **`n > 1` is rejected** with a 400.
-- Safety blocks surface as `finish_reason: "content_filter"`, not as errors.
-- Embeddings are supported for string inputs (`embedContent` / `batchEmbedContents`); token-array
-  inputs are rejected with a 400.
-
-</Accordion>
-
-</Tab>
-</Tabs>
-
-## `routing`
-
-Decides which provider (and which upstream model) serves each request. Evaluation is **first match
-wins**: `routes` in order, then `modelRules` in order, then `defaultProvider`.
-
-```yaml
-routing:
-  routes:
-    - name: smart-for-pro
-      when: 'request.model == "smart" && has(user.claims.tier) && user.claims.tier == "pro"'
-      provider: anthropic
-      model: claude-sonnet-4-5
-    - name: smart-default
-      when: 'request.model == "smart"'
-      provider: openai
-      model: gpt-4o-mini
-  modelRules:
-    - match: 'request.model.startsWith("claude-")'
-      provider: anthropic
-    - match: 'request.model.startsWith("gemini-")'
-      provider: google
-  defaultProvider: openai
-```
-
-| `routes[]` option | Type | Description |
+| Use case | Environment variable | Example |
 | --- | --- | --- |
-| `name` | string | Route name (shown in logs). Required. |
-| `when` | CEL expression | Required; must evaluate to exactly `true` to match. |
-| `provider` | string | A key of `providers`. Checked at startup. Required. |
-| `model` | string | Upstream model override. Optional — omit to keep the client-requested model. |
+| Complete configuration | `OMNI_CONFIG_JSON` | A JSON object containing all top-level blocks. |
+| Complex provider set | `OMNI_PROVIDERS_JSON` | A JSON object keyed by provider ID. |
+| Routing and model aliases | `OMNI_ROUTING_JSON` | A JSON object with routes, model rules, and a default. |
+| Rate-limit rules | `OMNI_RATE_LIMITS_JSON` | A JSON array of rules. |
+| Security providers | `OMNI_SECURITY_JSON` or `OMNI_SECURITY_PROVIDERS_JSON` | A JSON object or array. |
+| One simple value | `OMNI_STORAGE_TYPE`, `OMNI_DEFAULT_PROVIDER`, `OMNI_LOG_LEVEL`, or `OMNI_SECURITY_MODE` | `OMNI_STORAGE_TYPE=firestore`. |
+| One deeply nested override | `OMNI__…` | `OMNI__ROUTING__ROUTES__0__MODEL=gpt-4o-mini`. |
 
-| `modelRules[]` option | Type | Description |
+The precedence order is: `OMNI_CONFIG_JSON`, named JSON blocks, simple variables, then `OMNI__…`
+paths. Later values override earlier values at the same path.
+
+## Full configuration in one variable
+
+`OMNI_CONFIG_JSON` accepts every valid omni-model configuration field. Its value must be a JSON
+object. This is useful when your infrastructure manager supports a single JSON secret or variable.
+
+```sh
+export OMNI_CONFIG_JSON='{
+  "version": 1,
+  "server": { "logLevel": "info" },
+  "storage": { "type": "memory" },
+  "security": {
+    "providers": [
+      { "type": "jwt", "secret": "${OMNI_JWT_SECRET}", "algorithms": ["HS256"] }
+    ]
+  },
+  "providers": {
+    "openai": { "type": "openai", "apiKey": "${OPENAI_API_KEY}" }
+  },
+  "routing": { "defaultProvider": "openai" }
+}'
+```
+
+`OPENAI_API_KEY` and `OMNI_JWT_SECRET` remain independent environment variables. Bind them from
+Secret Manager rather than placing their values inside `OMNI_CONFIG_JSON`.
+
+## Composable JSON blocks
+
+Named blocks make complex configuration easy to edit independently. They merge with each other and
+with `OMNI_CONFIG_JSON`.
+
+```sh
+export OMNI_STORAGE_JSON='{"type":"firestore","collection":"omni_ratelimits"}'
+
+export OMNI_SECURITY_PROVIDERS_JSON='[
+  {"type":"firebase-app-check","appIds":["1:PROJECT_NUMBER:ios:APP_ID"]},
+  {"type":"firebase-auth","projectId":"${GOOGLE_CLOUD_PROJECT}"}
+]'
+
+export OMNI_PROVIDERS_JSON='{
+  "openai": {"type":"openai","apiKey":"${OPENAI_API_KEY}"},
+  "groq": {
+    "type":"openai-compatible",
+    "baseUrl":"https://api.groq.com/openai/v1",
+    "apiKey":"${GROQ_API_KEY}"
+  }
+}'
+```
+
+Available block variables are:
+
+| Variable | Configuration path | JSON type |
 | --- | --- | --- |
-| `match` | CEL expression | Required. |
-| `provider` | string | A key of `providers`. Checked at startup. Required. |
-| `model` | string | Upstream model override. Optional. |
+| `OMNI_CONFIG_JSON` | whole document | object |
+| `OMNI_SERVER_JSON` | `server` | object |
+| `OMNI_STORAGE_JSON` | `storage` | object |
+| `OMNI_SECURITY_JSON` | `security` | object |
+| `OMNI_SECURITY_PROVIDERS_JSON` | `security.providers` | array |
+| `OMNI_RATE_LIMITS_JSON` | `rateLimits` | array |
+| `OMNI_PROVIDERS_JSON` | `providers` | object |
+| `OMNI_ROUTING_JSON` | `routing` | object |
 
-If nothing matches, the request fails with a 404 `model_not_found` error (OpenAI-style). A
-condition that **throws** at evaluation time or returns a **non-boolean** counts as *no match* —
-one bad expression cannot take the proxy down. See [Model routing](/model-routing/routing) for the
-full evaluation model and recipes.
+## Granular `OMNI__…` paths
 
-### The CEL expression context
+Use a double underscore to traverse configuration objects. Uppercase snake case converts to the
+lower-camel-case property name. A numeric segment creates an array item.
 
-All `when`, `match` and `keyExpression` fields are
-[CEL](https://github.com/google/cel-spec) expressions evaluated against these variables:
+```sh
+# server.maxBodyBytes = 3000000
+OMNI__SERVER__MAX_BODY_BYTES=3000000
 
-| Variable | Type | Description | Example |
+# security.providers[0].type = "jwt"
+OMNI__SECURITY__PROVIDERS__0__TYPE=jwt
+
+# providers.openai.apiKey = "${OPENAI_API_KEY}"
+OMNI__PROVIDERS__OPENAI__API_KEY='${OPENAI_API_KEY}'
+
+# routing.routes[0].when = 'request.model == "smart"'
+OMNI__ROUTING__ROUTES__0__WHEN='request.model == "smart"'
+```
+
+Values beginning with `{`, `[`, or `"` are parsed as JSON. Bare JSON numbers, `true`, `false`, and
+`null` become their matching types. Other values remain strings. Use a JSON string such as `"123"`
+when a string could otherwise be mistaken for a number.
+
+For provider IDs or third-party option names that do not fit a shell-friendly path, set that object
+as JSON instead:
+
+```sh
+OMNI_PROVIDERS_JSON='{
+  "azure_openai-production": {
+    "type": "openai-compatible",
+    "baseUrl": "https://example.openai.azure.com/openai/v1",
+    "apiKey": "${AZURE_OPENAI_API_KEY}"
+  }
+}'
+OMNI_DEFAULT_PROVIDER=azure_openai-production
+```
+
+## Server
+
+Use `OMNI_SERVER_JSON` for several values, or the individual aliases below.
+
+| Path | Variable | Type | Default |
 | --- | --- | --- | --- |
-| `request.model` | string | The client-requested model (`""` if absent). | `request.model == "smart"` |
-| `request.stream` | bool | Whether the client requested streaming. | `!request.stream` |
-| `request.messageCount` | int | Number of entries in `messages`. | `request.messageCount > 20` |
-| `request.maxTokens` | number \| null | `max_completion_tokens` ?? `max_tokens`. | `request.maxTokens != null && request.maxTokens > 4096` |
-| `request.temperature` | number \| null | The request temperature. | `request.temperature != null && request.temperature > 1.0` |
-| `request.user` | string \| null | The OpenAI `user` field. | `request.user == "batch-job"` |
-| `user.id` | string \| null | Authenticated user id (verifier-dependent). | `user.id != null` |
-| `user.authenticated` | bool | Whether any verifier accepted the request. | `user.authenticated` |
-| `user.provider` | string \| null | The auth verifier type that authenticated the request. | `user.provider == "firebase-auth"` |
-| `user.claims` | map | Claims from the accepted credential(s). | `has(user.claims.tier) && user.claims.tier == "pro"` |
-| `device.id` | string \| null | Device identity (App Check app id, App Attest key id, ...). | `device.id != null` |
-| `http.method` | string | Request method. | `http.method == "POST"` |
-| `http.path` | string | Request path. | `http.path == "/v1/embeddings"` |
-| `http.ip` | string \| null | Best-effort client IP (subject to [`trustProxyHeaders`](#server)). | `http.ip == "203.0.113.7"` |
-| `http.headers` | map | Lowercased header names. `authorization`, `cookie`, `set-cookie` and `x-api-key` values are redacted to `"<redacted>"`. | `"x-canary" in http.headers` |
-| `now` | int | Epoch **milliseconds** — a plain number (CEL has no timestamp type; its `%` operator rejects it). | `now < 1893456000000` |
+| `server.logLevel` | `OMNI_LOG_LEVEL` | `debug` \| `info` \| `warn` \| `error` \| `silent` | `info` |
+| `server.trustProxyHeaders` | `OMNI__SERVER__TRUST_PROXY_HEADERS` | boolean | `false` |
+| `server.maxBodyBytes` | `OMNI__SERVER__MAX_BODY_BYTES` | positive integer | `2000000` |
+| `server.cors` | `OMNI__SERVER__CORS` | JSON object | none |
 
-<Warning>
-**Missing map keys throw.** In CEL, accessing a key that does not exist (e.g. `user.claims.tier`
-for a token without a `tier` claim) **throws** at evaluation time; it does not yield `null`. For
-routing and rate-limit conditions a throw is treated as "no match", so the typical symptom is a
-rule that silently never fires. Guard optional keys:
+Example browser CORS policy:
+
+```sh
+OMNI_SERVER_JSON='{
+  "logLevel":"info",
+  "cors":{
+    "allowOrigins":["https://app.example.com"],
+    "credentials":true,
+    "maxAge":3600
+  }
+}'
+```
+
+Set `trustProxyHeaders` only behind a reverse proxy or CDN that overwrites forwarding headers.
+
+## Storage
+
+`storage` controls rate-limit counters, token budgets, and Apple attestation state. Set
+`OMNI_STORAGE_TYPE` for the common case, then add options with `OMNI_STORAGE_JSON`.
+
+| Type | `OMNI_STORAGE_JSON` example | Use case |
+| --- | --- | --- |
+| `memory` | `{"type":"memory"}` | One process or local development. |
+| `firestore` | `{"type":"firestore","collection":"omni_ratelimits"}` | Cloud Run and Firebase with shared exact counters. |
+| `redis` | `{"type":"redis","url":"${REDIS_URL}","keyPrefix":"omni:"}` | Shared exact counters. |
+| `postgres` | `{"type":"postgres","url":"${DATABASE_URL}","table":"omni_kv","migrate":true}` | Shared exact counters and persistence. |
+| `cloudflare-kv` | `{"type":"cloudflare-kv","binding":"OMNI_KV"}` | Cloudflare Workers; eventually consistent limits. |
+| `durable-object` | `{"type":"durable-object","binding":"OMNI_DO"}` | Cloudflare Workers; exact counters. |
+
+`memory` is the default only when `storage` is omitted. It must not be used for shared limits across
+Cloud Run instances.
+
+## Security
+
+Every HTTP proxy deployment needs at least one security provider. Set `OMNI_SECURITY_MODE=all` to
+require every configured verifier; the default `any` accepts the first recognized valid credential.
+
+```sh
+OMNI_SECURITY_JSON='{
+  "mode":"all",
+  "publicPaths":["/healthz"],
+  "providers":[
+    {"type":"firebase-app-check","appIds":["1:PROJECT_NUMBER:ios:APP_ID"]},
+    {"type":"firebase-auth","projectId":"${GOOGLE_CLOUD_PROJECT}"}
+  ]
+}'
+```
+
+Supported provider types include `jwt`, `firebase-auth`, `firebase-app-check`, `supabase`,
+`apple-app-attest`, and `apple-device-check`. Their fields are supplied directly in the JSON entry.
+See the dedicated [security guides](/security/custom-jwt) for verifier-specific options and client
+headers.
+
+## Providers, endpoints, and model types
+
+`OMNI_PROVIDERS_JSON` is an object keyed by your provider IDs. Each entry must contain `type`.
+
+| Provider type | Required fields | Optional fields |
+| --- | --- | --- |
+| `openai` | `apiKey` | `baseUrl`, `organization`, `project`, request defaults |
+| `openai-compatible` | `apiKey` | `baseUrl` for Groq, OpenRouter, Together, Azure-compatible gateways, or another OpenAI wire endpoint |
+| `anthropic` | `apiKey` | `baseUrl`, API version and request defaults |
+| `google` | `apiKey` | `baseUrl`, request defaults |
+
+Set an endpoint per provider, not globally. This lets one route use OpenAI while another uses an
+OpenAI-compatible gateway:
+
+```sh
+OMNI_PROVIDERS_JSON='{
+  "openai": {"type":"openai","apiKey":"${OPENAI_API_KEY}"},
+  "anthropic": {"type":"anthropic","apiKey":"${ANTHROPIC_API_KEY}"},
+  "fast": {
+    "type":"openai-compatible",
+    "baseUrl":"https://api.groq.com/openai/v1",
+    "apiKey":"${GROQ_API_KEY}"
+  }
+}'
+```
+
+Provider IDs are your stable routing names. Client model names do not have to match upstream model
+names; routes and model rules can replace them.
+
+## Model routing
+
+Set `OMNI_ROUTING_JSON` to configure client-facing aliases, conditional routes, model rules, and a
+fallback provider. Routes run in order; the first `when` expression that evaluates to true wins.
+
+```sh
+OMNI_ROUTING_JSON='{
+  "routes":[
+    {
+      "name":"smart-pro",
+      "when":"request.model == \"smart\" && has(user.claims.tier) && user.claims.tier == \"pro\"",
+      "provider":"anthropic",
+      "model":"claude-sonnet-4-5"
+    },
+    {
+      "name":"smart-default",
+      "when":"request.model == \"smart\"",
+      "provider":"fast",
+      "model":"llama-3.3-70b-versatile"
+    }
+  ],
+  "modelRules":[
+    {"match":"request.model.startsWith(\"gpt-\")","provider":"openai"},
+    {"match":"request.model.startsWith(\"claude-\")","provider":"anthropic"}
+  ],
+  "defaultProvider":"openai"
+}'
+```
+
+For a surgical update, override one generated route field:
+
+```sh
+OMNI__ROUTING__ROUTES__1__MODEL=llama-3.3-70b-versatile
+```
+
+All `when`, `match`, and rate-limit `when` expressions use CEL. Guard optional claims with
+`has(user.claims.tier)` before reading them. See [Model routing](/model-routing/routing) for the
+available request, user, device, HTTP, and time facts.
+
+## Rate limits
+
+`OMNI_RATE_LIMITS_JSON` is an ordered JSON array. Every rule needs a `name`, a key strategy, and at
+least one `requests` or `tokens` limit.
+
+```sh
+OMNI_RATE_LIMITS_JSON='[
+  {
+    "name":"per-user-requests",
+    "key":"user",
+    "requests":{"limit":60,"window":"1m"}
+  },
+  {
+    "name":"free-tier-tokens",
+    "when":"has(user.claims.tier) && user.claims.tier == \"free\"",
+    "key":"user",
+    "tokens":{"limit":200000,"window":"1d"}
+  }
+]'
+```
+
+`key` can be `user`, `device`, `ip`, `global`, or `expression`. Use `keyExpression` when the key
+is `expression`. Durations are `500ms`, `30s`, `5m`, `1h`, or `1d`.
+
+## Validation and interpolation
+
+The service validates the fully merged environment configuration at startup. Unknown top-level
+fields, invalid JSON, missing secrets, unknown providers, invalid CEL, or invalid component options
+stop the revision before it serves traffic.
+
+String values support:
 
 ```text
-has(user.claims.tier) && user.claims.tier == "pro"
-"tier" in user.claims && user.claims["tier"] == "pro"
+${NAME}             required environment value
+${NAME:-fallback}   environment value with a fallback
+$${NAME}            a literal ${NAME}
 ```
 
-And remember: only the boolean `true` counts as a match — write comparisons, not bare values.
-</Warning>
-
-## Environment variable interpolation
-
-Every string value in the file supports environment references, resolved **before** validation, so
-secrets never live in the config file:
-
-| Syntax | Meaning |
-| --- | --- |
-| `${VAR}` | The value of `VAR`. A missing variable is a startup `ConfigError`. |
-| `${VAR:-default}` | The value of `VAR`, or `default` when `VAR` is unset. |
-| `$${VAR}` | Escape: the literal string `${VAR}`. |
-
-```yaml
-providers:
-  openai:
-    type: openai
-    apiKey: ${OPENAI_API_KEY}
-    baseUrl: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
-```
-
-## Related
-
-<CardGroup cols={2}>
-  <Card title="Model routing" icon="route" href="/model-routing/routing">
-    Full route evaluation model, CEL recipes, and the failure policy.
-  </Card>
-  <Card title="Security" icon="shield" href="/security/custom-jwt">
-    Per-verifier setup guides, client protocols, and header details.
-  </Card>
-  <Card title="Rate limits" icon="gauge" href="/reference/configuration">
-    Request windows and token budgets with worked examples.
-  </Card>
-  <Card title="Deploy" icon="rocket" href="/quickstart">
-    Container image, `OMNI_CONFIG`, and platform-specific setup.
-  </Card>
-</CardGroup>
+Use `omni-model init` to print a starter set of environment blocks, and
+`omni-model deploy` to send those blocks to a supported target.

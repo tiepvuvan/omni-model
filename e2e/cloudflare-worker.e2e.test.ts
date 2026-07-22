@@ -1,4 +1,5 @@
 import { type ChildProcess, spawn } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -23,6 +24,10 @@ const MODEL = process.env.OMNI_E2E_MODEL ?? "openai/gpt-4o-mini";
 const PORT = Number(process.env.OMNI_E2E_WORKER_PORT ?? 8799);
 const BASE = `http://127.0.0.1:${PORT}`;
 const WRANGLER_CONFIG = fileURLToPath(new URL("./cloudflare/wrangler.jsonc", import.meta.url));
+const CONFIG_JSON = readFileSync(
+  fileURLToPath(new URL("./cloudflare/omni.e2e.worker.json", import.meta.url)),
+  "utf8",
+);
 
 /**
  * Resolve the wrangler CLI entry. wrangler is a devDependency of
@@ -71,6 +76,8 @@ describe.skipIf(!KEY)("E2E: omni-model Cloudflare Worker (workerd) → OpenRoute
         "--local",
         "--var",
         `OPENROUTER_API_KEY:${KEY}`,
+        "--var",
+        `OMNI_CONFIG_JSON:${CONFIG_JSON}`,
         "--log-level",
         "warn",
       ],

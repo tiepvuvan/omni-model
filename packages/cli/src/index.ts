@@ -1,8 +1,7 @@
 #!/usr/bin/env node
-import { existsSync, writeFileSync } from "node:fs";
-import { cancel, confirm, intro, isCancel, log, outro, text } from "@clack/prompts";
+import { cancel, intro, isCancel, log, note, outro, text } from "@clack/prompts";
 import { Command, Option } from "commander";
-import { type Answers, toYaml } from "./config.js";
+import { type Answers, configEnvironment, toEnv } from "./config.js";
 import { deploy } from "./deploy.js";
 import { answersFromFlags, type DeployFlags, FlagError, hasFlags } from "./flags.js";
 import { runWizard } from "./wizard.js";
@@ -11,8 +10,8 @@ import { runWizard } from "./wizard.js";
  * `omni-model` — deploy a self-hosted, OpenAI-compatible AI proxy.
  *
  *   npx omni-model deploy    interactive: pick a target, storage and limits,
- *                            write omni.yaml, then deploy it
- *   npx omni-model init      write omni.yaml and stop
+ *                            set environment configuration, then deploy it
+ *   npx omni-model init      print environment configuration and stop
  *
  * Both work non-interactively too: pass `--target` (plus `--auth`) and the
  * wizard is skipped entirely, so this is usable from CI and scripts.
@@ -42,25 +41,6 @@ async function resolveAnswers(flags: DeployFlags): Promise<Answers> {
     );
   }
   return runWizard();
-}
-
-async function writeConfig(path: string, yaml: string, yes: boolean): Promise<boolean> {
-  if (existsSync(path) && !yes) {
-    if (!isInteractive()) {
-      throw new FlagError(`${path} already exists — pass --yes to overwrite it.`);
-    }
-    const overwrite = await confirm({
-      message: `${path} exists — overwrite?`,
-      initialValue: false,
-    });
-    if (isCancel(overwrite) || !overwrite) {
-      log.info(`Kept your existing ${path}.`);
-      return false;
-    }
-  }
-  writeFileSync(path, yaml);
-  log.success(`Wrote ${path}`);
-  return true;
 }
 
 async function askServiceName(flagName: string | undefined, yes: boolean): Promise<string> {
@@ -107,7 +87,6 @@ function withAnswerFlags(cmd: Command): Command {
     .option("--apple-bundle-id <id>")
     .option("--requests-per-minute <n>", "per-caller request limit (0 = none)")
     .option("--tokens-per-day <n>", "per-caller token budget (0 = none)")
-    .option("-c, --config <path>", "config file to write", "omni.yaml")
     .option("-y, --yes", "skip confirmations", false);
 }
 
@@ -125,25 +104,26 @@ withAnswerFlags(program.command("deploy", { isDefault: true }))
   .action(async (opts: DeployFlags & Record<string, string | boolean | undefined>) => {
     intro("omni-model — deploy an AI proxy you own");
     const answers = await resolveAnswers(opts);
-    await writeConfig(opts.config as string, toYaml(answers), opts.yes === true);
     const serviceName = await askServiceName(opts.name as string | undefined, opts.yes === true);
     await deploy({
       answers,
-      configPath: opts.config as string,
+      configEnv: configEnvironment(answers),
       serviceName,
       yes: opts.yes === true,
       dryRun: opts.dryRun === true,
     });
-    outro("Done. Edit omni.yaml and re-run to change anything.");
+    outro(
+      "Done. Edit the service environment variables and deploy a new revision to change anything.",
+    );
   });
 
 withAnswerFlags(program.command("init"))
-  .description("Write an omni.yaml without deploying")
+  .description("Print environment configuration without deploying")
   .action(async (opts: DeployFlags & Record<string, string | boolean | undefined>) => {
     intro("omni-model — configure");
     const answers = await resolveAnswers(opts);
-    await writeConfig(opts.config as string, toYaml(answers), opts.yes === true);
-    outro(`Run \`omni-model deploy\` when you're ready to ship ${opts.config}.`);
+    note(toEnv(answers), "Set these environment variables on your platform");
+    outro("Run `omni-model deploy` when you're ready to ship.");
   });
 
 try {

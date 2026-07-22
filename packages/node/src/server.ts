@@ -8,7 +8,7 @@ import {
   createOmniApp,
   extractClientIp,
   type Logger,
-  parseConfig,
+  parseConfigObject,
   type RuntimeContext,
   type StorageAdapter,
   type StorageFactory,
@@ -43,8 +43,8 @@ async function firestoreStorageFactory(
 
 /** Options for {@link startServer}. */
 export interface StartOptions {
-  /** Raw YAML configuration, typically from `resolveConfigSource`. */
-  configYaml: string;
+  /** Raw configuration object, typically from `resolveConfigSource`. */
+  config: Record<string, unknown>;
   /**
    * Environment for `${VAR}` interpolation and component runtime access
    * (pass `process.env` in production). Defaults to `{}`.
@@ -90,7 +90,7 @@ async function closeStorage(storage: StorageAdapter): Promise<void> {
 }
 
 /**
- * Parse the YAML config, construct storage from the registry (built-ins plus
+ * Validate the environment-derived configuration, construct storage from the registry (built-ins plus
  * the Redis, Postgres and Firestore backends), build the omni app and serve it over
  * HTTP. The returned handle owns the storage lifecycle: `close()` stops the
  * HTTP server first, then closes the storage adapter.
@@ -98,11 +98,11 @@ async function closeStorage(storage: StorageAdapter): Promise<void> {
 export async function startServer(options: StartOptions): Promise<RunningServer> {
   const fetchImpl = options.fetch ?? globalThis.fetch;
   const env = await enrichGcpEnvironment({
-    configYaml: options.configYaml,
+    config: options.config,
     env: options.env ?? {},
     fetch: fetchImpl,
   });
-  const config = parseConfig(options.configYaml, env);
+  const config = parseConfigObject(options.config, env);
   const logger = options.logger ?? createConsoleLogger(config.server.logLevel);
 
   const registry = createDefaultRegistry();

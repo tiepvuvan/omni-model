@@ -34,7 +34,7 @@ export interface StorageAdapter extends KVStore, CounterStore {
 export interface StorageFactory {
   readonly type: string;
   /**
-   * `options` is the raw `storage:` block from the YAML config; factories
+   * `options` is the raw `storage` block from the environment configuration; factories
    * validate it themselves (with zod) so third-party backends can define
    * arbitrary options without changes to the core schema.
    */

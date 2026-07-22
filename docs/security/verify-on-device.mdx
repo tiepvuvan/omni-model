@@ -23,27 +23,20 @@ App Attest and DeviceCheck use the Secure Enclave — `DCAppAttestService`/`DCDe
 
 ## The config
 
-One config enables all four. `mode: any` means each request authenticates with exactly one method
-(each verifier reads a distinct header and returns "not mine" when its header is absent), so you can
-test them independently. This is [`e2e/omni.device-auth.yaml`](https://github.com/tiepvuvan/omni-model/blob/main/e2e/omni.device-auth.yaml):
+One `OMNI_SECURITY_JSON` value enables all four. `mode: any` means each request authenticates with
+exactly one method (each verifier reads a distinct header and returns "not mine" when its header is
+absent), so you can test them independently:
 
-```yaml
-security:
-  mode: any
-  providers:
-    - type: firebase-auth
-      projectId: ${FIREBASE_PROJECT_ID}          # plist PROJECT_ID
-    - type: firebase-app-check
-      projectNumber: "${FIREBASE_PROJECT_NUMBER}" # plist GCM_SENDER_ID
-    - type: apple-app-attest
-      teamId: ${APPLE_TEAM_ID}
-      bundleId: ${APPLE_BUNDLE_ID}               # e.g. co.unstatic.polyplan
-      environment: development                    # dev build → development; TestFlight/App Store → production
-    - type: apple-device-check
-      teamId: ${APPLE_TEAM_ID}
-      keyId: ${APPLE_DEVICECHECK_KEY_ID}
-      privateKey: ${APPLE_DEVICECHECK_KEY}       # .p8 PKCS8 PEM; a Worker/container secret
-      development: true                           # dev-provisioned app → Apple's development host
+```sh
+export OMNI_SECURITY_JSON='{
+  "mode":"any",
+  "providers":[
+    {"type":"firebase-auth","projectId":"${FIREBASE_PROJECT_ID}"},
+    {"type":"firebase-app-check","projectNumber":"${FIREBASE_PROJECT_NUMBER}"},
+    {"type":"apple-app-attest","teamId":"${APPLE_TEAM_ID}","bundleId":"${APPLE_BUNDLE_ID}","environment":"development"},
+    {"type":"apple-device-check","teamId":"${APPLE_TEAM_ID}","keyId":"${APPLE_DEVICECHECK_KEY_ID}","privateKey":"${APPLE_DEVICECHECK_KEY}","development":true}
+  ]
+}'
 ```
 
 <Warning>
@@ -113,16 +106,17 @@ A phone can't reach your Mac's `localhost`, so deploy the proxy first (or expose
 <Steps>
 <Step title="Deploy both targets">
 Deploy the [Cloudflare Worker](/installation/cloudflare) (use `storage: durable-object`) and a
-[container](/installation/fly-io) with this config, and set the secrets. On the Worker, the multi-line
-`.p8` goes in as a secret, not a `--var`:
+[container](/installation/fly-io) with this environment configuration, and set the secrets. On the
+Worker, the multi-line `.p8` goes in as a secret, not a `--var`:
 
 ```sh
 # Worker
-pnpm --filter omni-model-cloudflare exec wrangler secret put OMNI_CONFIG < e2e/omni.device-auth.yaml
 pnpm --filter omni-model-cloudflare exec wrangler secret put APPLE_DEVICECHECK_KEY < AuthKey_XXXX.p8
 pnpm --filter omni-model-cloudflare exec wrangler secret put OPENROUTER_API_KEY
+# Deploy with OMNI_STORAGE_JSON='{"type":"durable-object","binding":"OMNI_DO"}',
+# OMNI_SECURITY_JSON from above, OMNI_PROVIDERS_JSON, and OMNI_ROUTING_JSON.
 # ...plus FIREBASE_PROJECT_ID, FIREBASE_PROJECT_NUMBER, APPLE_TEAM_ID, APPLE_BUNDLE_ID,
-#         APPLE_DEVICECHECK_KEY_ID as vars/secrets
+#         APPLE_DEVICECHECK_KEY_ID as vars/secrets.
 ```
 
 Note both public URLs — you'll paste them into the app.

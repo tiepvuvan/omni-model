@@ -22,15 +22,15 @@ attaches the token automatically and you do not configure a verifier there.
 
 ## Configuration
 
-```yaml
-security:
-  mode: any
-  providers:
-    - type: firebase-app-check
-      # Omit on Cloud Run / GCE when this is the Firebase project:
-      projectNumber: "1234567890"
-      appIds:
-        - "1:1234567890:ios:abcdef123456"
+```sh
+export OMNI_SECURITY_JSON='{
+  "mode":"any",
+  "providers":[{
+    "type":"firebase-app-check",
+    "projectNumber":"1234567890",
+    "appIds":["1:1234567890:ios:abcdef123456"]
+  }]
+}'
 ```
 
 <ParamField path="projectNumber" type="string">
@@ -60,10 +60,8 @@ a subject outside the `appIds` allowlist, is rejected with a token-free reason.
 **GCP zero-config.** When the Node server runs on Cloud Run or Compute Engine
 and the Firebase project is the same GCP project, this is enough:
 
-```yaml
-security:
-  providers:
-    - type: firebase-app-check
+```sh
+export OMNI_SECURITY_PROVIDERS_JSON='[{"type":"firebase-app-check"}]'
 ```
 
 The runtime obtains the project number before it starts serving requests. This
@@ -90,13 +88,14 @@ curl https://your-proxy.example.com/v1/chat/completions \
 Use `mode: all` to require both an authentic app instance and a signed-in user
 on the same request:
 
-```yaml
-security:
-  mode: all
-  providers:
-    - type: firebase-app-check
-    - type: firebase-auth
-      projectId: ${GOOGLE_CLOUD_PROJECT}
+```sh
+export OMNI_SECURITY_JSON='{
+  "mode":"all",
+  "providers":[
+    {"type":"firebase-app-check"},
+    {"type":"firebase-auth","projectId":"${GOOGLE_CLOUD_PROJECT}"}
+  ]
+}'
 ```
 
 With `mode: all`, a missing credential fails with `credential missing for
@@ -118,6 +117,6 @@ GCP, use explicit `projectNumber` and `projectId` values instead.
     Hardware-backed iOS attestation.
   </Card>
   <Card title="Configuration reference" icon="gear" href="/reference/configuration">
-    The full YAML surface.
+    The full environment-variable surface.
   </Card>
 </CardGroup>

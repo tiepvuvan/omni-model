@@ -43,7 +43,7 @@ export APPLE_DEVICECHECK_KEY="$(cat AuthKey_XXXX.p8)"  # the .p8 PKCS8 PEM conte
 | **Firebase auth** | `pnpm test:e2e` | **Firebase Auth** (and **App Check**) verified on BOTH targets (Node + workerd): a REAL ID token minted from the project via Identity Toolkit is accepted (200); no/forged credential is rejected (401). Needs Firebase env (below). |
 | **Apple auth** | `pnpm test:e2e` | **DeviceCheck** server side (the proxy's ES256 JWT is accepted by Apple → Team/Key/`.p8` valid) and the **App Attest** challenge route, on both targets. Needs Apple env (below). Device-signed tokens themselves are verified via the example iOS app's on-device screen. |
 | **Firestore storage** | Firestore emulator (below) | The Node server (the Cloud Run backend) with `storage: firestore`: boots via firebase-admin and enforces rate limits from **Firestore counters** (a burst trips a 429). Runs against the local Firestore emulator, so no GCP needed. |
-| **Prebuilt worker** | `pnpm test:e2e` | The **forkless** deploy path. Builds the release artifact, asserts it stays a *single self-contained file* (a stray `.yaml` import would silently split it in two), then serves a directory holding only the two files a deployer downloads — and proves `OMNI_DO` is live via a real 429. **Needs no keys or network.** |
+| **Prebuilt worker** | `pnpm test:e2e` | The **forkless** deploy path. Builds the release artifact, asserts it stays a *single self-contained file* (a stray configuration-file import would silently split it in two), then serves a directory holding only the two files a deployer downloads — and proves `OMNI_DO` is live via a real 429. **Needs no keys or network.** |
 | **MacPaw** | `swift test` in `swift/OmniModelClientKit` (macOS) | MacPaw/OpenAI client + `OmniAuthMiddleware` → proxy: chat + streaming. |
 | **Foundation Models** | `xcodebuild test` in `swift/OmniModelFoundation` (iOS 27 sim) | `LanguageModelSession` → `OmniProxyExecutor` → proxy: `respond` + streaming. |
 
@@ -85,6 +85,6 @@ on Cloud Run), so the same config verified here deploys unchanged.
 - The Swift E2E tests **skip themselves** when no proxy is reachable on `:8788`, so `swift test` /
   `xcodebuild test` stay green offline (only the fast unit tests run).
 
-Never commit a key. `omni.e2e.yaml` and `cloudflare/omni.e2e.worker.yaml` read `${OPENROUTER_API_KEY}`
-from the environment; the Worker suite passes it to `wrangler dev --var`, so it is never written to a
-`.dev.vars` (or any) file.
+Never commit a key. The e2e JSON documents reference `${OPENROUTER_API_KEY}`; the Node and Worker
+suites provide it through the environment, and the Worker suite passes it to `wrangler dev --var`,
+so it is never written to a `.dev.vars` (or any) file.

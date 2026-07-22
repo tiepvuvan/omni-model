@@ -17,24 +17,15 @@ function metadataFetch(calls: string[]): typeof fetch {
   };
 }
 
-const APP_CHECK_CONFIG = `
-version: 1
-security:
-  providers:
-    - type: firebase-app-check
-`;
+const APP_CHECK_CONFIG = { security: { providers: [{ type: "firebase-app-check" }] } };
 
-const FIRESTORE_CONFIG = `
-version: 1
-storage:
-  type: firestore
-`;
+const FIRESTORE_CONFIG = { storage: { type: "firestore" } };
 
 describe("enrichGcpEnvironment", () => {
   it("discovers the project id and number for an App Check Cloud Run deployment", async () => {
     const calls: string[] = [];
     const env = await enrichGcpEnvironment({
-      configYaml: APP_CHECK_CONFIG,
+      config: APP_CHECK_CONFIG,
       env: { GCE_METADATA_HOST: METADATA_HOST },
       fetch: metadataFetch(calls),
     });
@@ -47,7 +38,13 @@ describe("enrichGcpEnvironment", () => {
   it("uses metadata before interpolating an explicit project-number reference", async () => {
     const calls: string[] = [];
     const env = await enrichGcpEnvironment({
-      configYaml: `${APP_CHECK_CONFIG}      projectNumber: \${OMNI_GCP_PROJECT_NUMBER}\n`,
+      config: {
+        security: {
+          providers: [
+            { type: "firebase-app-check", projectNumber: "$" + "{OMNI_GCP_PROJECT_NUMBER}" },
+          ],
+        },
+      },
       env: { GCE_METADATA_HOST: METADATA_HOST },
       fetch: metadataFetch(calls),
     });
@@ -58,7 +55,7 @@ describe("enrichGcpEnvironment", () => {
 
   it("discovers a project id for Firestore when no local project is configured", async () => {
     const env = await enrichGcpEnvironment({
-      configYaml: FIRESTORE_CONFIG,
+      config: FIRESTORE_CONFIG,
       env: { GCE_METADATA_HOST: METADATA_HOST },
       fetch: metadataFetch([]),
     });
@@ -66,12 +63,28 @@ describe("enrichGcpEnvironment", () => {
     expect(env.GOOGLE_CLOUD_PROJECT).toBe(PROJECT_ID);
   });
 
+  it("discovers project metadata for an environment-generated JSON config", async () => {
+    const env = await enrichGcpEnvironment({
+      config: {
+        storage: { type: "firestore" },
+        security: { providers: [{ type: "firebase-app-check" }] },
+      },
+      env: { GCE_METADATA_HOST: METADATA_HOST },
+      fetch: metadataFetch([]),
+    });
+
+    expect(env).toMatchObject({
+      GOOGLE_CLOUD_PROJECT: PROJECT_ID,
+      OMNI_GCP_PROJECT_NUMBER: PROJECT_NUMBER,
+    });
+  });
+
   it("preserves explicit project values without contacting metadata", async () => {
     const fetchImpl: typeof fetch = async () => {
       throw new Error("metadata should not be requested");
     };
     const env = await enrichGcpEnvironment({
-      configYaml: APP_CHECK_CONFIG,
+      config: APP_CHECK_CONFIG,
       env: {
         GOOGLE_CLOUD_PROJECT: "other-project",
         OMNI_GCP_PROJECT_NUMBER: "9876543210",
@@ -90,7 +103,7 @@ describe("enrichGcpEnvironment", () => {
       throw new Error("metadata should not be requested");
     };
     const env = await enrichGcpEnvironment({
-      configYaml: "version: 1\nstorage:\n  type: memory\n",
+      config: { storage: { type: "memory" } },
       env: {},
       fetch: fetchImpl,
     });
@@ -103,7 +116,7 @@ describe("enrichGcpEnvironment", () => {
       throw new Error("metadata should not be requested");
     };
     const env = await enrichGcpEnvironment({
-      configYaml: FIRESTORE_CONFIG,
+      config: FIRESTORE_CONFIG,
       env: { FIRESTORE_EMULATOR_HOST: "127.0.0.1:8080" },
       fetch: fetchImpl,
     });
@@ -116,7 +129,7 @@ describe("enrichGcpEnvironment", () => {
       throw new Error("metadata server unavailable");
     };
     const env = await enrichGcpEnvironment({
-      configYaml: APP_CHECK_CONFIG,
+      config: APP_CHECK_CONFIG,
       env: {},
       fetch: fetchImpl,
     });

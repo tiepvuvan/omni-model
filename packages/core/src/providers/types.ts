@@ -64,7 +64,7 @@ export interface ChatProvider {
 export interface ProviderFactory {
   readonly type: string;
   /**
-   * `id` is the config key; `options` the raw provider block from the YAML
+   * `id` is the config key; `options` the raw provider block from the environment
    * config. Factories validate their own options with zod.
    */
   create(id: string, options: Record<string, unknown>, runtime: RuntimeContext): ChatProvider;

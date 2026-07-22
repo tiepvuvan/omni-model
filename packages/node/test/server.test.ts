@@ -7,40 +7,23 @@ import { type RunningServer, startServer } from "../src/server.js";
  * construct in the real registry) and a dummy OpenAI provider. No request in
  * this suite ever reaches the upstream, so the key is never used.
  */
-const CONFIG_YAML = `
-version: 1
-server:
-  logLevel: silent
-storage:
-  type: memory
-security:
-  providers:
-    - type: jwt
-      secret: test-shared-secret
-providers:
-  main:
-    type: openai
-    apiKey: sk-test
-routing:
-  defaultProvider: main
-`;
+const CONFIG = {
+  version: 1,
+  server: { logLevel: "silent" },
+  storage: { type: "memory" },
+  security: { providers: [{ type: "jwt", secret: "test-shared-secret" }] },
+  providers: { main: { type: "openai", apiKey: "sk-test" } },
+  routing: { defaultProvider: "main" },
+};
 
-const GCP_APP_CHECK_CONFIG = `
-version: 1
-server:
-  logLevel: silent
-storage:
-  type: memory
-security:
-  providers:
-    - type: firebase-app-check
-providers:
-  main:
-    type: openai
-    apiKey: sk-test
-routing:
-  defaultProvider: main
-`;
+const GCP_APP_CHECK_CONFIG = {
+  version: 1,
+  server: { logLevel: "silent" },
+  storage: { type: "memory" },
+  security: { providers: [{ type: "firebase-app-check" }] },
+  providers: { main: { type: "openai", apiKey: "sk-test" } },
+  routing: { defaultProvider: "main" },
+};
 
 const METADATA_HOST = "metadata.test";
 const METADATA_BASE_URL = `http://${METADATA_HOST}/computeMetadata/v1/project/`;
@@ -55,7 +38,7 @@ describe("startServer", () => {
 
   it("binds an ephemeral port, serves the app and closes cleanly", async () => {
     running = await startServer({
-      configYaml: CONFIG_YAML,
+      config: CONFIG,
       port: 0,
       hostname: "127.0.0.1",
       logger: silentLogger,
@@ -87,7 +70,7 @@ describe("startServer", () => {
   it("binds an ephemeral port when PORT=0 in the environment", async () => {
     // Regression: `Number(env.PORT) || 8787` coerced an explicit "0" to 8787.
     running = await startServer({
-      configYaml: CONFIG_YAML,
+      config: CONFIG,
       env: { PORT: "0" },
       hostname: "127.0.0.1",
       logger: silentLogger,
@@ -109,7 +92,7 @@ describe("startServer", () => {
     };
 
     running = await startServer({
-      configYaml: GCP_APP_CHECK_CONFIG,
+      config: GCP_APP_CHECK_CONFIG,
       env: { GCE_METADATA_HOST: METADATA_HOST },
       fetch: metadataFetch,
       port: 0,
@@ -125,21 +108,14 @@ describe("startServer", () => {
   });
 
   it("rejects an unknown storage type, listing redis and postgres as registered", async () => {
-    const yaml = `
-version: 1
-server:
-  logLevel: silent
-storage:
-  type: no-such-storage
-providers:
-  main:
-    type: openai
-    apiKey: sk-test
-routing:
-  defaultProvider: main
-`;
     const error: unknown = await startServer({
-      configYaml: yaml,
+      config: {
+        server: { logLevel: "silent" },
+        storage: { type: "no-such-storage" },
+        security: { providers: [{ type: "jwt", secret: "test-shared-secret" }] },
+        providers: { main: { type: "openai", apiKey: "sk-test" } },
+        routing: { defaultProvider: "main" },
+      },
       port: 0,
       hostname: "127.0.0.1",
       logger: silentLogger,
@@ -158,9 +134,9 @@ routing:
     expect(message).toContain("redis");
   });
 
-  it("rejects invalid YAML with ConfigError before binding a port", async () => {
+  it("rejects an invalid environment-derived config before binding a port", async () => {
     const error: unknown = await startServer({
-      configYaml: "version: [unclosed",
+      config: { version: 2 },
       port: 0,
       logger: silentLogger,
     }).then(

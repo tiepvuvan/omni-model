@@ -3,7 +3,7 @@
 A self-hosted, OpenAI-compatible AI proxy for your mobile and web apps. Your provider API keys
 stay on your infrastructure — never inside an app binary. Clients authenticate with what they
 already have (Firebase App Check, Apple App Attest / DeviceCheck, Firebase Auth, Supabase, or any
-JWT), and one YAML file configures rate limits (request windows **and** token budgets) plus
+JWT), and environment variables configure rate limits (request windows **and** token budgets) plus
 CEL-expression model routing across OpenAI, Anthropic, Google Gemini and any OpenAI-compatible
 endpoint. Deploy it to Cloudflare Workers or any container platform.
 
@@ -11,9 +11,8 @@ endpoint. Deploy it to Cloudflare Workers or any container platform.
 npx omni-model deploy
 ```
 
-Picks your platform, storage, auth and limits, writes an `omni.yaml`, and ships it — no fork, no
-clone, no build. Your API keys never enter the config: it emits `${ENV}` references and tells you
-which secrets to set.
+Picks your platform, storage, auth and limits, then ships it — no fork, no clone, no build. Runtime
+configuration uses environment variables, so credentials stay in your platform's secret store.
 
 ## How it works
 
@@ -69,7 +68,15 @@ included.
 ```sh
 pnpm install
 pnpm build
-OPENAI_API_KEY=sk-... node packages/node/dist/cli.js --config examples/omni-minimal.yaml
+OPENAI_API_KEY=sk-... \
+OMNI_JWT_SECRET=dev-secret \
+OMNI__STORAGE__TYPE=memory \
+OMNI__SECURITY__PROVIDERS__0__TYPE=jwt \
+OMNI__SECURITY__PROVIDERS__0__SECRET='${OMNI_JWT_SECRET}' \
+OMNI__PROVIDERS__OPENAI__TYPE=openai \
+OMNI__PROVIDERS__OPENAI__API_KEY='${OPENAI_API_KEY}' \
+OMNI__ROUTING__DEFAULT_PROVIDER=openai \
+node packages/node/dist/cli.js
 ```
 
 Then talk to it with any OpenAI client:
@@ -82,23 +89,25 @@ curl http://localhost:8787/v1/chat/completions \
 
 ### Docker (no clone required)
 
-Pull the prebuilt multi-arch image from GHCR and pass your config — no fork, no build:
+Pull the prebuilt multi-arch image from GHCR and pass environment variables — no fork, no build:
 
 ```sh
 docker run -p 8787:8787 \
   -e OPENAI_API_KEY=sk-... \
-  -e OMNI_CONFIG="$(cat omni.yaml)" \
+  -e OMNI_JWT_SECRET=replace-with-a-long-random-secret \
+  -e OMNI__STORAGE__TYPE=memory \
+  -e OMNI__SECURITY__PROVIDERS__0__TYPE=jwt \
+  -e 'OMNI__SECURITY__PROVIDERS__0__SECRET=${OMNI_JWT_SECRET}' \
+  -e OMNI__PROVIDERS__OPENAI__TYPE=openai \
+  -e 'OMNI__PROVIDERS__OPENAI__API_KEY=${OPENAI_API_KEY}' \
+  -e OMNI__ROUTING__DEFAULT_PROVIDER=openai \
   ghcr.io/tiepvuvan/omni-model:latest
 ```
 
-Or mount the config file instead of inlining it:
-
-```sh
-docker run -p 8787:8787 \
-  -e OPENAI_API_KEY=sk-... \
-  -v ./omni.yaml:/app/omni.yaml:ro \
-  ghcr.io/tiepvuvan/omni-model:latest
-```
+Use `OMNI__...` variables for providers, authentication, storage, limits, and routing. The
+[configuration reference](docs/reference/configuration.mdx) maps every configuration path to an
+environment-variable name. `OMNI_CONFIG_JSON` and named JSON blocks such as
+`OMNI_PROVIDERS_JSON` and `OMNI_ROUTING_JSON` make complex configuration concise.
 
 **Updating** is just `docker pull ghcr.io/tiepvuvan/omni-model:latest` and a restart — pin to a
 version tag (`:1.2.3` / `:1.2`) for reproducible deploys, or `:edge` to track `main`. To build the
@@ -115,10 +124,9 @@ image yourself instead: `docker build -t omni-model .`.
   provider API keys.
 - **Cloudflare Workers** — the button forks the repo into your account (Workers bindings + secrets
   live there), compiles the workspace packages and provisions the `OMNI_DO` Durable Object for you.
-  One step is left, and the proxy tells you so: until you run
-  `wrangler secret put OPENAI_API_KEY`, every request answers `missing environment variable
-  "OPENAI_API_KEY"` — set it and you're live. Edit `apps/cloudflare/omni.yaml` to change the
-  config (or set the `OMNI_CONFIG` secret to reconfigure without a rebuild).
+  Set your `OMNI__...` or `OMNI_*_JSON` configuration variables and provider secrets in the
+  Workers dashboard before the first request. Edit those variables to create a new configuration
+  revision; no configuration file is bundled into the worker.
 - **Cloud Run** — no fork. The button builds the repository, supplies a working OpenAI + JWT
   starter config, and asks for your OpenAI key and JWT signing secret. It intentionally starts at
   one instance with in-memory counters; follow the [Cloud Run guide](docs/installation/cloud-run.mdx)
@@ -131,7 +139,10 @@ of the container image. Download it, supply config at runtime, done:
 ```sh
 curl -LO https://github.com/tiepvuvan/omni-model/releases/latest/download/worker.js
 curl -LO https://github.com/tiepvuvan/omni-model/releases/latest/download/wrangler.jsonc
-npx wrangler deploy --var OMNI_CONFIG:"$(cat omni.yaml)"
+npx wrangler deploy \
+  --var OMNI__STORAGE__TYPE:durable-object \
+  --var OMNI__PROVIDERS__OPENAI__TYPE:openai \
+  --var OMNI__ROUTING__DEFAULT_PROVIDER:openai
 ```
 
 No fork, no clone, no build. You trade push-to-deploy CI for a `curl` + redeploy on updates.
@@ -155,50 +166,28 @@ for await (const c of stream) render(c.choices?.[0]?.delta?.content ?? "");
 
 ## Configuration
 
-One YAML file. The interesting parts:
+Use `OMNI_CONFIG_JSON` for a complete configuration, named JSON blocks for providers/routing, or
+`OMNI__...` variables for individual fields. This example combines all three:
 
-```yaml
-version: 1
-
-security:
-  providers:
-    # Only authentic installs of your app get through.
-    - type: firebase-app-check
-      projectNumber: "1234567890"
-
-rateLimits:
-  - name: per-device-requests
-    key: device
-    requests: { limit: 30, window: 1m }
-  - name: per-device-daily-tokens
-    key: device
-    tokens: { limit: 150000, window: 1d }
-
-providers:
-  openai:
-    type: openai
-    apiKey: ${OPENAI_API_KEY}
-  anthropic:
-    type: anthropic
-    apiKey: ${ANTHROPIC_API_KEY}
-
-routing:
-  routes:
-    # The app asks for "smart"; you decide what that means today.
-    - name: smart
-      when: 'request.model == "smart"'
-      provider: anthropic
-      model: claude-sonnet-4-5
-  modelRules:
-    - match: 'request.model.startsWith("gpt-")'
-      provider: openai
-  defaultProvider: openai
+```sh
+OMNI_SECURITY_PROVIDERS_JSON='[{"type":"firebase-app-check","projectNumber":"${FIREBASE_PROJECT_NUMBER}"}]'
+OMNI_RATE_LIMITS_JSON='[
+  {"name":"per-device-requests","key":"device","requests":{"limit":30,"window":"1m"}},
+  {"name":"per-device-daily-tokens","key":"device","tokens":{"limit":150000,"window":"1d"}}
+]'
+OMNI_PROVIDERS_JSON='{
+  "openai":{"type":"openai","apiKey":"${OPENAI_API_KEY}"},
+  "anthropic":{"type":"anthropic","apiKey":"${ANTHROPIC_API_KEY}"}
+}'
+OMNI_ROUTING_JSON='{
+  "routes":[{"name":"smart","when":"request.model == \"smart\"","provider":"anthropic","model":"claude-sonnet-4-5"}],
+  "modelRules":[{"match":"request.model.startsWith(\"gpt-\")","provider":"openai"}],
+  "defaultProvider":"openai"
+}'
 ```
 
-Swap which model backs `"smart"` in config — no app release required. Every option (all six
-auth verifier types, the full CEL expression context, storage backends, provider translation
-notes) is documented in [docs/reference/configuration.mdx](docs/reference/configuration.mdx), with a complete annotated
-example in [examples/omni.yaml](examples/omni.yaml).
+Swap which model backs `"smart"` by updating an environment variable—no app release required.
+Every option is documented in [docs/reference/configuration.mdx](docs/reference/configuration.mdx).
 
 ## Using it from your app
 

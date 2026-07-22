@@ -1,7 +1,7 @@
 # omni-model — Contributor Guide
 
 omni-model is an OpenAI-compatible AI proxy you deploy yourself — to Cloudflare Workers or any
-container platform (Fly.io, Cloud Run, AWS). One YAML file configures client authentication
+container platform (Fly.io, Cloud Run, AWS). Environment variables configure client authentication
 (Firebase App Check, Apple DeviceCheck / App Attest, Firebase Auth, Supabase, custom JWT),
 rate limits (request windows + token budgets), and CEL-expression-based model routing across
 OpenAI-compatible, Anthropic, and Google Gemini upstreams.
@@ -12,7 +12,7 @@ This file is the contract for contributors (human or AI). Read it before changin
 
 ```
 packages/core              Runtime-agnostic engine. No Node APIs, no platform APIs.
-  src/config/              YAML schema (zod) + loader with ${ENV} interpolation
+  src/config/              Environment schema (zod) + loader with ${ENV} interpolation
   src/openai/              OpenAI wire types (permissive; unknown fields pass through)
   src/auth/                AuthVerifier contract + built-in verifiers (jwt family, apple/)
   src/providers/           ChatProvider contract + openai / anthropic / google adapters
@@ -124,8 +124,8 @@ on success. Need extra endpoints (challenge flows)? Use `routes`.
 `upstreamErrorToResult`; honor `options.signal`; guarantee the stream `usage` promise contract.
 
 Then: add the factory to `createDefaultRegistry` (`core/src/registry.ts`), export it from the
-package barrel, add tests, and document its YAML options in `docs/reference/configuration.mdx` and
-`examples/omni.yaml`.
+package barrel, add tests, and document its environment variables in
+`docs/reference/configuration.mdx`.
 
 ## Style
 
@@ -133,7 +133,7 @@ package barrel, add tests, and document its YAML options in `docs/reference/conf
   decisions (why, not what).
 - Small files, one concern each. Match the tone of `src/storage/memory.ts`.
 - No new dependencies without discussion — edge compatibility (Workers) is a hard requirement
-  for anything core imports. Current core deps: hono, zod, yaml, jose, @marcbachmann/cel-js,
+  for anything core imports. Current core deps: hono, zod, jose, @marcbachmann/cel-js,
   cbor2, @peculiar/x509.
 - Never log tokens, API keys, or request bodies. Redact before logging.
 
@@ -141,6 +141,6 @@ package barrel, add tests, and document its YAML options in `docs/reference/conf
 
 1. `pnpm ci` green.
 2. New/changed behavior covered by tests (including failure paths).
-3. Config surface changes reflected in `examples/omni.yaml` + `docs/reference/configuration.mdx`.
+3. Config surface changes reflected in `docs/reference/configuration.mdx`.
 4. No edits to contract files (`*/types.ts`, `config/schema.ts`) without calling it out
    prominently in the PR description — downstream embedders depend on them.

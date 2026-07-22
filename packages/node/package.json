@@ -1,7 +1,7 @@
 {
   "name": "@omni-model/node",
   "version": "0.1.0",
-  "description": "Node.js server for omni-model: loads a YAML config file and serves the proxy (for Docker, Fly.io, Cloud Run, and bare Node).",
+  "description": "Node.js server for omni-model: loads environment configuration and serves the proxy (for Docker, Fly.io, Cloud Run, and bare Node).",
   "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",

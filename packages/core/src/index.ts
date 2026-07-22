@@ -1,6 +1,7 @@
 export * from "./auth/apple/index.js";
 export * from "./auth/types.js";
 export * from "./auth/verifiers/index.js";
+export * from "./config/env.js";
 export * from "./config/load.js";
 export * from "./config/schema.js";
 export * from "./errors.js";

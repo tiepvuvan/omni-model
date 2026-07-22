@@ -2,17 +2,22 @@ import {
   createDefaultRegistry,
   createOmniApp,
   MemoryStorageAdapter,
-  parseConfig,
+  parseEnvironmentConfig,
 } from "@omni-model/core";
 import { describe, expect, it } from "vitest";
-import { type Answers, type AuthId, type ProviderChoice, toYaml } from "../src/config.js";
+import {
+  type Answers,
+  type AuthId,
+  configEnvironment,
+  type ProviderChoice,
+} from "../src/config.js";
 import { storagesFor, TARGETS, type TargetId } from "../src/targets.js";
 
 /**
  * Stronger than the schema test: every config the wizard can emit must actually
  * BUILD an app.
  *
- * `parseConfig` only validates the two-step schema — it pins the discriminating
+ * `parseEnvironmentConfig` only validates the two-step schema — it pins the discriminating
  * `type` and stops. The per-component options (a provider's apiKey, a
  * verifier's teamId, the DeviceCheck PEM, CEL routing, duplicate rule names)
  * are validated by each factory at `createOmniApp` time, which is where a bad
@@ -89,7 +94,7 @@ describe("generated config builds a real app", () => {
   it("createOmniApp accepts every combination the wizard can emit", async () => {
     for (const a of everyAnswer()) {
       const label = `${a.target}/${a.storage}/${a.provider.name}/[${a.auth.join(",")}]`;
-      const config = parseConfig(toYaml(a), TEST_ENV);
+      const config = parseEnvironmentConfig({ ...TEST_ENV, ...configEnvironment(a) });
       await expect(
         createOmniApp({
           config,
@@ -114,7 +119,7 @@ describe("generated config builds a real app", () => {
       tokensPerDay: 0,
     };
     const app = await createOmniApp({
-      config: parseConfig(toYaml(answers), TEST_ENV),
+      config: parseEnvironmentConfig({ ...TEST_ENV, ...configEnvironment(answers) }),
       registry: createDefaultRegistry(),
       env: TEST_ENV,
       storage: new MemoryStorageAdapter(() => 0),

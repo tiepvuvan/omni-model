@@ -47,23 +47,16 @@ where the proxy runs and how clients authenticate.
     Best when you want a standard HTTP endpoint any OpenAI SDK can hit.
 
     <Steps>
-      <Step title="Write a config">
-        Save this as `omni.yaml`:
+      <Step title="Set configuration variables">
+        Set configuration directly in the deployment environment:
 
-        ```yaml
-        version: 1
-        storage:
-          type: memory
-        providers:
-          openai:
-            type: openai
-            apiKey: ${OPENAI_API_KEY}
-        rateLimits:
-          - name: per-user-requests
-            key: user
-            requests: { limit: 60, window: 1m }
-        routing:
-          defaultProvider: openai
+        ```sh
+        OMNI_STORAGE_TYPE=memory
+        OMNI_JWT_SECRET=replace-with-a-long-random-secret
+        OMNI_SECURITY_PROVIDERS_JSON='[{"type":"jwt","secret":"${OMNI_JWT_SECRET}","algorithms":["HS256"]}]'
+        OMNI_PROVIDERS_JSON='{"openai":{"type":"openai","apiKey":"${OPENAI_API_KEY}"}}'
+        OMNI_RATE_LIMITS_JSON='[{"name":"per-user-requests","key":"user","requests":{"limit":60,"window":"1m"}}]'
+        OMNI_DEFAULT_PROVIDER=openai
         ```
 
         <Note>
@@ -78,7 +71,11 @@ where the proxy runs and how clients authenticate.
         ```sh
         docker run -p 8787:8787 \
           -e OPENAI_API_KEY=sk-... \
-          -e OMNI_CONFIG="$(cat omni.yaml)" \
+          -e OMNI_JWT_SECRET=replace-with-a-long-random-secret \
+          -e OMNI_STORAGE_TYPE=memory \
+          -e 'OMNI_SECURITY_PROVIDERS_JSON=[{"type":"jwt","secret":"${OMNI_JWT_SECRET}","algorithms":["HS256"]}]' \
+          -e 'OMNI_PROVIDERS_JSON={"openai":{"type":"openai","apiKey":"${OPENAI_API_KEY}"}}' \
+          -e OMNI_DEFAULT_PROVIDER=openai \
           ghcr.io/tiepvuvan/omni-model:latest
         ```
 

@@ -5,9 +5,9 @@
 // wrangler is a dependency of apps/cloudflare (not the repo root), so run it
 // through that package (or `cd apps/cloudflare` first).
 //
-// Configuration lives in apps/cloudflare/omni.yaml (bundled at deploy time);
-// the OMNI_CONFIG secret overrides it without a rebuild. Provider secrets
-// referenced by the config are set with:
+// Configuration and provider secrets are environment variables. For example:
+//   OMNI__PROVIDERS__OPENAI__API_KEY=${OPENAI_API_KEY}
+// Provider keys are set with:
 //   pnpm --filter omni-model-cloudflare exec wrangler secret put OPENAI_API_KEY
 {
   "$schema": "node_modules/wrangler/config-schema.json",
@@ -21,8 +21,6 @@
   // fails with `Could not resolve "@omni-model/cloudflare"`.
   // Filtered to the two packages the worker needs (`...` pulls in core).
   "build": { "command": "pnpm --filter @omni-model/cloudflare... run build" },
-  // Bundle the YAML config as a plain-text module (see apps/cloudflare/src/yaml.d.ts).
-  "rules": [{ "type": "Text", "globs": ["**/*.yaml"], "fallthrough": true }],
   // Default storage: a Durable Object (exact rate-limit counters). The class
   // is exported by apps/cloudflare/src/index.ts.
   "durable_objects": {

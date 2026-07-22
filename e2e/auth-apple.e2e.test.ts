@@ -35,26 +35,28 @@ const READY = Boolean(
   OPENROUTER && TEAM_ID && KEY_ID && P8 && BUNDLE_ID && PROJECT_ID && PROJECT_NUMBER,
 );
 
-const nodeConfig = readFileSync(
-  fileURLToPath(new URL("./omni.device-auth.yaml", import.meta.url)),
+const nodeConfigJson = readFileSync(
+  fileURLToPath(new URL("./omni.device-auth.json", import.meta.url)),
   "utf8",
 );
 
 /**
- * Worker config: Durable Object storage + the .p8 inlined as a YAML block
- * scalar. Inlining keeps the multi-line key inside the single OMNI_CONFIG
- * --var (which survives), rather than a separate --var (whose newlines get
- * mangled).
+ * Worker config: Durable Object storage + the .p8 inlined in the JSON
+ * document. Inlining keeps the multi-line key inside OMNI_CONFIG_JSON rather
+ * than a separate `--var` whose newlines get mangled.
  */
-function workerConfig(): string {
-  const indentedKey = (P8 as string)
-    .trimEnd()
-    .split("\n")
-    .map((line) => `        ${line}`)
-    .join("\n");
-  return nodeConfig
-    .replace("  type: memory", "  type: durable-object\n  binding: OMNI_DO")
-    .replace("      privateKey: ${APPLE_DEVICECHECK_KEY}", `      privateKey: |\n${indentedKey}`);
+function workerConfigJson(): string {
+  const config = JSON.parse(nodeConfigJson) as {
+    storage: Record<string, unknown>;
+    security: { providers: Array<Record<string, unknown>> };
+  };
+  const deviceCheck = config.security.providers.find(
+    (provider) => provider.type === "apple-device-check",
+  );
+  if (deviceCheck === undefined) throw new Error("device-check config is missing");
+  deviceCheck.privateKey = P8 as string;
+  config.storage = { type: "durable-object", binding: "OMNI_DO" };
+  return JSON.stringify(config);
 }
 
 interface Target {
@@ -67,14 +69,14 @@ const TARGETS: Target[] = [
   {
     name: "Node container",
     isWorker: false,
-    start: () => startNodeTarget(nodeConfig, process.env),
+    start: () => startNodeTarget(nodeConfigJson, process.env),
   },
   {
     name: "Cloudflare Worker (workerd)",
     isWorker: true,
     start: () =>
       startWorkerTarget({
-        omniConfig: workerConfig(),
+        omniConfigJson: workerConfigJson(),
         vars: {
           OPENROUTER_API_KEY: OPENROUTER ?? "",
           FIREBASE_PROJECT_ID: PROJECT_ID ?? "",
@@ -82,7 +84,7 @@ const TARGETS: Target[] = [
           APPLE_TEAM_ID: TEAM_ID ?? "",
           APPLE_BUNDLE_ID: BUNDLE_ID ?? "",
           APPLE_DEVICECHECK_KEY_ID: KEY_ID ?? "",
-          // APPLE_DEVICECHECK_KEY is inlined into OMNI_CONFIG above.
+          // APPLE_DEVICECHECK_KEY is inlined into OMNI_CONFIG_JSON above.
         },
         port: 8802,
       }),

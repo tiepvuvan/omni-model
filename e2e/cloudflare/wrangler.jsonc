@@ -7,8 +7,6 @@
   "name": "omni-model-e2e",
   "main": "worker.ts",
   "compatibility_date": "2025-06-01",
-  // Bundle the YAML config as a plain-text module (matches apps/cloudflare).
-  "rules": [{ "type": "Text", "globs": ["**/*.yaml"], "fallthrough": true }],
   // Durable Object storage — the worker-specific path the suite verifies.
   "durable_objects": {
     "bindings": [{ "name": "OMNI_DO", "class_name": "OmniStorageDurableObject" }]

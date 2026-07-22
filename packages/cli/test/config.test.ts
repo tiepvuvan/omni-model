@@ -1,11 +1,12 @@
-import { parseConfig } from "@omni-model/core";
+import { parseEnvironmentConfig } from "@omni-model/core";
 import { describe, expect, it } from "vitest";
 import {
   type Answers,
   type AuthId,
+  configEnvironment,
   envVarsFor,
   type ProviderChoice,
-  toYaml,
+  toEnv,
 } from "../src/config.js";
 import { STORAGE, storagesFor, TARGETS, type TargetId } from "../src/targets.js";
 
@@ -14,7 +15,7 @@ import { STORAGE, storagesFor, TARGETS, type TargetId } from "../src/targets.js"
  * the test that matters is: every combination it can produce parses against the
  * REAL schema in @omni-model/core (aliased to source by vitest.config.ts).
  *
- * A hand-written YAML template drifts from the schema silently; this catches it
+ * A generated environment block drifts from the schema silently; this catches it
  * offline, in milliseconds, with no deploy.
  */
 
@@ -92,29 +93,32 @@ describe("generated config", () => {
 
   it("every combination parses against the real schema", () => {
     for (const a of answers) {
-      const yaml = toYaml(a);
+      const env = { ...TEST_ENV, ...configEnvironment(a) };
       const label = `${a.target}/${a.storage}/${a.provider.name}/[${a.auth.join(",")}]`;
-      expect(() => parseConfig(yaml, TEST_ENV), `${label}\n${yaml}`).not.toThrow();
+      expect(() => parseEnvironmentConfig(env), `${label}\n${toEnv(a)}`).not.toThrow();
     }
   });
 
   it("never writes a secret value — provider keys stay env references", () => {
     for (const a of answers) {
-      const parsed = parseConfig(toYaml(a), TEST_ENV) as unknown as {
+      const parsed = parseEnvironmentConfig({
+        ...TEST_ENV,
+        ...configEnvironment(a),
+      }) as unknown as {
         providers: Record<string, { apiKey?: string }>;
       };
       // Interpolation resolved it to the test env value, proving it was a
       // reference in the file rather than a literal.
       expect(parsed.providers[a.provider.name]?.apiKey).toBe(TEST_ENV[a.provider.envVar]);
-      expect(toYaml(a)).toContain(`\${${a.provider.envVar}}`);
+      expect(JSON.stringify(configEnvironment(a))).toContain(`\${${a.provider.envVar}}`);
     }
   });
 
   it("tells the user about every env placeholder the config references", () => {
     for (const a of answers) {
-      const yaml = toYaml(a);
+      const rendered = toEnv(a);
       const referenced = new Set(
-        [...yaml.matchAll(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g)].map((m) => m[1] as string),
+        [...rendered.matchAll(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g)].map((m) => m[1] as string),
       );
       const advertised = new Set(envVarsFor(a));
       for (const v of referenced) {
@@ -127,13 +131,16 @@ describe("generated config", () => {
   });
 
   it("keys limits on the caller identity", () => {
-    const secured = toYaml({ ...(answers[0] as Answers), auth: ["firebase-auth"] });
-    expect(secured).toContain("key: user");
+    const secured = parseEnvironmentConfig({
+      ...TEST_ENV,
+      ...configEnvironment({ ...(answers[0] as Answers), auth: ["firebase-auth"] }),
+    });
+    expect(secured.rateLimits[0]?.key).toBe("user");
   });
 
   it("always emits at least one verifier", () => {
     for (const a of answers) {
-      const cfg = parseConfig(toYaml(a), TEST_ENV) as unknown as {
+      const cfg = parseEnvironmentConfig({ ...TEST_ENV, ...configEnvironment(a) }) as unknown as {
         security: { providers: unknown[] };
       };
       expect(cfg.security.providers.length).toBeGreaterThan(0);
@@ -141,10 +148,10 @@ describe("generated config", () => {
   });
 
   it("omits a limit rule when the user asks for none", () => {
-    const cfg = parseConfig(
-      toYaml({ ...(answers[0] as Answers), requestsPerMinute: 0, tokensPerDay: 0 }),
-      TEST_ENV,
-    ) as unknown as { rateLimits: unknown[] };
+    const cfg = parseEnvironmentConfig({
+      ...TEST_ENV,
+      ...configEnvironment({ ...(answers[0] as Answers), requestsPerMinute: 0, tokensPerDay: 0 }),
+    }) as unknown as { rateLimits: unknown[] };
     expect(cfg.rateLimits).toEqual([]);
   });
 });
