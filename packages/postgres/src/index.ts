@@ -8,4 +8,5 @@ export * from "./config-store.js";
 export * from "./migrations/run.js";
 export * from "./migrations/sql.js";
 export * from "./pool.js";
+export * from "./secret-store.js";
 export * from "./storage.js";

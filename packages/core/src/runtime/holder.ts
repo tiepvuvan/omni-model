@@ -1,5 +1,7 @@
 import type { OmniRegistry } from "../registry.js";
 import type { ExpressionEngine } from "../routing/types.js";
+import { resolveSecretRefs } from "../secrets/resolver.js";
+import type { SecretStore } from "../secrets/types.js";
 import type { StorageAdapter } from "../storage/types.js";
 import type { Logger, RuntimeContext } from "../types.js";
 import { type BuildBundleInput, buildBundle, type RuntimeBundle } from "./bundle.js";
@@ -7,7 +9,7 @@ import { type BuildBundleInput, buildBundle, type RuntimeBundle } from "./bundle
 /** Outcome of a reload attempt. Never a thrown error: see {@link BundleHolder.reload}. */
 export type ReloadResult =
   | { ok: true; bundle: RuntimeBundle }
-  | { ok: false; error: string; kind: "invalid_config" };
+  | { ok: false; error: string; kind: "invalid_config" | "unresolved_secret" };
 
 /** What the proxy can say about itself to `/readyz` and to operators. */
 export interface BundleStatus {
@@ -45,6 +47,11 @@ export interface BundleHolderDeps {
   logger?: Logger;
   /** Logger for the holder's own messages; defaults to `runtime.log`. */
   log?: Logger;
+  /**
+   * Decrypts `{"$secret": id}` references. Omit it and a document containing one
+   * is rejected with an actionable message rather than silently misconfigured.
+   */
+  secrets?: SecretStore;
 }
 
 function errorMessage(error: unknown): string {
@@ -75,8 +82,23 @@ export function createBundleHolder(deps: BundleHolderDeps): BundleHolder {
     }),
 
     async reload(document, options = {}): Promise<ReloadResult> {
+      // Secrets first: this is the only async step, and doing it before the
+      // synchronous build keeps the swap itself instantaneous.
+      let resolved: unknown;
+      try {
+        resolved = await resolveSecretRefs(document, deps.secrets ?? null);
+      } catch (error) {
+        lastError = errorMessage(error);
+        log.error("configuration rejected; keeping the previous configuration", {
+          revision: options.revision ?? null,
+          configured: bundle !== null,
+          error: lastError,
+        });
+        return { ok: false, error: lastError, kind: "unresolved_secret" };
+      }
+
       const input: BuildBundleInput = {
-        config: document,
+        config: resolved,
         registry: deps.registry,
         storage: deps.storage,
         engine: deps.engine,

@@ -30,7 +30,14 @@ import type { Logger, RuntimeContext } from "../types.js";
  * straight to `executeChat` / `executeEmbeddings`.
  */
 export interface RuntimeBundle {
-  /** The validated configuration this bundle was built from. */
+  /**
+   * The validated configuration this bundle was built from, with `${VAR}`
+   * references and `{"$secret": …}` references **already resolved**.
+   *
+   * It therefore contains credentials in plaintext. Never serialize it to a
+   * client, a log line, or an admin API response — return the *stored* revision
+   * document instead, which only ever holds references.
+   */
   readonly config: OmniConfig;
   /** Source revision, when it came from a `ConfigStore`. */
   readonly revision: number | null;

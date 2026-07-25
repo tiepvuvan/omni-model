@@ -127,6 +127,50 @@ restart, since there is nowhere else to read a corrected configuration from.
   — which means a referenced variable must exist in every replica.
 </Note>
 
+## Credentials managed from the dashboard
+
+`${VAR}` works when you control the environment. For credentials an admin adds at runtime, omni-model
+stores them **encrypted in the database** and configuration refers to them by id:
+
+```json
+{ "providers": { "openai": { "type": "openai", "apiKey": { "$secret": "3f7c…" } } } }
+```
+
+Set a 32-byte master key to enable this:
+
+```sh
+docker run -e OMNI_ENCRYPTION_KEY="$(openssl rand -base64 32)" ... ghcr.io/tiepvuvan/omni-model:latest
+```
+
+Values are sealed with AES-256-GCM. The key never leaves the environment, so a database dump — or a
+leaked backup — contains ciphertext and nothing else. A configuration revision holds only the
+reference, which is what makes revisions safe to diff, export and roll back.
+
+Rotating a credential is a write plus a reload: the reference keeps its id, so no configuration
+needs editing.
+
+<Warning>
+  **Back up `OMNI_ENCRYPTION_KEY` separately from the database.** Lose it and every stored secret is
+  unrecoverable — that is the point of holding it outside the database. Store it wherever you keep
+  your other break-glass credentials, not next to a database backup.
+</Warning>
+
+### Rotating the master key
+
+Each ciphertext records which key sealed it, so rotation needs no downtime and no migration pass:
+
+```sh
+OMNI_ENCRYPTION_KEY=<the new key>
+OMNI_ENCRYPTION_KEY_PREVIOUS=<the old key>   # comma-separated; decrypt-only
+```
+
+New writes use the new key and old rows keep working. Re-encrypt the old rows when convenient, then
+drop `OMNI_ENCRYPTION_KEY_PREVIOUS`. Removing the old key too early is recoverable: reads fail with a
+message naming the missing key id, and putting it back restores access.
+
+If a configuration references a secret and no key is set, the configuration is **rejected** — the
+proxy keeps serving its previous one rather than starting with a credential it cannot read.
+
 ## Health checks
 
 `GET /healthz` returns `{"status":"ok"}` whenever the process is alive, regardless of

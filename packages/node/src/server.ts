@@ -7,16 +7,20 @@ import {
   type ConfigStore,
   createConsoleLogger,
   createDefaultRegistry,
+  createMemorySecretStore,
   createOmniProxy,
   environmentConfigDocument,
   extractClientIp,
   type FirebaseAppCheckTokenConsumer,
   hasEnvironmentConfig,
   interpolateDeep,
+  type Keyring,
+  keyringFromEnv,
   type Logger,
   type LogLevel,
   MemoryConfigStore,
   type RuntimeContext,
+  type SecretStore,
   type StorageAdapter,
 } from "@omni-model/core";
 import { createPostgresBackend, postgresStorageFactory } from "@omni-model/postgres";
@@ -128,6 +132,8 @@ export interface StartOptions {
   configStore?: ConfigStore;
   /** Inject storage (tests); otherwise built from the bootstrap `storage` block. */
   storage?: StorageAdapter;
+  /** Inject a secret store (tests); otherwise built from OMNI_ENCRYPTION_KEY. */
+  secretStore?: SecretStore;
 }
 
 /** Handle to a running omni-model HTTP server. */
@@ -140,6 +146,8 @@ export interface RunningServer {
   holder: BundleHolder;
   /** Where configuration revisions live; saving one reconfigures every instance. */
   configStore: ConfigStore;
+  /** Encrypted credential storage, or null when no master key is configured. */
+  secretStore: SecretStore | null;
   /** Stop accepting connections, stop watching for config changes, close storage. */
   close(): Promise<void>;
 }
@@ -162,6 +170,8 @@ function parsePort(value: string | undefined): number | undefined {
 interface Backend {
   storage: StorageAdapter;
   configStore: ConfigStore;
+  /** Null when OMNI_ENCRYPTION_KEY is unset, or with memory storage. */
+  secretStore: SecretStore | null;
   close(): Promise<void>;
 }
 
@@ -174,6 +184,7 @@ async function createBackend(
   document: unknown,
   runtime: RuntimeContext,
   logger: Logger,
+  keyring: Keyring | null,
   options: StartOptions,
 ): Promise<Backend> {
   if (options.storage !== undefined) {
@@ -182,6 +193,8 @@ async function createBackend(
     return {
       storage,
       configStore,
+      secretStore:
+        options.secretStore ?? (keyring === null ? null : createMemorySecretStore(keyring)),
       close: async () => {
         await configStore.close?.();
         await storage.close?.();
@@ -200,11 +213,13 @@ async function createBackend(
     const backend = await createPostgresBackend({
       url,
       logger,
+      ...(keyring === null ? {} : { keyring }),
       ...(storageConfig?.migrate === false ? { migrate: false } : {}),
     });
     return {
       storage: backend.storage,
       configStore: options.configStore ?? backend.configStore,
+      secretStore: options.secretStore ?? backend.secretStore,
       close: () => backend.close(),
     };
   }
@@ -233,6 +248,8 @@ async function createBackend(
   return {
     storage,
     configStore,
+    secretStore:
+      options.secretStore ?? (keyring === null ? null : createMemorySecretStore(keyring)),
     close: async () => {
       await configStore.close?.();
       await storage.close?.();
@@ -277,7 +294,8 @@ export async function startServer(options: StartOptions): Promise<RunningServer>
     log: logger,
   };
 
-  const backend = await createBackend(resolved, runtime, logger, options);
+  const keyring = await keyringFromEnv(env);
+  const backend = await createBackend(resolved, runtime, logger, keyring, options);
   let unwatch: (() => void) | undefined;
 
   try {
@@ -288,6 +306,7 @@ export async function startServer(options: StartOptions): Promise<RunningServer>
     const { app, holder } = await createOmniProxy({
       env,
       storage: backend.storage,
+      ...(backend.secretStore === null ? {} : { secrets: backend.secretStore }),
       logger: options.logger,
       fetch: fetchImpl,
       consumeFirebaseAppCheckToken: appCheck,
@@ -326,6 +345,7 @@ export async function startServer(options: StartOptions): Promise<RunningServer>
       hostname: info.address,
       holder,
       configStore: backend.configStore,
+      secretStore: backend.secretStore,
       close: async (): Promise<void> => {
         try {
           unwatch?.();

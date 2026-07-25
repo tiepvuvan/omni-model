@@ -131,7 +131,7 @@ describe("buildBundle", () => {
     registry.auth.set("test-authenticated", createAlwaysAuthenticatedFactory());
 
     const bundle = buildBundle({
-      config: { ...MINIMAL, providers: { main: { type: "fake", apiKey: "${SECRET_KEY}" } } },
+      config: { ...MINIMAL, providers: { main: { type: "fake", apiKey: "$" + "{SECRET_KEY}" } } },
       registry,
       storage: new MemoryStorageAdapter(),
       engine: new CelExpressionEngine(),
@@ -147,7 +147,7 @@ describe("buildBundle", () => {
     // Better than silently constructing a provider with a literal "${VAR}" key
     // and failing on the first upstream call.
     expect(() =>
-      build({ ...MINIMAL, providers: { main: { type: "fake", apiKey: "${NOT_SET}" } } }),
+      build({ ...MINIMAL, providers: { main: { type: "fake", apiKey: "$" + "{NOT_SET}" } } }),
     ).toThrow(/NOT_SET/);
   });
 

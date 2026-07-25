@@ -3,6 +3,7 @@ import type { Identity } from "../auth/types.js";
 import type { OmniConfig } from "../config/schema.js";
 import type { OmniRegistry } from "../registry.js";
 import type { ExpressionEngine, RequestFacts } from "../routing/types.js";
+import type { SecretStore } from "../secrets/types.js";
 import type { StorageAdapter } from "../storage/types.js";
 import type { FirebaseAppCheckTokenConsumer, Logger } from "../types.js";
 
@@ -19,6 +20,11 @@ export interface OmniRuntimeInit {
   env?: Record<string, string | undefined>;
   /** Pre-built storage adapter. When provided, overrides `config.storage`. */
   storage?: StorageAdapter;
+  /**
+   * Decrypts `{"$secret": …}` references while building a bundle. Without it a
+   * configuration containing one is rejected with an actionable message.
+   */
+  secrets?: SecretStore;
   /** Expression engine for routing/rate-limit conditions; defaults to CEL. */
   engine?: ExpressionEngine;
   /** Outbound fetch; defaults to a bound `globalThis.fetch`. */

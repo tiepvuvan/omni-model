@@ -16,6 +16,8 @@ packages/core              Runtime-agnostic engine. No Node APIs, no platform AP
   src/configstore/         ConfigStore contract (revisions, watch) + memory impl
   src/runtime/             RuntimeBundle (immutable, per-revision) + holder that
                            builds and atomically swaps it
+  src/secrets/             AES-256-GCM envelope encryption, keyring, and the
+                           {"$secret": id} resolver
   src/openai/              OpenAI wire types (permissive; unknown fields pass through)
   src/auth/                AuthVerifier contract + built-in verifiers (jwt family, apple/)
   src/providers/           ChatProvider contract + openai / anthropic / google adapters
@@ -29,7 +31,8 @@ packages/postgres          PostgreSQL backend: owns the schema
   src/migrations/          Versioned, forward-only migrations (advisory-locked)
   src/storage.ts           StorageAdapter over omni_kv (atomic counters)
   src/config-store.ts      ConfigStore over omni_config_revisions (poll + LISTEN)
-  src/backend.ts           Storage + config store over one pool
+  src/secret-store.ts      SecretRowStore over omni_secrets (opaque bytes only)
+  src/backend.ts           Storage + config + secret stores over one pool
 packages/node              Node server + CLI — the container entry point
 swift/OmniModelFoundation   Apple Foundation Models LanguageModel package (SPM)
 swift/OmniModelClientKit    MacPaw/OpenAI client + OmniAuthMiddleware (SPM)
@@ -79,18 +82,27 @@ docs/                      Mintlify docs site (docs.json + MDX): installation,
    `/healthz` answers (so platforms don't crash-loop it), `/v1/*` returns 503 `not_configured`,
    and `/readyz` explains why. A bundle cannot exist without at least one verifier, so booting is
    never the same as being open.
-8. **Stored revisions keep their `${VAR}` references.** Interpolation happens at bundle-build
-   time, so the database never holds a credential. Anything reading a field straight off a stored
-   document (the bootstrap storage URL, say) must `interpolateDeep` first.
-9. **The wire format is OpenAI's, everywhere.** Providers translate before returning
+8. **Stored revisions never hold a credential.** They carry `${VAR}` references (resolved from the
+   environment) and `{"$secret": id}` references (decrypted from `omni_secrets`); both are resolved
+   at bundle-build time. Anything reading a field straight off a stored document — the bootstrap
+   storage URL, say — must `interpolateDeep` first.
+   `bundle.config` is the *resolved* document and therefore contains plaintext: never serialize it
+   to a client, a log, or an admin response. Return the stored revision instead.
+9. **Cryptography lives in exactly one place.** `EnvelopeSecretStore` owns sealing and opening; a
+   backend implements `SecretRowStore` and moves opaque bytes. Never add a second implementation of
+   the envelope. `SecretStore.reveal` is the only path to plaintext and is named to be conspicuous
+   in review — an admin API must not call it.
+10. **The wire format is OpenAI's, everywhere.** Providers translate before returning
    (`ChatResult` in `src/providers/types.ts`). Streams are SSE bytes of
    `chat.completion.chunk` JSON + `data: [DONE]`. The `usage` promise on stream results must
    resolve exactly once on every exit path (done, error, client cancel) — token budgets depend
    on it.
-10. **Errors are OpenAI-style.** Throw `OmniError` (or use the helpers in `src/errors.ts`);
+11. **Errors are OpenAI-style.** Throw `OmniError` (or use the helpers in `src/errors.ts`);
     the server renders `{ "error": { message, type, param, code } }`.
-11. **Fail-open rate limiting.** A storage outage must not take the proxy down; violations of
+12. **Fail-open rate limiting.** A storage outage must not take the proxy down; violations of
     this policy are bugs.
+13. **Never log or echo a credential.** Config errors name *paths*, never values — there are tests
+    asserting no plaintext reaches an error message or a log field. Keep it that way.
 
 ## Toolchain
 

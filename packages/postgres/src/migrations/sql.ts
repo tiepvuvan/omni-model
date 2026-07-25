@@ -161,6 +161,21 @@ CREATE TABLE IF NOT EXISTS omni_request_contents (
 );
 `;
 
+/**
+ * Master keys are identified by a short digest derived from the key itself, not
+ * by a counter — so rotation needs no bookkeeping and a ciphertext says which
+ * key sealed it. That is a text id, so `key_version INTEGER` from migration 3
+ * cannot hold it.
+ *
+ * Expressed as an additive change rather than an edit to migration 3: an edited
+ * migration silently never runs where it already applied.
+ */
+const SECRET_KEY_IDS = `
+ALTER TABLE omni_secrets DROP COLUMN IF EXISTS key_version;
+ALTER TABLE omni_secrets ADD COLUMN IF NOT EXISTS key_id TEXT NOT NULL DEFAULT '';
+CREATE INDEX IF NOT EXISTS omni_secrets_key_idx ON omni_secrets (key_id);
+`;
+
 /** Every migration, in application order. */
 export const MIGRATIONS: readonly Migration[] = [
   { version: 1, name: "kv", sql: KV },
@@ -168,6 +183,7 @@ export const MIGRATIONS: readonly Migration[] = [
   { version: 3, name: "secrets", sql: SECRETS },
   { version: 4, name: "write_keys", sql: WRITE_KEYS },
   { version: 5, name: "request_logs", sql: REQUEST_LOGS },
+  { version: 6, name: "secret_key_ids", sql: SECRET_KEY_IDS },
 ];
 
 /** Highest version this build knows how to apply. */
