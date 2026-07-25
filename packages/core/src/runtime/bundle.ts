@@ -3,7 +3,12 @@ import { cors } from "hono/cors";
 import { z } from "zod";
 import type { AuthRoute, AuthVerifier } from "../auth/types.js";
 import { interpolateDeep } from "../config/load.js";
-import { type CorsConfig, type OmniConfig, omniConfigSchema } from "../config/schema.js";
+import {
+  type CorsConfig,
+  type LoggingConfig,
+  type OmniConfig,
+  omniConfigSchema,
+} from "../config/schema.js";
 import { ConfigError } from "../errors.js";
 import { createConsoleLogger } from "../logging.js";
 import type { ChatProvider } from "../providers/types.js";
@@ -55,6 +60,8 @@ export interface RuntimeBundle {
   /** Verifier-contributed routes, keyed `"<METHOD> <path>"`. */
   readonly authRoutes: ReadonlyMap<string, AuthRoute>;
 
+  /** Request/content logging settings. */
+  readonly logging: LoggingConfig;
   readonly maxBodyBytes: number;
   readonly allowedModels: readonly string[];
   readonly trustProxyHeaders: boolean;
@@ -155,6 +162,7 @@ export function buildBundle(input: BuildBundleInput): RuntimeBundle {
     publicPaths: config.security.publicPaths,
     requireWriteKey: config.security.requireWriteKey,
     authRoutes: collectAuthRoutes(verifiers),
+    logging: config.logging,
     maxBodyBytes: config.server.maxBodyBytes,
     allowedModels: config.routing.allowedModels,
     trustProxyHeaders: config.server.trustProxyHeaders,

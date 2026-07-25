@@ -158,6 +158,36 @@ export const routingConfigSchema = z.strictObject({
   defaultProvider: z.string().optional(),
 });
 
+export const loggingConfigSchema = z.strictObject({
+  /**
+   * Record one row per `/v1` request: who called, what it cost, where it went.
+   * On by default — knowing what your clients are spending is the point of
+   * running a proxy — and cheap, because writes are batched off the hot path.
+   */
+  requests: z.boolean().default(true),
+  /**
+   * Also store prompt and completion text.
+   *
+   * Off by default: this is the most sensitive data the proxy handles, and
+   * storing it is a decision about your users' privacy, not a default. Enable it
+   * globally here, or per client via a write key's `captureContent`.
+   */
+  content: z.boolean().default(false),
+  /** Cap per side (prompt, completion). Longer text is cut and flagged. */
+  maxContentBytes: z
+    .number()
+    .int()
+    .positive()
+    .default(32 * 1024),
+  /** How long metadata rows are kept. */
+  retention: durationSchema.default("30d"),
+  /**
+   * How long captured content is kept. Separate from `retention` so usage
+   * history can outlive the prompts, which is usually what you want.
+   */
+  contentRetention: durationSchema.default("7d"),
+});
+
 export const omniConfigSchema = z.strictObject({
   version: z.literal(1).default(1),
   // `prefault({})` supplies an empty object as the pre-parse input when the key
@@ -169,6 +199,7 @@ export const omniConfigSchema = z.strictObject({
   rateLimits: z.array(rateLimitRuleSchema).default(defaultRateLimits),
   providers: z.record(z.string().min(1), providerConfigSchema).default({}),
   routing: routingConfigSchema.prefault({}),
+  logging: loggingConfigSchema.prefault({}),
 });
 
 export type CorsConfig = z.output<typeof corsConfigSchema>;
@@ -181,4 +212,5 @@ export type ProviderConfig = z.output<typeof providerConfigSchema>;
 export type RouteConfig = z.output<typeof routeConfigSchema>;
 export type ModelRuleConfig = z.output<typeof modelRuleSchema>;
 export type RoutingConfig = z.output<typeof routingConfigSchema>;
+export type LoggingConfig = z.output<typeof loggingConfigSchema>;
 export type OmniConfig = z.output<typeof omniConfigSchema>;

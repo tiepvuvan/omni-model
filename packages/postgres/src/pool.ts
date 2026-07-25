@@ -1,6 +1,11 @@
-/** One result set. Only `rows` is used, so any `pg`-compatible driver fits. */
+/** One result set. Any `pg`-compatible driver fits. */
 export interface PgQueryResult {
   rows: Record<string, unknown>[];
+  /**
+   * Rows affected. The only way to learn what a DELETE or UPDATE did, since
+   * those return no rows unless asked to.
+   */
+  rowCount?: number | null;
 }
 
 /**

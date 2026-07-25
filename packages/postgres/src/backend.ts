@@ -3,6 +3,7 @@ import {
   EnvelopeSecretStore,
   type Keyring,
   type Logger,
+  type RequestLogWriter,
   type SecretStore,
   type StorageAdapter,
   type WriteKeyStore,
@@ -10,6 +11,7 @@ import {
 import { PostgresConfigStore } from "./config-store.js";
 import { runMigrations } from "./migrations/run.js";
 import { createPgPool, type PgPoolLike } from "./pool.js";
+import { PostgresRequestLogWriter } from "./request-log-store.js";
 import { PostgresSecretRowStore } from "./secret-store.js";
 import { PostgresStorageAdapter } from "./storage.js";
 import { PostgresWriteKeyStore } from "./write-key-store.js";
@@ -45,6 +47,8 @@ export interface PostgresBackend {
   secretStore: SecretStore | null;
   /** Uncached: wrap with `CachedWriteKeyStore` before serving traffic. */
   writeKeyStore: WriteKeyStore;
+  /** Unbuffered: wrap with `BufferedRequestLogSink` before serving traffic. */
+  requestLogWriter: RequestLogWriter;
   /** Closes the config store's watcher and then the pool. */
   close(): Promise<void>;
 }
@@ -72,6 +76,7 @@ export async function createPostgresBackend(
       storage: new PostgresStorageAdapter(pool),
       configStore,
       writeKeyStore: new PostgresWriteKeyStore(pool),
+      requestLogWriter: new PostgresRequestLogWriter(pool),
       secretStore:
         options.keyring === undefined
           ? null

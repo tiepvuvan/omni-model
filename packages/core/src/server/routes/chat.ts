@@ -1,12 +1,14 @@
 import type { Context } from "hono";
 import { badRequest, OmniError } from "../../errors.js";
+import { ContentAccumulator, capturePrompt } from "../../logs/content.js";
 import type { ChatCompletionRequest } from "../../openai/types.js";
 import type { RequestFacts } from "../../routing/types.js";
 import type { RuntimeBundle } from "../../runtime/bundle.js";
 import type { RuntimeContext } from "../../types.js";
-import { writeKeyAllowsModel } from "../../writekeys/types.js";
+import { shouldCaptureContent, writeKeyAllowsModel } from "../../writekeys/types.js";
 import { buildRequestFacts } from "../facts.js";
-import { executeChat } from "../pipeline.js";
+import { draftOf, type RequestLogDraft } from "../logging.js";
+import { executeChat, type PipelineObserver } from "../pipeline.js";
 import {
   createPublicChatResponseMetadata,
   redactChatCompletion,
@@ -160,6 +162,31 @@ export function assertModelAllowedForClient(c: Context<AppEnv>, model: string): 
   );
 }
 
+/**
+ * Report what the pipeline decided into the log draft.
+ *
+ * Returns undefined when logging is off, so the pipeline does no work for it.
+ */
+export function observerFor(draft: RequestLogDraft | undefined): PipelineObserver | undefined {
+  if (draft === undefined) return undefined;
+  return {
+    routed: (decision) => {
+      draft.modelRouted = decision.model;
+      draft.providerId = decision.providerId;
+      draft.routeName = decision.routeName;
+    },
+    rateLimited: (rule) => {
+      draft.rateLimitRule = rule;
+    },
+  };
+}
+
+/** Assembled assistant text from a non-streamed completion. */
+function completionText(completion: { choices?: { message?: { content?: unknown } }[] }): string {
+  const content = completion.choices?.[0]?.message?.content;
+  return typeof content === "string" ? content : "";
+}
+
 const STREAM_RESPONSE_HEADERS = {
   "content-type": "text/event-stream; charset=utf-8",
   "cache-control": "no-cache",
@@ -193,9 +220,28 @@ export function createChatHandler(deps: RouteDeps): (c: Context<AppEnv>) => Prom
     const runtime = deps.runtimeFor(c);
     const facts = factsFor(c, request, runtime.now(), deps.clientIp(c, bundle.trustProxyHeaders));
 
-    const result = await executeChat(bundle, facts, request, runtime, {
-      signal: c.req.raw.signal,
-    });
+    const draft = draftOf(c);
+    const capture =
+      draft !== undefined &&
+      shouldCaptureContent(c.get("writeKey") ?? null, bundle.logging.content);
+    if (draft !== undefined) {
+      draft.modelRequested = request.model;
+      draft.stream = request.stream === true;
+      if (capture) {
+        const prompt = capturePrompt(request.messages, bundle.logging.maxContentBytes);
+        draft.messages = prompt.value;
+        draft.truncated = draft.truncated || prompt.truncated;
+      }
+    }
+
+    const result = await executeChat(
+      bundle,
+      facts,
+      request,
+      runtime,
+      { signal: c.req.raw.signal },
+      observerFor(draft),
+    );
     const metadata = createPublicChatResponseMetadata(request.model, runtime.now());
 
     switch (result.kind) {
@@ -203,6 +249,15 @@ export function createChatHandler(deps: RouteDeps): (c: Context<AppEnv>) => Prom
         const usage = result.completion.usage;
         if (usage !== undefined) {
           runtime.waitUntil(bundle.limiter.recordUsage(facts, usage));
+        }
+        if (draft !== undefined) {
+          draft.usage = usage ?? null;
+          if (capture) {
+            const accumulator = new ContentAccumulator(bundle.logging.maxContentBytes);
+            accumulator.push(completionText(result.completion));
+            draft.completion = accumulator.text();
+            draft.truncated = draft.truncated || accumulator.truncated;
+          }
         }
         return c.json(redactChatCompletion(result.completion, metadata));
       }
@@ -212,12 +267,37 @@ export function createChatHandler(deps: RouteDeps): (c: Context<AppEnv>) => Prom
             usage === null ? undefined : bundle.limiter.recordUsage(facts, usage),
           ),
         );
-        return new Response(redactChatCompletionStream(result.sse, metadata), {
+        const accumulator = capture
+          ? new ContentAccumulator(bundle.logging.maxContentBytes)
+          : undefined;
+        if (draft !== undefined) {
+          // `result.usage` settles on every exit path — done, upstream error, or
+          // the client hanging up — so it is also the "stream is over" signal
+          // that tells the logger when the row is complete.
+          draft.settled = result.usage.then(
+            (usage) => {
+              draft.usage = usage;
+              if (accumulator !== undefined) {
+                draft.completion = accumulator.text();
+                draft.truncated = draft.truncated || accumulator.truncated;
+              }
+            },
+            () => {},
+          );
+        }
+        const tap =
+          accumulator === undefined ? undefined : (delta: string) => accumulator.push(delta);
+        return new Response(redactChatCompletionStream(result.sse, metadata, tap), {
           headers: STREAM_RESPONSE_HEADERS,
         });
       }
-      case "error":
-        return Response.json(redactProviderError(result.body), { status: result.status });
+      case "error": {
+        // An upstream failure is returned, not thrown, so `app.onError` never
+        // sees it — without this the row would say 502 with no reason.
+        const body = redactProviderError(result.body);
+        if (draft !== undefined) draft.errorCode = body.error.code ?? null;
+        return Response.json(body, { status: result.status });
+      }
     }
   };
 }

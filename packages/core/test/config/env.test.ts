@@ -228,3 +228,39 @@ describe("environment configuration", () => {
     ).toThrow(ConfigError);
   });
 });
+
+describe("logging configuration from the environment", () => {
+  it("accepts a JSON block", () => {
+    // Regression: the `logging` block existed in the schema with no env block, so
+    // OMNI_LOGGING_JSON was silently ignored and content capture never turned on.
+    const config = parseEnvironmentConfig({
+      OMNI_STORAGE_TYPE: "memory",
+      OMNI_LOGGING_JSON: '{"content":true,"contentRetention":"1d","maxContentBytes":1024}',
+    });
+    expect(config.logging).toMatchObject({
+      requests: true,
+      content: true,
+      contentRetention: "1d",
+      maxContentBytes: 1024,
+    });
+  });
+
+  it("accepts scalar shortcuts, coercing booleans", () => {
+    const config = parseEnvironmentConfig({
+      OMNI_STORAGE_TYPE: "memory",
+      OMNI_LOGGING_REQUESTS: "false",
+      OMNI_LOGGING_CONTENT: "true",
+      OMNI_LOGGING_RETENTION: "90d",
+    });
+    expect(config.logging).toMatchObject({
+      requests: false,
+      content: true,
+      retention: "90d",
+    });
+  });
+
+  it("defaults to metadata on and content off", () => {
+    const config = parseEnvironmentConfig({ OMNI_STORAGE_TYPE: "memory" });
+    expect(config.logging).toMatchObject({ requests: true, content: false });
+  });
+});

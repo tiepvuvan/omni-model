@@ -10,7 +10,8 @@ import {
 import type { PgPoolLike } from "./pool.js";
 
 const COLUMNS =
-  "id, name, prefix, last4, allowed_models, metadata, created_by, created_at, expires_at, disabled_at";
+  "id, name, prefix, last4, allowed_models, capture_content, metadata, created_by, created_at, " +
+  "expires_at, disabled_at";
 
 interface Row {
   id?: unknown;
@@ -18,6 +19,7 @@ interface Row {
   prefix?: unknown;
   last4?: unknown;
   allowed_models?: unknown;
+  capture_content?: unknown;
   metadata?: unknown;
   created_by?: unknown;
   created_at?: unknown;
@@ -43,6 +45,8 @@ function toWriteKey(row: Row): WriteKey {
     last4: typeof row.last4 === "string" ? row.last4 : "",
     // A NULL array means "no restriction"; an empty array means "no models".
     allowedModels: Array.isArray(row.allowed_models) ? row.allowed_models.map(String) : null,
+    // NULL is meaningful here: it means "inherit the global setting".
+    captureContent: typeof row.capture_content === "boolean" ? row.capture_content : null,
     metadata:
       typeof row.metadata === "object" && row.metadata !== null && !Array.isArray(row.metadata)
         ? (row.metadata as Record<string, unknown>)
@@ -76,8 +80,8 @@ export class PostgresWriteKeyStore implements WriteKeyStore {
     const label = writeKeyLabel(secret);
     const result = await this.pool.query(
       "INSERT INTO omni_write_keys " +
-        "(name, key_hash, prefix, last4, allowed_models, metadata, created_by, expires_at) " +
-        "VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, " +
+        "(name, key_hash, prefix, last4, allowed_models, capture_content, metadata, created_by, " +
+        "expires_at) VALUES ($1, $2, $3, $4, $5, $9, $6::jsonb, $7, " +
         "CASE WHEN $8::float8 IS NULL THEN NULL ELSE to_timestamp($8 / 1000.0) END) " +
         `RETURNING ${COLUMNS}`,
       [
@@ -89,6 +93,7 @@ export class PostgresWriteKeyStore implements WriteKeyStore {
         JSON.stringify(input.metadata ?? {}),
         input.createdBy ?? null,
         input.expiresAt ?? null,
+        input.captureContent ?? null,
       ],
     );
     const row = result.rows[0];

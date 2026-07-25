@@ -1,12 +1,14 @@
 import type { Context } from "hono";
 import type { Identity } from "../auth/types.js";
 import type { OmniConfig } from "../config/schema.js";
+import type { RequestLogSink } from "../logs/types.js";
 import type { OmniRegistry } from "../registry.js";
 import type { ExpressionEngine, RequestFacts } from "../routing/types.js";
 import type { SecretStore } from "../secrets/types.js";
 import type { StorageAdapter } from "../storage/types.js";
 import type { FirebaseAppCheckTokenConsumer, Logger } from "../types.js";
 import type { WriteKey, WriteKeyStore } from "../writekeys/types.js";
+import type { RequestLogDraft } from "./logging.js";
 
 /**
  * Everything except the configuration itself. Shared by `createOmniProxy`
@@ -31,6 +33,8 @@ export interface OmniRuntimeInit {
    * keys cannot be checked, so `security.requireWriteKey` has nothing to enforce.
    */
   writeKeys?: WriteKeyStore;
+  /** Where request logs go. Defaults to discarding them. */
+  requestLogs?: RequestLogSink;
   /** Expression engine for routing/rate-limit conditions; defaults to CEL. */
   engine?: ExpressionEngine;
   /** Outbound fetch; defaults to a bound `globalThis.fetch`. */
@@ -92,5 +96,7 @@ export interface AppEnv {
     /** Calling application, set by the write key middleware. */
     writeKey: WriteKey | null;
     facts: RequestFacts | undefined;
+    /** Accumulating request log row; absent when request logging is off. */
+    logDraft: RequestLogDraft | undefined;
   };
 }

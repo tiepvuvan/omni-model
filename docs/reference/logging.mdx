@@ -1,0 +1,107 @@
+---
+title: Request logging
+description: Record what every client asked for, what it cost, and optionally what was said.
+---
+
+omni-model records one row per `/v1` request: who called, what model, which provider, how many
+tokens, how long it took, and how it ended. Requests that were **refused** are recorded too — a 429
+or a revoked client key is usually the row you are looking for.
+
+## What is stored
+
+| | |
+| --- | --- |
+| Identity | write key, user id, device id, auth verifier |
+| Routing | model requested, model actually sent upstream, provider, matched route |
+| Cost | prompt / completion / total tokens |
+| Timing | total latency, time to first byte |
+| Outcome | status, error code, the rate-limit rule that refused it |
+| Caller | IP (per `trustProxyHeaders`), user agent |
+
+Metadata is on by default. Message content is **not** — see below.
+
+Every response carries `x-omni-request-id`, which is the `request_id` on the row. That is what makes
+"my request failed at 14:03" answerable.
+
+## Configuration
+
+```sh
+OMNI_LOGGING_REQUESTS=true             # metadata (default true)
+OMNI_LOGGING_CONTENT=false             # prompt + completion text (default false)
+OMNI_LOGGING_RETENTION=30d             # metadata rows
+OMNI_LOGGING_CONTENT_RETENTION=7d      # captured text
+```
+
+Or as one block, which is the only way to set `maxContentBytes`:
+
+```sh
+OMNI_LOGGING_JSON='{"content":true,"maxContentBytes":32768,"contentRetention":"7d"}'
+```
+
+Content lives in its own table, so it can be kept on a shorter clock than the metrics — usually what
+you want: usage history for a year, prompts for a week.
+
+Expired rows are deleted periodically. Every replica offers to sweep; a non-blocking advisory lock
+means exactly one actually does, so no coordination is needed.
+
+## Capturing prompts and completions
+
+<Warning>
+  This is the most sensitive data the proxy handles. Storing your users' prompts is a privacy
+  decision, not a default — and in many jurisdictions a disclosure obligation. Enable it
+  deliberately, keep `contentRetention` short, and prefer enabling it per client rather than
+  globally.
+</Warning>
+
+A write key can override the global setting, which is the recommended way to debug one client
+without logging everyone else:
+
+| Write key `captureContent` | Result |
+| --- | --- |
+| unset | Follows `logging.content`. |
+| `true` | Always capture, even when the global setting is off. |
+| `false` | Never capture, even when the global setting is on. |
+
+Text over `maxContentBytes` is cut and the row is flagged `truncated`, so a reader knows the text is
+partial rather than assuming the model stopped there.
+
+Streamed completions are captured as they are delivered — assembled from the same deltas the client
+receives, so nothing is recorded that was not sent. A stream the client abandons mid-way is still
+recorded, with whatever arrived.
+
+## Reading them
+
+Rows are queryable newest-first, filterable by write key, user, time window and minimum status, with
+content excluded unless explicitly requested. The admin API exposes this; until then, the tables are
+plain SQL:
+
+```sql
+-- Spend per client over the last day
+SELECT k.name, count(*) AS requests, sum(l.total_tokens) AS tokens
+FROM omni_request_logs l
+LEFT JOIN omni_write_keys k ON k.id = l.write_key_id
+WHERE l.ts > now() - interval '1 day'
+GROUP BY k.name
+ORDER BY tokens DESC NULLS LAST;
+```
+
+## When the database is unavailable
+
+Logging is observability, not bookkeeping. Entries are buffered in memory and written in batches; if
+the database cannot keep up or is down, the queue is capped and the **oldest entries are dropped**
+rather than growing until the process dies. Requests keep being served throughout — the same
+fail-open rule rate limiting follows.
+
+Dropped counts are logged, so the loss is visible rather than silent. Pending entries are flushed
+during graceful shutdown, so a redeploy does not lose the last few seconds of usage.
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="Write keys" icon="key" href="/reference/write-keys">
+    Attribute and revoke the applications these rows point at.
+  </Card>
+  <Card title="Every setting" icon="sliders" href="/reference/configuration">
+    The full configuration reference.
+  </Card>
+</CardGroup>

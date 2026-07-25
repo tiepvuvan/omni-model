@@ -14,10 +14,15 @@ const JSON_BLOCKS: ReadonlyArray<readonly [name: string, path: readonly string[]
   ["OMNI_RATE_LIMITS_JSON", ["rateLimits"]],
   ["OMNI_PROVIDERS_JSON", ["providers"]],
   ["OMNI_ROUTING_JSON", ["routing"]],
+  ["OMNI_LOGGING_JSON", ["logging"]],
 ];
 
 const SIMPLE_VALUES: ReadonlyArray<readonly [name: string, path: readonly string[]]> = [
   ["OMNI_LOG_LEVEL", ["server", "logLevel"]],
+  ["OMNI_LOGGING_REQUESTS", ["logging", "requests"]],
+  ["OMNI_LOGGING_CONTENT", ["logging", "content"]],
+  ["OMNI_LOGGING_RETENTION", ["logging", "retention"]],
+  ["OMNI_LOGGING_CONTENT_RETENTION", ["logging", "contentRetention"]],
   ["OMNI_SERVER_LOG_LEVEL", ["server", "logLevel"]],
   ["OMNI_SERVER_TRUST_PROXY_HEADERS", ["server", "trustProxyHeaders"]],
   ["OMNI_SERVER_MAX_BODY_BYTES", ["server", "maxBodyBytes"]],

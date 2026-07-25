@@ -190,16 +190,32 @@ export function redactChatCompletionChunk(
   };
 }
 
+/**
+ * Observer for the assembled completion text as it streams.
+ *
+ * Taps the redaction transform rather than the upstream stream, so it sees
+ * exactly the content the client sees — nothing captured that was not delivered,
+ * and nothing delivered that was not captured.
+ */
+export type StreamContentTap = (delta: string) => void;
+
 function redactSseMessage(
   message: SSEMessage,
   metadata: PublicChatResponseMetadata,
+  tap: StreamContentTap | undefined,
 ): Uint8Array | null {
   if (message.data === "[DONE]") return encodeSSEData("[DONE]");
   try {
     const chunk = asChunk(JSON.parse(message.data) as unknown);
-    return chunk === null
-      ? null
-      : encodeSSEData(JSON.stringify(redactChatCompletionChunk(chunk, metadata)));
+    if (chunk === null) return null;
+    const redacted = redactChatCompletionChunk(chunk, metadata);
+    if (tap !== undefined) {
+      for (const choice of redacted.choices) {
+        const content = choice.delta.content;
+        if (typeof content === "string") tap(content);
+      }
+    }
+    return encodeSSEData(JSON.stringify(redacted));
   } catch {
     return null;
   }
@@ -213,11 +229,12 @@ function redactSseMessage(
 export function redactChatCompletionStream(
   stream: ReadableStream<Uint8Array>,
   metadata: PublicChatResponseMetadata,
+  tap?: StreamContentTap,
 ): ReadableStream<Uint8Array> {
   const parser = new SSEParser();
   const decoder = new TextDecoder();
   const emit = (message: SSEMessage, controller: TransformStreamDefaultController<Uint8Array>) => {
-    const redacted = redactSseMessage(message, metadata);
+    const redacted = redactSseMessage(message, metadata, tap);
     if (redacted !== null) controller.enqueue(redacted);
   };
   return stream.pipeThrough(

@@ -19,6 +19,12 @@ export interface WriteKey {
    * restriction; an empty array means none, which is a way to park a key.
    */
   allowedModels: readonly string[] | null;
+  /**
+   * Per-client override for prompt/completion capture. `null` inherits the
+   * global `logging.content`; `true` and `false` force it either way, so one
+   * client can be debugged without logging everyone else's prompts.
+   */
+  captureContent: boolean | null;
   metadata: Record<string, unknown>;
   createdBy: string | null;
   /** Epoch milliseconds. */
@@ -31,6 +37,7 @@ export interface WriteKey {
 export interface CreateWriteKeyInput {
   name: string;
   allowedModels?: readonly string[] | null;
+  captureContent?: boolean | null;
   metadata?: Record<string, unknown>;
   createdBy?: string;
   expiresAt?: number | null;
@@ -71,6 +78,11 @@ export function writeKeyState(key: WriteKey, nowMs: number): WriteKeyState {
   if (key.disabledAt !== null) return "revoked";
   if (key.expiresAt !== null && key.expiresAt <= nowMs) return "expired";
   return "active";
+}
+
+/** Resolve whether content should be captured for this request. */
+export function shouldCaptureContent(key: WriteKey | null, globalDefault: boolean): boolean {
+  return key?.captureContent ?? globalDefault;
 }
 
 /** Whether `model` is permitted for this key. */

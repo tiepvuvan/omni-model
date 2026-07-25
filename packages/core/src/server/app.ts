@@ -3,6 +3,7 @@ import { Hono } from "hono";
 import type { VerifyContext } from "../auth/types.js";
 import { ConfigError, OmniError } from "../errors.js";
 import { createConsoleLogger } from "../logging.js";
+import { nullRequestLogSink } from "../logs/types.js";
 import type { OpenAIErrorBody } from "../openai/types.js";
 import { createDefaultRegistry } from "../registry.js";
 import { CelExpressionEngine } from "../routing/cel.js";
@@ -13,6 +14,7 @@ import type { StorageAdapter } from "../storage/types.js";
 import type { Logger, RuntimeContext } from "../types.js";
 import { createAuthMiddleware } from "./auth.js";
 import { extractClientIp } from "./facts.js";
+import { createRequestLoggingMiddleware } from "./logging.js";
 import { createChatHandler, type RouteDeps } from "./routes/chat.js";
 import { createEmbeddingsHandler } from "./routes/embeddings.js";
 import { createModelsHandler } from "./routes/models.js";
@@ -145,6 +147,10 @@ export async function createOmniProxy(init: OmniProxyInit): Promise<OmniProxy> {
   const app = new Hono<AppEnv>();
 
   app.onError((error, c) => {
+    // The only place the original error is still available, since Hono converts
+    // it to a response before any outer middleware resumes.
+    const draft = c.get("logDraft");
+    if (draft !== undefined && error instanceof OmniError) draft.errorCode = error.code;
     if (error instanceof OmniError) return error.toResponse();
     const log = holder.current()?.log ?? bootLog;
     log.error("unhandled error", { path: c.req.path, error: errorMessage(error) });
@@ -238,7 +244,20 @@ export async function createOmniProxy(init: OmniProxyInit): Promise<OmniProxy> {
     );
   });
 
-  // Write keys first: "which application" is cheaper to answer than "which
+  // Outermost on /v1 so a request refused by anything inside — a rate limit, a
+  // revoked client key, an unknown model — still produces a log row.
+  app.use(
+    "/v1/*",
+    createRequestLoggingMiddleware({
+      sink: init.requestLogs ?? nullRequestLogSink,
+      bundle: () => holder.current(),
+      now,
+      newRequestId: () => crypto.randomUUID(),
+      waitUntil: waitUntilFor,
+    }),
+  );
+
+  // Write keys next: "which application" is cheaper to answer than "which
   // user", so a revoked client is turned away before any token verification.
   app.use(
     "/v1/*",

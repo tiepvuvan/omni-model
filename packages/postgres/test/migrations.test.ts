@@ -14,16 +14,21 @@ describe("MIGRATIONS", () => {
     expect(LATEST_VERSION).toBe(MIGRATIONS.length);
   });
 
-  test("every migration creates only omni_-prefixed relations", () => {
-    // The package claims the `omni_` namespace; anything else would collide with
-    // whatever else lives in the operator's database.
+  test("only ever creates or alters omni_-prefixed relations", () => {
+    // The package claims the `omni_` namespace; touching anything else would
+    // collide with whatever else lives in the operator's database. A migration
+    // that only ALTERs creates nothing, which is fine — the constraint is on the
+    // names, not the count.
+    const touched: string[] = [];
     for (const migration of MIGRATIONS) {
-      const created = [
-        ...migration.sql.matchAll(/CREATE (?:UNIQUE )?(?:TABLE|INDEX)(?: IF NOT EXISTS)? (\w+)/g),
-      ].map(([, name]) => name);
-      expect(created.length).toBeGreaterThan(0);
-      for (const name of created) expect(name).toMatch(/^omni_/);
+      for (const [, name] of migration.sql.matchAll(
+        /(?:CREATE (?:UNIQUE )?(?:TABLE|INDEX)(?: IF NOT EXISTS)?|ALTER TABLE) (\w+)/g,
+      )) {
+        touched.push(name as string);
+      }
     }
+    expect(touched.length).toBeGreaterThan(0);
+    for (const name of touched) expect(name).toMatch(/^omni_/);
   });
 });
 

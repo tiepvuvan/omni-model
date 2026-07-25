@@ -2,12 +2,14 @@ import type { AddressInfo } from "node:net";
 import { type ServerType, serve } from "@hono/node-server";
 import { getConnInfo } from "@hono/node-server/conninfo";
 import {
+  BufferedRequestLogSink,
   type BundleHolder,
   CachedWriteKeyStore,
   ConfigError,
   type ConfigStore,
   createConsoleLogger,
   createDefaultRegistry,
+  createMemoryRequestLogSink,
   createMemorySecretStore,
   createOmniProxy,
   environmentConfigDocument,
@@ -21,12 +23,18 @@ import {
   type LogLevel,
   MemoryConfigStore,
   MemoryWriteKeyStore,
+  parseDuration,
+  type RequestLogSink,
   type RuntimeContext,
   type SecretStore,
   type StorageAdapter,
   type WriteKeyStore,
 } from "@omni-model/core";
-import { createPostgresBackend, postgresStorageFactory } from "@omni-model/postgres";
+import {
+  createPostgresBackend,
+  postgresStorageFactory,
+  sweepRequestLogs,
+} from "@omni-model/postgres";
 
 /**
  * Resolve the GCP/Firebase project for the Admin SDK. There is no metadata
@@ -139,6 +147,8 @@ export interface StartOptions {
   secretStore?: SecretStore;
   /** Inject a write key store (tests); otherwise derived from the backend. */
   writeKeyStore?: WriteKeyStore;
+  /** Inject a request log sink (tests); otherwise derived from the backend. */
+  requestLogs?: RequestLogSink;
 }
 
 /** Handle to a running omni-model HTTP server. */
@@ -155,9 +165,14 @@ export interface RunningServer {
   secretStore: SecretStore | null;
   /** Per-client API keys. Minting one returns its plaintext exactly once. */
   writeKeyStore: WriteKeyStore;
+  /** Where request logs are buffered before being written. */
+  requestLogs: RequestLogSink;
   /** Stop accepting connections, stop watching for config changes, close storage. */
   close(): Promise<void>;
 }
+
+/** How often each replica offers to sweep expired logs. */
+const SWEEP_INTERVAL_MS = 15 * 60 * 1000;
 
 function describeError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -180,6 +195,9 @@ interface Backend {
   /** Null when OMNI_ENCRYPTION_KEY is unset, or with memory storage. */
   secretStore: SecretStore | null;
   writeKeyStore: WriteKeyStore;
+  requestLogs: RequestLogSink;
+  /** Delete logs past their retention window; null when unsupported. */
+  sweepLogs: ((retentionMs: number, contentRetentionMs: number) => Promise<void>) | null;
   close(): Promise<void>;
 }
 
@@ -204,6 +222,8 @@ async function createBackend(
       secretStore:
         options.secretStore ?? (keyring === null ? null : createMemorySecretStore(keyring)),
       writeKeyStore: options.writeKeyStore ?? new MemoryWriteKeyStore(),
+      requestLogs: options.requestLogs ?? createMemoryRequestLogSink(),
+      sweepLogs: null,
       close: async () => {
         await configStore.close?.();
         await storage.close?.();
@@ -232,6 +252,11 @@ async function createBackend(
       // Cached: every /v1 request presents a key, so an uncached store would
       // mean a query per request.
       writeKeyStore: options.writeKeyStore ?? new CachedWriteKeyStore(backend.writeKeyStore),
+      requestLogs:
+        options.requestLogs ?? new BufferedRequestLogSink(backend.requestLogWriter, { logger }),
+      sweepLogs: async (retentionMs, contentRetentionMs) => {
+        await sweepRequestLogs(backend.pool, { retentionMs, contentRetentionMs, logger });
+      },
       close: () => backend.close(),
     };
   }
@@ -263,6 +288,8 @@ async function createBackend(
     secretStore:
       options.secretStore ?? (keyring === null ? null : createMemorySecretStore(keyring)),
     writeKeyStore: options.writeKeyStore ?? new MemoryWriteKeyStore(),
+    requestLogs: options.requestLogs ?? createMemoryRequestLogSink(),
+    sweepLogs: null,
     close: async () => {
       await configStore.close?.();
       await storage.close?.();
@@ -310,6 +337,7 @@ export async function startServer(options: StartOptions): Promise<RunningServer>
   const keyring = await keyringFromEnv(env);
   const backend = await createBackend(resolved, runtime, logger, keyring, options);
   let unwatch: (() => void) | undefined;
+  let sweepTimer: ReturnType<typeof setInterval> | undefined;
 
   try {
     // Surface credential problems at boot when the bootstrap config already
@@ -321,6 +349,7 @@ export async function startServer(options: StartOptions): Promise<RunningServer>
       storage: backend.storage,
       ...(backend.secretStore === null ? {} : { secrets: backend.secretStore }),
       writeKeys: backend.writeKeyStore,
+      requestLogs: backend.requestLogs,
       logger: options.logger,
       fetch: fetchImpl,
       consumeFirebaseAppCheckToken: appCheck,
@@ -337,6 +366,23 @@ export async function startServer(options: StartOptions): Promise<RunningServer>
     unwatch = backend.configStore.watch((revision) => {
       void reloadRevision(holder, backend.configStore, revision, logger);
     });
+
+    // Retention runs on every replica; the sweep itself takes a non-blocking
+    // advisory lock, so exactly one of them does the deleting.
+    if (backend.sweepLogs !== null) {
+      sweepTimer = setInterval(() => {
+        const logging = holder.current()?.config.logging;
+        if (logging === undefined || !logging.requests) return;
+        void backend
+          .sweepLogs?.(parseDuration(logging.retention), parseDuration(logging.contentRetention))
+          .catch((error: unknown) => {
+            logger.warn("sweeping request logs failed; will retry", {
+              error: describeError(error),
+            });
+          });
+      }, SWEEP_INTERVAL_MS);
+      sweepTimer.unref?.();
+    }
 
     const port = options.port ?? parsePort(env.PORT) ?? 8787;
     const hostname = options.hostname ?? "0.0.0.0";
@@ -361,14 +407,23 @@ export async function startServer(options: StartOptions): Promise<RunningServer>
       configStore: backend.configStore,
       secretStore: backend.secretStore,
       writeKeyStore: backend.writeKeyStore,
+      requestLogs: backend.requestLogs,
       close: async (): Promise<void> => {
         try {
           unwatch?.();
+          if (sweepTimer !== undefined) clearInterval(sweepTimer);
           // Without this, keep-alive sockets keep `close()` pending until
           // clients hang up on their own.
           if ("closeIdleConnections" in server) server.closeIdleConnections();
           await new Promise<void>((resolve, reject) => {
             server.close((error) => (error === undefined ? resolve() : reject(error)));
+          });
+          // After the last response, before the pool closes: buffered logs are
+          // the one thing a redeploy would otherwise silently drop.
+          await backend.requestLogs.flush().catch((error: unknown) => {
+            logger.warn("flushing request logs on shutdown failed", {
+              error: describeError(error),
+            });
           });
         } finally {
           await backend.close();
@@ -378,6 +433,7 @@ export async function startServer(options: StartOptions): Promise<RunningServer>
   } catch (error) {
     // Startup failed after the backend was created; don't leak its connections.
     unwatch?.();
+    if (sweepTimer !== undefined) clearInterval(sweepTimer);
     try {
       await backend.close();
     } catch {

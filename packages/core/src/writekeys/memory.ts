@@ -30,6 +30,7 @@ export class MemoryWriteKeyStore implements WriteKeyStore {
       prefix: label.prefix,
       last4: label.last4,
       allowedModels: input.allowedModels ?? null,
+      captureContent: input.captureContent ?? null,
       metadata: input.metadata ?? {},
       createdBy: input.createdBy ?? null,
       createdAt: this.now(),

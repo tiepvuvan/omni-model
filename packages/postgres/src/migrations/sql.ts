@@ -176,6 +176,15 @@ ALTER TABLE omni_secrets ADD COLUMN IF NOT EXISTS key_id TEXT NOT NULL DEFAULT '
 CREATE INDEX IF NOT EXISTS omni_secrets_key_idx ON omni_secrets (key_id);
 `;
 
+/**
+ * Per-client content capture, as a three-state column: NULL inherits the global
+ * `logging.content`, TRUE and FALSE force it. Nullable rather than
+ * `NOT NULL DEFAULT FALSE` precisely so "inherit" is representable.
+ */
+const WRITE_KEY_CONTENT_CAPTURE = `
+ALTER TABLE omni_write_keys ADD COLUMN IF NOT EXISTS capture_content BOOLEAN;
+`;
+
 /** Every migration, in application order. */
 export const MIGRATIONS: readonly Migration[] = [
   { version: 1, name: "kv", sql: KV },
@@ -184,6 +193,7 @@ export const MIGRATIONS: readonly Migration[] = [
   { version: 4, name: "write_keys", sql: WRITE_KEYS },
   { version: 5, name: "request_logs", sql: REQUEST_LOGS },
   { version: 6, name: "secret_key_ids", sql: SECRET_KEY_IDS },
+  { version: 7, name: "write_key_content_capture", sql: WRITE_KEY_CONTENT_CAPTURE },
 ];
 
 /** Highest version this build knows how to apply. */

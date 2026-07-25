@@ -7,7 +7,7 @@ import type {
   ProviderCallOptions,
 } from "../providers/types.js";
 import type { RateLimitDecision, RateLimiter } from "../ratelimit/types.js";
-import type { RequestFacts, Router } from "../routing/types.js";
+import type { RequestFacts, RouteDecision, Router } from "../routing/types.js";
 import type { Logger, RuntimeContext } from "../types.js";
 
 /**
@@ -36,9 +36,18 @@ export function rateLimitError(decision: RateLimitDecision): OmniError {
 }
 
 /** Run the limiter and throw the 429 `OmniError` on a violation. */
-export async function enforceRateLimit(limiter: RateLimiter, facts: RequestFacts): Promise<void> {
+export async function enforceRateLimit(
+  limiter: RateLimiter,
+  facts: RequestFacts,
+  observer?: PipelineObserver,
+): Promise<void> {
   const decision = await limiter.check(facts);
-  if (!decision.allowed) throw rateLimitError(decision);
+  if (!decision.allowed) {
+    // Reported before throwing so a refused request is logged with the rule that
+    // refused it — otherwise a 429 row says nothing about which limit was hit.
+    observer?.rateLimited?.(decision.rule);
+    throw rateLimitError(decision);
+  }
 }
 
 /** Look up the resolved provider; the router already validated the id exists. */
@@ -48,6 +57,18 @@ export function requireProvider(deps: PipelineDeps, providerId: string): ChatPro
     throw new OmniError(500, `provider "${providerId}" is not configured`);
   }
   return provider;
+}
+
+/**
+ * Optional hooks for a caller that needs to record what the pipeline decided.
+ *
+ * The transport layer cannot recompute these: re-running the router would be a
+ * second CEL evaluation per request, and a rate-limit decision is consumed by
+ * the throw.
+ */
+export interface PipelineObserver {
+  routed?(decision: RouteDecision): void;
+  rateLimited?(rule: string | null): void;
 }
 
 /**
@@ -61,9 +82,11 @@ export async function executeChat(
   request: ChatCompletionRequest,
   runtime: RuntimeContext,
   options?: ProviderCallOptions,
+  observer?: PipelineObserver,
 ): Promise<ChatResult> {
-  await enforceRateLimit(deps.limiter, facts);
+  await enforceRateLimit(deps.limiter, facts, observer);
   const decision = deps.router.resolve(facts);
+  observer?.routed?.(decision);
   deps.log.info("request routed", {
     provider: decision.providerId,
     model: decision.model,
@@ -83,9 +106,11 @@ export async function executeEmbeddings(
   request: EmbeddingsRequest,
   runtime: RuntimeContext,
   options?: ProviderCallOptions,
+  observer?: PipelineObserver,
 ): Promise<EmbeddingsResult> {
-  await enforceRateLimit(deps.limiter, facts);
+  await enforceRateLimit(deps.limiter, facts, observer);
   const decision = deps.router.resolve(facts);
+  observer?.routed?.(decision);
   deps.log.info("request routed", {
     provider: decision.providerId,
     model: decision.model,

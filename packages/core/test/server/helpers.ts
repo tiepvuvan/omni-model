@@ -149,12 +149,18 @@ export class FakeProvider implements ChatProvider {
       return { kind: "error", status: behavior.error.status, body: behavior.error.body };
     }
     if (behavior.streamChunks !== undefined) {
-      const chunks = behavior.streamChunks;
-      return {
-        kind: "stream",
-        sse: sseFromChunks(chunks),
-        usage: Promise.resolve(behavior.streamUsage ?? null),
-      };
+      // Settle `usage` when the stream ends, not immediately: that is the
+      // documented provider contract, and code downstream uses it as the "this
+      // stream is over" signal. A double that resolves early would let a broken
+      // implementation pass.
+      let settle: (usage: Usage | null) => void = () => {};
+      const usage = new Promise<Usage | null>((resolve) => {
+        settle = resolve;
+      });
+      const sse = sseFromChunks(behavior.streamChunks, () => {
+        settle(behavior.streamUsage ?? null);
+      });
+      return { kind: "stream", sse, usage };
     }
     return {
       kind: "completion",
@@ -163,15 +169,42 @@ export class FakeProvider implements ChatProvider {
   }
 }
 
-function sseFromChunks(chunks: ChatCompletionChunk[]): ReadableStream<Uint8Array> {
+/**
+ * SSE bytes for `chunks`, then `[DONE]`.
+ *
+ * Pull-based so a consumer cancelling mid-stream is observable, and `onEnd` runs
+ * exactly once on every exit path — done or cancelled — mirroring what the real
+ * providers guarantee about their usage promise.
+ */
+export function sseFromChunks(
+  chunks: ChatCompletionChunk[],
+  onEnd: () => void = () => {},
+): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
+  let index = 0;
+  let ended = false;
+  const end = (): void => {
+    if (ended) return;
+    ended = true;
+    onEnd();
+  };
   return new ReadableStream<Uint8Array>({
-    start(controller) {
-      for (const chunk of chunks) {
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`));
+    pull(controller) {
+      if (index < chunks.length) {
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunks[index])}\n\n`));
+        index += 1;
+        return;
       }
-      controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+      if (index === chunks.length) {
+        index += 1;
+        controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+        return;
+      }
       controller.close();
+      end();
+    },
+    cancel() {
+      end();
     },
   });
 }

@@ -19,6 +19,7 @@ packages/core              Runtime-agnostic engine. No Node APIs, no platform AP
   src/secrets/             AES-256-GCM envelope encryption, keyring, and the
                            {"$secret": id} resolver
   src/writekeys/           Per-client API keys: format, store, TTL cache
+  src/logs/                Request log sink: fail-open buffering, content capping
   src/openai/              OpenAI wire types (permissive; unknown fields pass through)
   src/auth/                AuthVerifier contract + built-in verifiers (jwt family, apple/)
   src/providers/           ChatProvider contract + openai / anthropic / google adapters
@@ -34,6 +35,7 @@ packages/postgres          PostgreSQL backend: owns the schema
   src/config-store.ts      ConfigStore over omni_config_revisions (poll + LISTEN)
   src/secret-store.ts      SecretRowStore over omni_secrets (opaque bytes only)
   src/write-key-store.ts   WriteKeyStore over omni_write_keys (hashes only)
+  src/request-log-store.ts Batched log writes, queries, advisory-locked sweep
   src/backend.ts           Storage + config + secret stores over one pool
 packages/node              Node server + CLI — the container entry point
 swift/OmniModelFoundation   Apple Foundation Models LanguageModel package (SPM)
@@ -106,7 +108,11 @@ docs/                      Mintlify docs site (docs.json + MDX): installation,
 13. **`x-omni-key` is the write key header, never `Authorization`.** The jwt/firebase-auth/supabase
     verifiers own `Authorization` for the end user's token, and a client sends both at once. Write
     keys answer "which app"; verifiers answer "which user" — keep the two axes separate.
-14. **Never log or echo a credential.** Config errors name *paths*, never values — there are tests
+14. **Request logging is observability, not bookkeeping.** `RequestLogSink.record` must never throw
+    or block, the queue is bounded and drops oldest, and a database outage degrades logging while
+    requests keep flowing. Content capture is opt-in and byte-capped — an unbounded buffer fed by
+    responses you have not inspected is an out-of-memory condition waiting to happen.
+15. **Never log or echo a credential.** Config errors name *paths*, never values — there are tests
     asserting no plaintext reaches an error message or a log field. Keep it that way.
 
 ## Toolchain
