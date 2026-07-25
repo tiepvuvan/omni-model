@@ -4,8 +4,8 @@ description: Configure omni-model entirely with environment variables, including
 ---
 
 omni-model reads its configuration entirely from environment variables. It does not read YAML files,
-mounted configuration files, or an inline YAML variable. Every configuration change is a platform
-environment change and creates a new deployment revision on platforms such as Cloud Run.
+mounted configuration files, or an inline YAML variable. Every configuration change is an
+environment change, so it takes effect when the container restarts.
 
 <Info>
 Keep credentials in your platform's secret store. Configuration values can reference them with
@@ -26,7 +26,7 @@ Use the smallest shape that fits the change:
 | Security providers | `OMNI_SECURITY_JSON` or `OMNI_SECURITY_PROVIDERS_JSON` | A JSON object or array. |
 | One default provider | `OMNI_PROVIDERS_DEFAULT_*` | `OMNI_PROVIDERS_DEFAULT_TYPE=openai`. |
 | One built-in verifier | `OMNI_SECURITY_<VERIFIER>_*` | `OMNI_SECURITY_FIREBASE_AUTH_ENABLED=true`. |
-| One simple value | `OMNI_STORAGE_TYPE`, `OMNI_ROUTING_DEFAULT_PROVIDER`, `OMNI_SERVER_LOG_LEVEL`, or `OMNI_SECURITY_MODE` | `OMNI_STORAGE_TYPE=firestore`. |
+| One simple value | `OMNI_STORAGE_TYPE`, `OMNI_ROUTING_DEFAULT_PROVIDER`, `OMNI_SERVER_LOG_LEVEL`, or `OMNI_SECURITY_MODE` | `OMNI_STORAGE_TYPE=postgres`. |
 | One deeply nested override | `OMNI__…` | `OMNI__ROUTING__ROUTES__0__MODEL=gpt-4o-mini`. |
 
 The precedence order is: `OMNI_CONFIG_JSON`, named JSON blocks, simple variables, then `OMNI__…`
@@ -35,15 +35,15 @@ paths. Later values override earlier values at the same path.
 ## Quick setup with named variables
 
 Use named variables for the common one-provider deployment. They avoid JSON and are the fastest way
-to configure Cloud Run, Docker, Fly.io, or a Worker. The built-in provider created this way always
-has the routing ID **`default`**; setting any `OMNI_PROVIDERS_DEFAULT_*` variable automatically sets
+to configure the container. The built-in provider created this way always has the routing ID
+**`default`**; setting any `OMNI_PROVIDERS_DEFAULT_*` variable automatically sets
 `routing.defaultProvider` to `default` unless `OMNI_ROUTING_DEFAULT_PROVIDER` or a later `OMNI__…`
 override changes it.
 
 ```sh
 # Storage
-OMNI_STORAGE_TYPE=firestore
-OMNI_STORAGE_FIRESTORE_COLLECTION=omni_ratelimits
+OMNI_STORAGE_TYPE=postgres
+OMNI_STORAGE_POSTGRES_URL='${DATABASE_URL}'
 
 # The default upstream provider
 OMNI_PROVIDERS_DEFAULT_TYPE=openai
@@ -77,9 +77,8 @@ provider names, service tiers, fingerprints, upstream identifiers, or provider-s
 fields. Token usage is retained privately so token-budget rate limits still work.
 Provider error text is similarly replaced with a stable proxy error.
 
-The same redaction applies to chat completions (including SSE), embeddings, model ownership, and
-Firebase callable responses. The client must not use `usage` for metering; enforce quotas on the
-proxy instead.
+The same redaction applies to chat completions (including SSE), embeddings, and model ownership. The
+client must not use `usage` for metering; enforce quotas on the proxy instead.
 
 Use JSON blocks when you need a second named provider, more than one provider of the same type, or
 full route/rate-limit objects. The [schema explorer](#environment-schema-explorer) below lists both
@@ -116,7 +115,7 @@ Named blocks make complex configuration easy to edit independently. They merge w
 with `OMNI_CONFIG_JSON`.
 
 ```sh
-export OMNI_STORAGE_JSON='{"type":"firestore","collection":"omni_ratelimits"}'
+export OMNI_STORAGE_JSON='{"type":"postgres","url":"${DATABASE_URL}"}'
 
 export OMNI_SECURITY_PROVIDERS_JSON='[
   {"type":"firebase-app-check","appIds":["1:PROJECT_NUMBER:ios:APP_ID"]},
@@ -225,12 +224,8 @@ type is rejected during startup validation.
 
 | Storage type | Setup variables | Platform / behavior |
 | --- | --- | --- |
-| `memory` | `OMNI_STORAGE_TYPE=memory` | One process or local development. Not shared across Cloud Run instances. |
-| `firestore` | `OMNI_STORAGE_TYPE=firestore`<br/>`OMNI_STORAGE_FIRESTORE_COLLECTION=omni_ratelimits` | Cloud Run / GCP. Exact shared counters using Application Default Credentials. `collection` is optional. |
-| `redis` | `OMNI_STORAGE_TYPE=redis`<br/>`OMNI_STORAGE_REDIS_URL=${REDIS_URL}`<br/>`OMNI_STORAGE_REDIS_KEY_PREFIX=omni:` | Shared exact counters. `keyPrefix` is optional. |
-| `postgres` | `OMNI_STORAGE_TYPE=postgres`<br/>`OMNI_STORAGE_POSTGRES_URL=${DATABASE_URL}`<br/>`OMNI_STORAGE_POSTGRES_TABLE=omni_kv`<br/>`OMNI_STORAGE_POSTGRES_MIGRATE=true` | Shared exact counters. `table` and `migrate` are optional. |
-| `cloudflare-kv` | `OMNI_STORAGE_TYPE=cloudflare-kv`<br/>`OMNI_STORAGE_CLOUDFLARE_KV_BINDING=OMNI_KV` | Workers only. Counters are eventually consistent. |
-| `durable-object` | `OMNI_STORAGE_TYPE=durable-object`<br/>`OMNI_STORAGE_DURABLE_OBJECT_BINDING=OMNI_DO` | Workers only. Exact counters; preferred for App Attest. |
+| `postgres` | `OMNI_STORAGE_TYPE=postgres`<br/>`OMNI_STORAGE_POSTGRES_URL=${DATABASE_URL}`<br/>`OMNI_STORAGE_POSTGRES_MIGRATE=true` | The production choice. Exact shared counters across every replica; required for App Attest when running more than one. `migrate` is optional (default `true`). |
+| `memory` | `OMNI_STORAGE_TYPE=memory` | One process or local development. Nothing is shared across replicas and everything is lost on restart. |
 
 `memory` is the default only when storage is omitted. Use `OMNI_STORAGE_JSON` for third-party
 storage options not listed here.
@@ -250,7 +245,7 @@ profiles; `OMNI_SECURITY_MODE` determines whether any or all must validate. Use
 | Verifier | Enable and required configuration | Optional configuration |
 | --- | --- | --- |
 | Firebase Auth | `OMNI_SECURITY_FIREBASE_AUTH_ENABLED=true`<br/>`OMNI_SECURITY_FIREBASE_AUTH_PROJECT_ID=my-project` | `OMNI_SECURITY_FIREBASE_AUTH_HEADER`<br/>`OMNI_SECURITY_FIREBASE_AUTH_CLOCK_TOLERANCE_SECONDS` |
-| Firebase App Check | `OMNI_SECURITY_FIREBASE_APPCHECK_ENABLED=true`<br/>`OMNI_SECURITY_FIREBASE_APPCHECK_PROJECT_NUMBER=1234567890` outside GCP | `OMNI_SECURITY_FIREBASE_APPCHECK_APP_ID` (one)<br/>`OMNI_SECURITY_FIREBASE_APPCHECK_APP_IDS` (JSON array)<br/>`OMNI_SECURITY_FIREBASE_APPCHECK_HEADER`<br/>`OMNI_SECURITY_FIREBASE_APPCHECK_CONSUME` (default `false`)<br/>`OMNI_SECURITY_FIREBASE_APPCHECK_CLOCK_TOLERANCE_SECONDS`<br/><br/>On Cloud Run/GCE, omit project number to discover it at startup. |
+| Firebase App Check | `OMNI_SECURITY_FIREBASE_APPCHECK_ENABLED=true`<br/>`OMNI_SECURITY_FIREBASE_APPCHECK_PROJECT_NUMBER=1234567890` | `OMNI_SECURITY_FIREBASE_APPCHECK_APP_ID` (one)<br/>`OMNI_SECURITY_FIREBASE_APPCHECK_APP_IDS` (JSON array)<br/>`OMNI_SECURITY_FIREBASE_APPCHECK_HEADER`<br/>`OMNI_SECURITY_FIREBASE_APPCHECK_CONSUME` (default `false`)<br/>`OMNI_SECURITY_FIREBASE_APPCHECK_CLOCK_TOLERANCE_SECONDS`<br/><br/>`OMNI_GCP_PROJECT_NUMBER` is an alternative source for the project number. |
 | JWT | `OMNI_SECURITY_JWT_ENABLED=true` plus exactly one of `OMNI_SECURITY_JWT_SECRET`, `OMNI_SECURITY_JWT_JWKS_URL`, or `OMNI_SECURITY_JWT_PUBLIC_KEY` | `OMNI_SECURITY_JWT_ALGORITHMS` (JSON array)<br/>`OMNI_SECURITY_JWT_ISSUER`<br/>`OMNI_SECURITY_JWT_AUDIENCE` (string or JSON array)<br/>`OMNI_SECURITY_JWT_HEADER`<br/>`OMNI_SECURITY_JWT_SCHEME` (`bearer` or `none`)<br/>`OMNI_SECURITY_JWT_USER_ID_CLAIM`<br/>`OMNI_SECURITY_JWT_DEVICE_ID_CLAIM`<br/>`OMNI_SECURITY_JWT_CLOCK_TOLERANCE_SECONDS` |
 | Supabase | `OMNI_SECURITY_SUPABASE_ENABLED=true` plus one of `OMNI_SECURITY_SUPABASE_URL`, `OMNI_SECURITY_SUPABASE_JWT_SECRET`, or `OMNI_SECURITY_SUPABASE_JWKS_URL` | `OMNI_SECURITY_SUPABASE_ISSUER`<br/>`OMNI_SECURITY_SUPABASE_AUDIENCE` (string or JSON array)<br/>`OMNI_SECURITY_SUPABASE_HEADER`<br/>`OMNI_SECURITY_SUPABASE_CLOCK_TOLERANCE_SECONDS` |
 | Apple App Attest | `OMNI_SECURITY_APP_ATTEST_ENABLED=true`<br/>`OMNI_SECURITY_APP_ATTEST_TEAM_ID`<br/>`OMNI_SECURITY_APP_ATTEST_BUNDLE_ID` | `OMNI_SECURITY_APP_ATTEST_ENVIRONMENT`<br/>`OMNI_SECURITY_APP_ATTEST_CHALLENGE_TTL`<br/>`OMNI_SECURITY_APP_ATTEST_ROOT_CA_PEM`<br/>`OMNI_SECURITY_APP_ATTEST_KEY_ID_HEADER`<br/>`OMNI_SECURITY_APP_ATTEST_ASSERTION_HEADER`<br/>`OMNI_SECURITY_APP_ATTEST_CHALLENGE_HEADER` |

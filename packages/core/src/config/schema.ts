@@ -72,6 +72,15 @@ export const securityConfigSchema = z.strictObject({
 
 export const rateLimitRuleSchema = z
   .strictObject({
+    /**
+     * Stable identity of the rule, used in counter keys. Defaults to `name`,
+     * which is what existing configurations rely on.
+     *
+     * Set it explicitly for any rule an operator can rename from a dashboard:
+     * counters live under `rl:req:<id>:…`, so a rule whose identity is its
+     * display name silently resets every counter when renamed.
+     */
+    id: z.string().min(1).optional(),
     name: z.string().min(1),
     /** CEL expression; the rule applies only when it evaluates to true. */
     when: z.string().optional(),

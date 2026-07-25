@@ -25,10 +25,20 @@ export function interpolateEnv(
   });
 }
 
-function interpolateDeep(
+/**
+ * Resolve `${VAR}` references throughout a document, without validating it.
+ *
+ * Stored configuration keeps its `${VAR}` references rather than the resolved
+ * values, so a revision in the database never carries a credential and the
+ * platform secret store stays the only place they live. Resolution therefore
+ * has to happen every time a document is turned into something runnable — which
+ * also means callers that only need one field (the bootstrap storage URL, say)
+ * must resolve first, or they get the literal `"${VAR}"`.
+ */
+export function interpolateDeep(
   node: unknown,
   env: Record<string, string | undefined>,
-  path: string,
+  path = "$",
 ): unknown {
   if (typeof node === "string") return interpolateEnv(node, env, path);
   if (Array.isArray(node)) {

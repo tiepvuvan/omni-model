@@ -1,5 +1,3 @@
-import { readFile } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
 import {
   ConfigError,
   createOmniApp,
@@ -32,41 +30,53 @@ describe("resolveConfigSource", () => {
     });
   });
 
-  it("rejects missing environment configuration and ignores removed YAML variables", () => {
-    expect(() => resolveConfigSource({ env: {} })).toThrow(ConfigError);
+  it("treats an empty environment as unconfigured rather than an error", () => {
+    // Booting unconfigured is a valid state now: the proxy serves /healthz,
+    // answers /v1 with 503, and waits to be configured.
+    expect(resolveConfigSource({ env: {} })).toEqual({ config: undefined, source: "none" });
+  });
+
+  it("rejects removed variables instead of silently ignoring them", () => {
+    // Ignoring these would look like the setting had been applied.
+    expect(() => resolveConfigSource({ env: { OMNI_CONFIG: "version: 1" } })).toThrow(ConfigError);
     expect(() => resolveConfigSource({ env: { OMNI_CONFIG: "version: 1" } })).toThrow(
+      /OMNI_CONFIG_JSON/,
+    );
+    expect(() => resolveConfigSource({ env: { OMNI_CONFIG_PATH: "/etc/omni.yaml" } })).toThrow(
       /OMNI_CONFIG_JSON/,
     );
   });
 });
 
-describe("Cloud Run deploy button", () => {
-  it("ships a valid GCP-oriented, environment-only starter configuration", async () => {
-    const appJsonPath = fileURLToPath(new URL("../../../app.json", import.meta.url));
-    const appJson = JSON.parse(await readFile(appJsonPath, "utf8")) as {
-      env: Record<string, { required?: boolean; value?: string }>;
-      options: { "max-instances"?: number };
-      repository: string;
-    };
+describe("container starter configuration", () => {
+  /**
+   * The documented Docker starter env: Postgres storage, one OpenAI-compatible
+   * upstream, App Check plus a JWT fallback. Asserts the env shortcuts still
+   * compose into a config that boots — this is the path every `docker run`
+   * takes, so a broken shortcut is a broken deploy.
+   */
+  const starterEnv = (): Record<string, string> => ({
+    OMNI_STORAGE_TYPE: "postgres",
+    OMNI_STORAGE_POSTGRES_URL: "postgres://localhost:5432/omni",
+    OMNI_SECURITY_JWT_ENABLED: "true",
+    OMNI_SECURITY_JWT_SECRET: "test-jwt-secret",
+    OMNI_SECURITY_JWT_ALGORITHMS: '["HS256"]',
+    OMNI_SECURITY_FIREBASE_APPCHECK_ENABLED: "true",
+    OMNI_SECURITY_FIREBASE_APPCHECK_PROJECT_NUMBER: "1234567890",
+    OMNI_SECURITY_MODE: "any",
+    OMNI_PROVIDERS_DEFAULT_TYPE: "openai-compatible",
+    OMNI_PROVIDERS_DEFAULT_BASE_URL: "https://api.openai.com/v1",
+    OMNI_PROVIDERS_DEFAULT_API_KEY: "sk-test",
+  });
 
-    expect(appJson.repository).toBe("https://github.com/tiepvuvan/omni-model");
-    expect(appJson.options["max-instances"]).toBe(1);
-    expect(appJson.env.OMNI_STORAGE_TYPE?.value).toBe("firestore");
-    expect(appJson.env.OMNI_SECURITY_FIREBASE_APPCHECK_ENABLED?.value).toBe("true");
-    expect(appJson.env.OMNI_SECURITY_FIREBASE_APPCHECK_CONSUME?.value).toBe("false");
-    expect(appJson.env.OMNI_PROVIDERS_DEFAULT_TYPE?.value).toBe("openai-compatible");
-    expect(appJson.env.OMNI_PROVIDERS_DEFAULT_API_KEY?.required).toBe(false);
-    expect(appJson.env.OMNI_CONFIG).toBeUndefined();
+  it("composes storage, providers and both verifiers from environment shortcuts", () => {
+    const env = starterEnv();
+    const config = parseConfigObject(resolveConfigSource({ env }).config, env);
 
-    const env = Object.fromEntries(
-      Object.entries(appJson.env).map(([key, definition]) => [key, definition.value]),
-    );
-    env.OMNI_JWT_SECRET = "test-jwt-secret";
-    env.OMNI_GCP_PROJECT_NUMBER = "1234567890";
-    const source = resolveConfigSource({ env });
-    const config = parseConfigObject(source.config, env);
-
-    expect(config.storage.type).toBe("firestore");
+    expect(config.storage).toMatchObject({
+      type: "postgres",
+      url: "postgres://localhost:5432/omni",
+    });
     expect(config.security.providers).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ type: "jwt" }),
@@ -76,19 +86,17 @@ describe("Cloud Run deploy button", () => {
     expect(config.providers.default).toEqual({
       type: "openai-compatible",
       baseUrl: "https://api.openai.com/v1",
+      apiKey: "sk-test",
     });
+    expect(config.routing.defaultProvider).toBe("default");
+  });
 
-    const evaluationEnv = {
-      ...env,
-      OMNI_STORAGE_TYPE: "memory",
-      OMNI_SECURITY_FIREBASE_APPCHECK_ENABLED: "false",
-    };
-    const evaluationConfig = parseConfigObject(
-      resolveConfigSource({ env: evaluationEnv }).config,
-      evaluationEnv,
-    );
-    expect(evaluationConfig.storage.type).toBe("memory");
-    expect(evaluationConfig.security.providers).toMatchObject([{ type: "jwt" }]);
+  it("boots an app that serves /healthz", async () => {
+    // Drop App Check so the app builds without a Firebase Admin token consumer,
+    // and swap in memory storage so no database is required.
+    const env = { ...starterEnv(), OMNI_SECURITY_FIREBASE_APPCHECK_ENABLED: "false" };
+    const config = parseConfigObject(resolveConfigSource({ env }).config, env);
+    expect(config.security.providers).toMatchObject([{ type: "jwt" }]);
 
     const app = await createOmniApp({
       config,
@@ -96,6 +104,8 @@ describe("Cloud Run deploy button", () => {
       logger: silentLogger,
       storage: new MemoryStorageAdapter(),
     });
-    expect(app.request("http://omni.test/healthz")).toMatchObject({ status: 200 });
+    const response = await app.request("http://omni.test/healthz");
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ status: "ok" });
   });
 });

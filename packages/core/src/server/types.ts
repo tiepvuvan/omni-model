@@ -7,14 +7,12 @@ import type { StorageAdapter } from "../storage/types.js";
 import type { FirebaseAppCheckTokenConsumer, Logger } from "../types.js";
 
 /**
- * Options for `createOmniApp`. Only `config` is required; every other field
- * has a sensible default so `createOmniApp({ config })` works on any
- * fetch-based runtime. Tests inject `fetch`, `now` and `waitUntil` to stay
+ * Everything except the configuration itself. Shared by `createOmniProxy`
+ * (configuration arrives at runtime) and `createOmniApp` (configuration is
+ * supplied up front). Tests inject `fetch`, `now` and `waitUntil` to stay
  * deterministic and offline.
  */
-export interface OmniAppInit {
-  /** Validated configuration, typically from `parseConfig`. */
-  config: OmniConfig;
+export interface OmniRuntimeInit {
   /** Component factories; defaults to `createDefaultRegistry()`. */
   registry?: OmniRegistry;
   /** Environment variables exposed to components; defaults to `{}`. */
@@ -38,16 +36,38 @@ export interface OmniAppInit {
    * `consume`; other runtimes may omit it.
    */
   consumeFirebaseAppCheckToken?: FirebaseAppCheckTokenConsumer;
-  /** Defaults to `createConsoleLogger(config.server.logLevel)`. */
+  /**
+   * Pins the logger for every bundle. Omit it and each bundle gets a console
+   * logger at its own `server.logLevel`, so the level is reconfigurable.
+   */
   logger?: Logger;
   /**
    * Resolve the client IP used for rate-limit keys. Defaults to a header-only
-   * resolver that honors forwarding headers exactly when
-   * `config.server.trustProxyHeaders` is true. Platforms with access to the
-   * connection socket (e.g. Node via `getConnInfo`) pass a resolver that
-   * returns the real peer address when proxy headers are not trusted.
+   * resolver that honors forwarding headers exactly when `trustProxyHeaders`
+   * is set. Platforms with access to the connection socket (e.g. Node via
+   * `getConnInfo`) pass a resolver that returns the real peer address when
+   * proxy headers are not trusted.
+   *
+   * `trustProxyHeaders` is passed in rather than captured because it is part of
+   * the reloadable configuration.
    */
-  clientIp?: (c: Context<AppEnv>) => string | null;
+  clientIp?: (c: Context<AppEnv>, trustProxyHeaders: boolean) => string | null;
+}
+
+/**
+ * Options for `createOmniProxy`. Configuration is optional: without it the
+ * proxy boots unconfigured, serving `/healthz` and answering `/v1/*` with 503
+ * until a configuration arrives.
+ */
+export interface OmniProxyInit extends OmniRuntimeInit {
+  /** Initial configuration document, validated when the first bundle is built. */
+  config?: unknown;
+}
+
+/** Options for `createOmniApp`: a validated configuration, applied at startup. */
+export interface OmniAppInit extends OmniRuntimeInit {
+  /** Validated configuration, typically from `parseConfig`. */
+  config: OmniConfig;
 }
 
 /**

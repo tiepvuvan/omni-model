@@ -19,8 +19,9 @@ export type FirebaseAppCheckTokenConsumer = (
 
 /**
  * Runtime services injected into every pluggable component (auth verifiers,
- * model providers, storage factories). Abstracts over Node, Cloudflare
- * Workers and other fetch-based runtimes so core stays runtime-agnostic.
+ * model providers, storage factories). Nothing here touches a global, which is
+ * what keeps core runtime-agnostic and every component testable offline: tests
+ * inject a fake `fetch` and a fixed `now()`.
  */
 export interface RuntimeContext {
   /** Environment variables / platform secrets. */

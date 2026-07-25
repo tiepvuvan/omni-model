@@ -15,7 +15,8 @@ export function createEmbeddingsHandler(
   deps: RouteDeps,
 ): (c: Context<AppEnv>) => Promise<Response> {
   return async (c) => {
-    const body = await readJsonObject(c, deps.maxBodyBytes);
+    const bundle = deps.requireBundle();
+    const body = await readJsonObject(c, bundle.maxBodyBytes);
     if (typeof body.model !== "string" || body.model.length === 0) {
       throw badRequest("you must provide a model parameter", { param: "model" });
     }
@@ -25,9 +26,9 @@ export function createEmbeddingsHandler(
     const request = body as EmbeddingsRequest;
 
     const runtime = deps.runtimeFor(c);
-    const facts = factsFor(c, request, runtime.now(), deps.clientIp(c));
+    const facts = factsFor(c, request, runtime.now(), deps.clientIp(c, bundle.trustProxyHeaders));
 
-    const result = await executeEmbeddings(deps, facts, request, runtime, {
+    const result = await executeEmbeddings(bundle, facts, request, runtime, {
       signal: c.req.raw.signal,
     });
     if (result.kind === "error") {
@@ -36,7 +37,7 @@ export function createEmbeddingsHandler(
 
     const usage = result.response.usage;
     if (usage !== undefined) {
-      runtime.waitUntil(deps.limiter.recordUsage(facts, embeddingsUsage(usage)));
+      runtime.waitUntil(bundle.limiter.recordUsage(facts, embeddingsUsage(usage)));
     }
     return c.json(redactEmbeddingsResponse(result.response, request.model));
   };

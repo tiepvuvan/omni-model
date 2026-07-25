@@ -11,21 +11,13 @@
     "typecheck": "pnpm -r run build",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:pg": "./scripts/test-pg.sh",
+    "test:pg:down": "docker compose -f docker-compose.test.yml down -v",
     "test:e2e": "vitest run --config vitest.e2e.config.ts",
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
     "format": "biome format --write .",
     "ci": "pnpm lint && pnpm build && pnpm test"
-  },
-  "cloudflare": {
-    "bindings": {
-      "OMNI_SECURITY_JWT_SECRET": {
-        "description": "Required fallback authentication secret. Generate a long random value; clients use it only when sending an HS256 JWT."
-      },
-      "OMNI_PROVIDERS_DEFAULT_API_KEY": {
-        "description": "Optional key for the default OpenAI-compatible upstream. Leave blank only for an endpoint that accepts unauthenticated requests."
-      }
-    }
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.3",
@@ -35,8 +27,7 @@
   },
   "pnpm": {
     "onlyBuiltDependencies": [
-      "esbuild",
-      "workerd"
+      "esbuild"
     ]
   }
 }

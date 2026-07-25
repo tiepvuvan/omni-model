@@ -33,10 +33,9 @@ export function createRegistry(): OmniRegistry {
 }
 
 /**
- * A registry pre-populated with every built-in component. Platform-bound
- * storage backends (Cloudflare KV / Durable Objects — they need live
- * bindings) and the Redis/Postgres adapters (separate packages) are
- * registered by the respective deploy entries instead.
+ * A registry pre-populated with every built-in component. The Postgres
+ * adapter lives in its own package and is registered by the deploy entry
+ * (`@omni-model/node`) instead, so core stays runtime-agnostic.
  */
 export function createDefaultRegistry(): OmniRegistry {
   const registry = createRegistry();

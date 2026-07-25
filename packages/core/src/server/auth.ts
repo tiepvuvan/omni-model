@@ -1,6 +1,7 @@
 import type { Context, MiddlewareHandler } from "hono";
 import type { AuthVerifier, Identity, VerifyContext } from "../auth/types.js";
 import { type OmniError, unauthorized } from "../errors.js";
+import type { RuntimeBundle } from "../runtime/bundle.js";
 import type { AppEnv } from "./types.js";
 
 function authError(reason: string): OmniError {
@@ -56,9 +57,13 @@ export function mergeIdentities(
 }
 
 export interface AuthMiddlewareOptions {
-  mode: "any" | "all";
-  publicPaths: readonly string[];
-  verifiers: readonly AuthVerifier[];
+  /**
+   * The bundle to authenticate against, read per request so a configuration
+   * reload changes verifiers without rebuilding the app. Throws a 503 when the
+   * proxy is unconfigured — which is also what keeps `/v1/*` closed until a
+   * verifier exists.
+   */
+  requireBundle: () => RuntimeBundle;
   /** Build the per-request `VerifyContext` (runtime + storage). */
   contextFor: (c: Context<AppEnv>) => VerifyContext;
 }
@@ -77,12 +82,17 @@ export interface AuthMiddlewareOptions {
  * `mergeIdentities`.
  *
  * Public paths (exact or trailing-`*` prefix) bypass verification entirely.
+ *
+ * There is no "no verifiers configured" branch: a bundle cannot exist without
+ * at least one verifier, so the only way to reach `/v1/*` unauthenticated is a
+ * public path you asked for.
  */
 export function createAuthMiddleware(options: AuthMiddlewareOptions): MiddlewareHandler<AppEnv> {
-  const { mode, publicPaths, verifiers, contextFor } = options;
+  const { requireBundle, contextFor } = options;
 
   return async (c, next) => {
-    if (verifiers.length === 0 || isPublicPath(c.req.path, publicPaths)) {
+    const { securityMode: mode, publicPaths, verifiers } = requireBundle();
+    if (isPublicPath(c.req.path, publicPaths)) {
       c.set("identity", null);
       return next();
     }

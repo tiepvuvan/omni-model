@@ -5,28 +5,26 @@ description: A self-hosted, OpenAI-compatible AI proxy for your mobile and web a
 
 omni-model is an **OpenAI-compatible AI proxy you run yourself**. Your provider API keys stay on
 your infrastructure — never inside an app binary. Clients authenticate with what they already have
-(Firebase App Check, Apple App Attest / DeviceCheck, Firebase Auth, Supabase, or any JWT).
-Environment variables configure rate limits (request windows **and** token budgets) plus
-CEL-expression model routing across OpenAI, Anthropic, Google Gemini, and any OpenAI-compatible
-endpoint.
+(Firebase App Check, Apple App Attest / DeviceCheck, Firebase Auth, Supabase, or any JWT). You
+configure rate limits (request windows **and** token budgets) plus CEL-expression model routing
+across OpenAI, Anthropic, Google Gemini, and any OpenAI-compatible endpoint.
 
-## Two ways to run it
+## How to run it
 
 <CardGroup cols={2}>
-  <Card title="Serverless (Firebase)" icon="fire" href="/installation/firebase">
-    No backend at all. A Firebase Extension exposes callable functions; the Firebase SDKs attach
-    Auth + App Check tokens automatically. Rate limits live in Firestore.
+  <Card title="Docker + PostgreSQL" icon="docker" href="/installation/docker">
+    One container image, one database. Run it anywhere that runs containers, and point any OpenAI
+    SDK at it.
   </Card>
-  <Card title="Self-hosted proxy" icon="server" href="/installation/cloudflare">
-    A standard HTTP proxy on Cloudflare Workers, Render, Fly.io, Cloud Run, or any container.
-    Point any OpenAI SDK at it.
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Up and running with a first request in a few minutes.
   </Card>
 </CardGroup>
 
 ## How it works
 
 ```text
-Client (any OpenAI SDK, or Firebase callable)
+Client (any OpenAI SDK)
         │  { "model": "smart", "messages": [...] }
         ▼
 ┌─────────────────────────────────────────────┐
@@ -70,8 +68,8 @@ streaming included — so your client keeps speaking one protocol everywhere.
 ## Next steps
 
 <CardGroup cols={2}>
-  <Card title="Quickstart" icon="rocket" href="/quickstart">
-    Get a working proxy and make your first request in a few minutes.
+  <Card title="Install with Docker" icon="docker" href="/installation/docker">
+    Run the container against PostgreSQL, and make your first request.
   </Card>
   <Card title="Configuration reference" icon="book" href="/reference/configuration">
     Every environment variable, JSON block, provider, and routing option.

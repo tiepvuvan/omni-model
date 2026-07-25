@@ -3,101 +3,78 @@ title: Quickstart
 description: Get a working omni-model proxy and make your first request.
 ---
 
-Pick the path that matches your app. Both end with an OpenAI-compatible call — the difference is
-where the proxy runs and how clients authenticate.
+omni-model runs as a container backed by PostgreSQL, and exposes a standard HTTP endpoint any
+OpenAI SDK can hit.
 
-<Tabs>
-  <Tab title="Serverless (Firebase)">
-    Best for mobile/web apps with **no backend**. Your app calls a callable function; Firebase Auth
-    and App Check tokens are attached automatically.
+<Steps>
+  <Step title="Start PostgreSQL">
+    Any Postgres 14+ instance works. For a local run:
 
-    <Steps>
-      <Step title="Install the extension">
-        Requires the Blaze plan and at least one provider API key.
+    ```sh
+    docker run -d --name omni-db -p 5432:5432 \
+      -e POSTGRES_USER=omni -e POSTGRES_PASSWORD=secret -e POSTGRES_DB=omni \
+      postgres:17-alpine
+    ```
+  </Step>
+  <Step title="Set configuration variables">
+    Configuration is read from the deployment environment:
 
-        ```sh
-        firebase ext:install ./extensions/omni-model-proxy --project=YOUR_PROJECT
-        ```
+    ```sh
+    DATABASE_URL=postgres://omni:secret@localhost:5432/omni
+    OMNI_STORAGE_TYPE=postgres
+    OMNI_STORAGE_POSTGRES_URL='${DATABASE_URL}'
+    OMNI_JWT_SECRET=replace-with-a-long-random-secret
+    OMNI_SECURITY_JWT_ENABLED=true
+    OMNI_SECURITY_JWT_SECRET='${OMNI_JWT_SECRET}'
+    OMNI_SECURITY_JWT_ALGORITHMS='["HS256"]'
+    OMNI_PROVIDERS_DEFAULT_TYPE=openai
+    OMNI_PROVIDERS_DEFAULT_API_KEY='${OPENAI_API_KEY}'
+    OMNI_RATE_LIMITS_JSON='[{"name":"per-user-requests","key":"user","requests":{"limit":30,"window":"1h"}},{"name":"per-user-daily-tokens","key":"user","tokens":{"limit":30000,"window":"1d"}}]'
+    OMNI_DEFAULT_PROVIDER=default
+    ```
 
-        You'll be prompted for your provider keys and limits. See
-        [Installation → Firebase](/installation/firebase) for every parameter.
-      </Step>
-      <Step title="Call it from your app">
-        ```js
-        import { getFunctions, httpsCallable } from "firebase/functions";
+    <Note>
+      At least one [security verifier](/security/custom-jwt) is required — the proxy refuses to
+      start without one, because a proxy that authenticates nobody is an open relay on your
+      provider credits. For a public app, prefer
+      [App Attest or App Check](/security/verify-on-device) over a shared secret.
+    </Note>
+  </Step>
+  <Step title="Run it">
+    Use the prebuilt image (no clone, no build):
 
-        const chat = httpsCallable(getFunctions(), "ext-omni-model-proxy-chat");
-        const { stream, data } = await chat.stream({
-          model: "gpt-4o-mini",
-          messages: [{ role: "user", content: "Hello!" }],
-        });
-        for await (const chunk of stream) {
-          process.stdout.write(chunk.choices?.[0]?.delta?.content ?? "");
-        }
-        ```
-      </Step>
-    </Steps>
+    ```sh
+    docker run -p 8787:8787 \
+      -e OPENAI_API_KEY=sk-... \
+      -e DATABASE_URL=postgres://omni:secret@host.docker.internal:5432/omni \
+      -e OMNI_JWT_SECRET=replace-with-a-long-random-secret \
+      -e OMNI_STORAGE_TYPE=postgres \
+      -e 'OMNI_STORAGE_POSTGRES_URL=${DATABASE_URL}' \
+      -e OMNI_SECURITY_JWT_ENABLED=true \
+      -e 'OMNI_SECURITY_JWT_SECRET=${OMNI_JWT_SECRET}' \
+      -e 'OMNI_SECURITY_JWT_ALGORITHMS=["HS256"]' \
+      -e OMNI_PROVIDERS_DEFAULT_TYPE=openai \
+      -e 'OMNI_PROVIDERS_DEFAULT_API_KEY=${OPENAI_API_KEY}' \
+      ghcr.io/tiepvuvan/omni-model:latest
+    ```
 
-    Continue with a client guide: [Swift](/integrations/swift), [Kotlin](/integrations/kotlin),
-    [React Native](/integrations/react-native), [Flutter](/integrations/flutter),
-    [Web](/integrations/javascript).
-  </Tab>
+    See [Installation → Docker](/installation/docker) for Compose, health checks, and scaling out.
+  </Step>
+  <Step title="Make a request">
+    Sign an HS256 JWT with `OMNI_JWT_SECRET` and send it as a bearer token:
 
-  <Tab title="Self-hosted proxy">
-    Best when you want a standard HTTP endpoint any OpenAI SDK can hit.
+    ```sh
+    curl http://localhost:8787/v1/chat/completions \
+      -H "authorization: Bearer $YOUR_JWT" \
+      -H "content-type: application/json" \
+      -d '{"model": "gpt-4o-mini", "messages": [{"role": "user", "content": "Hello!"}]}'
+    ```
+  </Step>
+</Steps>
 
-    <Steps>
-      <Step title="Set configuration variables">
-        Set configuration directly in the deployment environment:
-
-        ```sh
-        OMNI_STORAGE_TYPE=memory
-        OMNI_JWT_SECRET=replace-with-a-long-random-secret
-        OMNI_SECURITY_JWT_ENABLED=true
-        OMNI_SECURITY_JWT_SECRET='${OMNI_JWT_SECRET}'
-        OMNI_SECURITY_JWT_ALGORITHMS='["HS256"]'
-        OMNI_PROVIDERS_DEFAULT_TYPE=openai
-        OMNI_PROVIDERS_DEFAULT_API_KEY='${OPENAI_API_KEY}'
-        OMNI_RATE_LIMITS_JSON='[{"name":"per-user-requests","key":"user","requests":{"limit":30,"window":"1h"}},{"name":"per-user-daily-tokens","key":"user","tokens":{"limit":30000,"window":"1d"}}]'
-        OMNI_DEFAULT_PROVIDER=openai
-        ```
-
-        <Note>
-          For a public app, add a [security verifier](/security/custom-jwt) so only your app can
-          call the proxy. `memory` storage is fine for one instance — use
-          [Redis/Postgres/KV](/reference/configuration) when you scale out.
-        </Note>
-      </Step>
-      <Step title="Run it">
-        Use the prebuilt image (no clone, no build):
-
-        ```sh
-        docker run -p 8787:8787 \
-          -e OPENAI_API_KEY=sk-... \
-          -e OMNI_JWT_SECRET=replace-with-a-long-random-secret \
-          -e OMNI_STORAGE_TYPE=memory \
-          -e OMNI_SECURITY_JWT_ENABLED=true \
-          -e 'OMNI_SECURITY_JWT_SECRET=${OMNI_JWT_SECRET}' \
-          -e 'OMNI_SECURITY_JWT_ALGORITHMS=["HS256"]' \
-          -e OMNI_PROVIDERS_DEFAULT_TYPE=openai \
-          -e 'OMNI_PROVIDERS_DEFAULT_API_KEY=${OPENAI_API_KEY}' \
-          ghcr.io/tiepvuvan/omni-model:latest
-        ```
-
-        Or deploy in one click to [Render](/installation/render),
-        [Cloudflare](/installation/cloudflare), [Fly.io](/installation/fly-io), or
-        [Cloud Run](/installation/cloud-run).
-      </Step>
-      <Step title="Make a request">
-        ```sh
-        curl http://localhost:8787/v1/chat/completions \
-          -H "content-type: application/json" \
-          -d '{"model": "gpt-4o-mini", "messages": [{"role": "user", "content": "Hello!"}]}'
-        ```
-      </Step>
-    </Steps>
-  </Tab>
-</Tabs>
+Continue with a client guide: [Swift](/integrations/swift), [Kotlin](/integrations/kotlin),
+[React Native](/integrations/react-native), [Flutter](/integrations/flutter),
+[Web](/integrations/javascript).
 
 ## Where to go next
 

@@ -11,9 +11,13 @@ Options:
   -p, --port <n>       Port to listen on (default: $PORT or 8787)
   -h, --help           Show this help and exit
 
-Configuration is read entirely from environment variables. For a simple setup, use
-OMNI_STORAGE_TYPE, OMNI_SECURITY_<VERIFIER>_*, and OMNI_PROVIDERS_DEFAULT_*.
-Use JSON blocks or OMNI__... paths for complex multi-provider routing.`;
+Configuration lives in the database and is reloaded without a restart. On first boot
+an empty database is seeded from the environment: OMNI_STORAGE_TYPE,
+OMNI_SECURITY_<VERIFIER>_*, and OMNI_PROVIDERS_DEFAULT_*, or JSON blocks and
+OMNI__... paths for complex multi-provider routing.
+
+With no configuration at all the server still starts: /healthz answers, /v1/*
+returns 503, and /readyz explains what is missing.`;
 
 function parsePort(raw: string): number {
   const port = Number(raw);
@@ -39,7 +43,11 @@ async function main(): Promise<void> {
 
   const port = values.port === undefined ? undefined : parsePort(values.port);
   const { config, source } = resolveConfigSource({ env: process.env });
-  const server = await startServer({ config, env: process.env, port });
+  const server = await startServer({
+    ...(config === undefined ? {} : { config }),
+    env: process.env,
+    port,
+  });
   console.log(
     `omni-model listening on http://${server.hostname}:${server.port} (config: ${source})`,
   );

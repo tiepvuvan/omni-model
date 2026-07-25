@@ -9,9 +9,9 @@ header — by default `Authorization: Bearer <token>`. They share the same JWKS
 resolver and error handling; the Firebase and Supabase variants are pre-wired
 presets of the generic `jwt` verifier.
 
-These verifiers apply to the **self-hosted HTTP proxy** (configured under
-`security.providers`). The serverless [Firebase Extension](/installation/firebase)
-uses Firebase Auth natively on callable functions and needs no verifier block.
+These verifiers are configured under `security.providers`. All of them validate
+tokens against the issuer's public keys (or a shared secret), so none of them
+require anything beyond the proxy container itself.
 
 <Info>
 On success, the token subject becomes `user.id` and every claim is exposed to

@@ -1,0 +1,169 @@
+---
+title: Docker
+description: Run omni-model as a container backed by PostgreSQL.
+---
+
+omni-model ships as a single container image. It is the only supported deployment target: run it
+on any platform that runs containers, pointed at a PostgreSQL database.
+
+## Requirements
+
+- A container runtime (Docker, Podman, Kubernetes, ECS, Nomad — anything that runs an OCI image).
+- A PostgreSQL 14+ database. Postgres holds rate-limit counters and, in a scaled-out deployment,
+  is what makes those counters correct across instances.
+- At least one provider API key, and at least one [security verifier](/security/custom-jwt) — the
+  proxy refuses to start without one, because a proxy that authenticates nobody is an open relay
+  on your provider credits.
+
+## Run it
+
+Use the prebuilt image — no clone, no build:
+
+```sh
+docker run -p 8787:8787 \
+  -e DATABASE_URL=postgres://omni:secret@db:5432/omni \
+  -e OPENAI_API_KEY=sk-... \
+  -e OMNI_JWT_SECRET=replace-with-a-long-random-secret \
+  -e OMNI_STORAGE_TYPE=postgres \
+  -e 'OMNI_STORAGE_POSTGRES_URL=${DATABASE_URL}' \
+  -e OMNI_SECURITY_JWT_ENABLED=true \
+  -e 'OMNI_SECURITY_JWT_SECRET=${OMNI_JWT_SECRET}' \
+  -e 'OMNI_SECURITY_JWT_ALGORITHMS=["HS256"]' \
+  -e OMNI_PROVIDERS_DEFAULT_TYPE=openai \
+  -e 'OMNI_PROVIDERS_DEFAULT_API_KEY=${OPENAI_API_KEY}' \
+  ghcr.io/tiepvuvan/omni-model:latest
+```
+
+Values wrapped in `${...}` are resolved from the container's environment, so secrets stay in one
+place and never appear twice in your deployment manifest.
+
+## Schema migrations
+
+The container migrates its own schema on boot, before it accepts traffic. You can start every
+replica at once: the whole migration runs in a single transaction guarded by a Postgres advisory
+lock, so exactly one instance applies it and the rest wait, then find it done. A process killed
+mid-migration leaves nothing half-applied — the transaction rolls back and the lock releases with
+the connection.
+
+Migrations are forward-only and additive, which is what makes rolling deploys safe: an older
+replica keeps serving against a newer schema (it logs that the database is ahead and carries on).
+
+omni-model owns every `omni_`-prefixed table in the database or schema you point it at. Give it its
+own database if you need isolation — there is no table-name option, because the schema is created
+from static SQL.
+
+Set `OMNI_STORAGE_POSTGRES_MIGRATE=false` if the runtime database user cannot run DDL. You are then
+responsible for applying the schema out of band before the container starts.
+
+## Production configuration
+
+```sh
+OMNI_STORAGE_TYPE=postgres
+OMNI_STORAGE_POSTGRES_URL=${DATABASE_URL}
+OMNI_SECURITY_JWT_ENABLED=true
+OMNI_SECURITY_JWT_SECRET=${OMNI_JWT_SECRET}
+OMNI_SECURITY_JWT_ALGORITHMS=["HS256"]
+OMNI_PROVIDERS_DEFAULT_TYPE=openai
+OMNI_PROVIDERS_DEFAULT_API_KEY=${OPENAI_API_KEY}
+OMNI_RATE_LIMITS_JSON=[{"name":"per-user-requests","key":"user","requests":{"limit":30,"window":"1h"}}]
+```
+
+<Note>
+  Set `OMNI_SERVER_TRUST_PROXY_HEADERS=true` **only** when the container sits behind a reverse
+  proxy or CDN that overwrites `x-forwarded-for`. Otherwise a client can spoof its own IP and,
+  with it, its rate-limit key. When it is `false`, the proxy uses the real socket peer instead.
+</Note>
+
+## Compose
+
+```yaml
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: omni
+      POSTGRES_PASSWORD: secret
+      POSTGRES_DB: omni
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U omni"]
+      interval: 5s
+      retries: 10
+  proxy:
+    image: ghcr.io/tiepvuvan/omni-model:latest
+    ports: ["8787:8787"]
+    depends_on:
+      db: { condition: service_healthy }
+    environment:
+      DATABASE_URL: postgres://omni:secret@db:5432/omni
+      OMNI_STORAGE_TYPE: postgres
+      OMNI_STORAGE_POSTGRES_URL: ${DATABASE_URL}
+      OMNI_SECURITY_JWT_ENABLED: "true"
+      OMNI_SECURITY_JWT_SECRET: ${OMNI_JWT_SECRET}
+      OMNI_SECURITY_JWT_ALGORITHMS: '["HS256"]'
+      OMNI_PROVIDERS_DEFAULT_TYPE: openai
+      OMNI_PROVIDERS_DEFAULT_API_KEY: ${OPENAI_API_KEY}
+```
+
+## Configuration lives in the database
+
+The environment is only a **first-boot seed**. On an empty database, the `OMNI_*` variables above
+are stored as revision 1; from then on PostgreSQL is authoritative and changing an environment
+variable does nothing until you also change the stored configuration.
+
+Saving a new revision reconfigures every running replica **without a restart** — providers, auth
+verifiers, rate limits, routing and CORS all swap live, usually within a second. A request already
+in flight, including a streaming response, finishes on the configuration it started with.
+
+A configuration that fails validation is **rejected**: the previous one keeps serving and the
+reason appears on `/readyz`. A bad edit cannot take the proxy down.
+
+`storage` is the exception — it is read at boot only. Moving to a different database needs a
+restart, since there is nowhere else to read a corrected configuration from.
+
+<Note>
+  Stored revisions keep their `${VAR}` references rather than the resolved values, so your
+  credentials stay in the platform secret store and never land in the database or in an audit
+  trail. They are resolved from the container's environment each time the configuration is applied
+  — which means a referenced variable must exist in every replica.
+</Note>
+
+## Health checks
+
+`GET /healthz` returns `{"status":"ok"}` whenever the process is alive, regardless of
+configuration — point your platform's **liveness** probe at it. A misconfigured proxy should be
+fixed, not restarted in a loop.
+
+`GET /readyz` reports whether this instance can actually serve `/v1`:
+
+```json
+{ "status": "ready", "revision": 12, "error": null }
+```
+
+It answers 503 with `"status": "not_configured"` when there is no usable configuration, and
+`error` carries the reason. Point your **readiness** probe and load-balancer checks at this one.
+Neither endpoint needs authentication; until a configuration exists, `/v1/*` answers 503
+`not_configured`.
+
+## Scaling out
+
+Run as many replicas as you like against one database. Rate-limit counters are incremented in a
+single SQL statement, so limits stay exact no matter how many instances serve a user. If the
+database becomes unreachable, rate limiting **fails open**: requests keep flowing rather than the
+proxy taking your API down with it.
+
+## Build it yourself
+
+```sh
+docker build -t omni-model .
+```
+
+## Where to go next
+
+<CardGroup cols={2}>
+  <Card title="Lock it down" icon="lock" href="/security/app-attest">
+    Require App Attest, App Check, or a JWT so only genuine installs of your app get through.
+  </Card>
+  <Card title="Every setting" icon="sliders" href="/reference/configuration">
+    The full configuration reference.
+  </Card>
+</CardGroup>

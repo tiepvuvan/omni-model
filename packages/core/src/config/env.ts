@@ -35,14 +35,8 @@ const SIMPLE_VALUES: ReadonlyArray<readonly [name: string, path: readonly string
 
 /** Per-backend shortcuts, applied after JSON blocks and before generic overrides. */
 const STORAGE_VALUES: ReadonlyArray<readonly [name: string, field: string]> = [
-  ["OMNI_STORAGE_FIRESTORE_COLLECTION", "collection"],
-  ["OMNI_STORAGE_REDIS_URL", "url"],
-  ["OMNI_STORAGE_REDIS_KEY_PREFIX", "keyPrefix"],
   ["OMNI_STORAGE_POSTGRES_URL", "url"],
-  ["OMNI_STORAGE_POSTGRES_TABLE", "table"],
   ["OMNI_STORAGE_POSTGRES_MIGRATE", "migrate"],
-  ["OMNI_STORAGE_CLOUDFLARE_KV_BINDING", "binding"],
-  ["OMNI_STORAGE_DURABLE_OBJECT_BINDING", "binding"],
 ];
 
 /** Shortcuts for the provider whose stable routing ID is `default`. */

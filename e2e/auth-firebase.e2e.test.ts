@@ -2,15 +2,14 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { exchangeAppCheckDebugToken, mintFirebaseIdToken } from "./support/firebase-tokens.js";
-import { type RunningTarget, startNodeTarget, startWorkerTarget } from "./support/proxy-targets.js";
+import { type RunningTarget, startNodeTarget } from "./support/proxy-targets.js";
 
 /**
  * End-to-end: Firebase **Auth** and **App Check** verification against a REAL
- * Firebase project, on BOTH deploy targets — the Node container AND the
- * Cloudflare worker in workerd. The proxy runs with `security.mode: any` and
- * both Firebase verifiers enabled; each credential is minted from Google's real
- * REST APIs and presented to a running proxy, which must accept the genuine
- * token (and complete a real chat) and reject a forged one.
+ * Firebase project. The proxy runs with `security.mode: any` and both Firebase
+ * verifiers enabled; each credential is minted from Google's real REST APIs and
+ * presented to a running proxy, which must accept the genuine token (and
+ * complete a real chat) and reject a forged one.
  *
  * This is the device-free half of the auth story. App Attest / DeviceCheck need
  * a physical device and are exercised by the on-device verification screen in
@@ -35,46 +34,16 @@ const MODEL = process.env.OMNI_E2E_MODEL ?? "openai/gpt-4o-mini";
 const READY = Boolean(OPENROUTER && API_KEY && PROJECT_ID && PROJECT_NUMBER);
 const APP_CHECK_READY = Boolean(READY && APP_ID && DEBUG_TOKEN);
 
-const nodeConfigJson = readFileSync(
+const configJson = readFileSync(
   fileURLToPath(new URL("./omni.auth.e2e.json", import.meta.url)),
   "utf8",
 );
-// Same config, but Durable Object storage for the worker.
-const workerConfigJson = JSON.stringify({
-  ...(JSON.parse(nodeConfigJson) as Record<string, unknown>),
-  storage: { type: "durable-object", binding: "OMNI_DO" },
-});
 
-interface Target {
-  name: string;
-  start: () => Promise<RunningTarget>;
-}
-
-const TARGETS: Target[] = [
-  {
-    name: "Node container",
-    start: () => startNodeTarget(nodeConfigJson, process.env),
-  },
-  {
-    name: "Cloudflare Worker (workerd)",
-    start: () =>
-      startWorkerTarget({
-        omniConfigJson: workerConfigJson,
-        vars: {
-          OPENROUTER_API_KEY: OPENROUTER ?? "",
-          FIREBASE_PROJECT_ID: PROJECT_ID ?? "",
-          FIREBASE_PROJECT_NUMBER: PROJECT_NUMBER ?? "",
-        },
-        port: 8801,
-      }),
-  },
-];
-
-describe.skipIf(!READY).each(TARGETS)("E2E auth: $name → OpenRouter", (target) => {
+describe.skipIf(!READY)("E2E Firebase auth (container) → OpenRouter", () => {
   let proxy: RunningTarget;
 
   beforeAll(async () => {
-    proxy = await target.start();
+    proxy = await startNodeTarget(configJson, process.env);
   }, 100_000);
 
   afterAll(async () => {

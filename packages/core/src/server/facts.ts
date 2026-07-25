@@ -37,8 +37,9 @@ function isRedactedHeader(name: string): boolean {
  * Best-effort client IP.
  *
  * When `trustProxyHeaders` is true (the proxy runs behind a trusted reverse
- * proxy / CDN), honor `cf-connecting-ip` (set by Cloudflare), then the first
- * (client-most) entry of `x-forwarded-for`, then `x-real-ip`.
+ * proxy / CDN), honor `cf-connecting-ip` (set by Cloudflare's CDN, which many
+ * container deployments still sit behind), then the first (client-most) entry
+ * of `x-forwarded-for`, then `x-real-ip`.
  *
  * When it is false, these headers are client-suppliable and therefore
  * untrusted: they are ignored entirely (returns `null`) so a client cannot

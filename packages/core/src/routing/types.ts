@@ -16,7 +16,9 @@ export interface ExpressionEngine {
 
 /**
  * Variables exposed to routing and rate-limit expressions. Documented in
- * docs/configuration.md — keep the two in sync when changing this shape.
+ * docs/reference/configuration.mdx — keep the two in sync when changing this
+ * shape, and remember the fact set is built in three places that must agree:
+ * `buildRequestFacts`, the limiter's `varsFrom`, and the router's `vars`.
  */
 export interface RequestFacts {
   request: {

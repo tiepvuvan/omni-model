@@ -1,0 +1,25 @@
+# PostgreSQL for the gated integration suites (`pnpm test:pg`).
+#
+# Deliberately on a non-default port so it cannot collide with — or worse,
+# be mistaken for — a Postgres you already run locally. Nothing here is
+# persisted: the data lives in a tmpfs, so every `down` is a clean slate and
+# the tests never depend on leftover state.
+services:
+  postgres:
+    image: postgres:17-alpine
+    ports:
+      - "55432:5432"
+    environment:
+      POSTGRES_USER: omni
+      POSTGRES_PASSWORD: secret
+      POSTGRES_DB: omni_test
+      # Safe here and meaningfully faster: this database is disposable.
+      POSTGRES_INITDB_ARGS: "--nosync"
+    tmpfs:
+      - /var/lib/postgresql/data
+    command: ["postgres", "-c", "fsync=off", "-c", "full_page_writes=off"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U omni -d omni_test"]
+      interval: 1s
+      timeout: 3s
+      retries: 30

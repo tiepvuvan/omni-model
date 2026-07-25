@@ -3,16 +3,16 @@
 A self-hosted, OpenAI-compatible AI proxy for your mobile and web apps. Your provider API keys
 stay on your infrastructure — never inside an app binary. Clients authenticate with what they
 already have (Firebase App Check, Apple App Attest / DeviceCheck, Firebase Auth, Supabase, or any
-JWT), and environment variables configure rate limits (request windows **and** token budgets) plus
-CEL-expression model routing across OpenAI, Anthropic, Google Gemini and any OpenAI-compatible
-endpoint. Deploy it to Cloudflare Workers or any container platform.
+JWT), and you configure rate limits (request windows **and** token budgets) plus CEL-expression
+model routing across OpenAI, Anthropic, Google Gemini and any OpenAI-compatible endpoint.
+
+It ships as **one container image backed by PostgreSQL** — run it anywhere that runs containers.
 
 ```sh
-npx omni-model deploy
+docker run -p 8787:8787 --env-file omni.env ghcr.io/tiepvuvan/omni-model:latest
 ```
 
-Picks your platform, storage, auth and limits, then ships it — no fork, no clone, no build. Runtime
-configuration uses environment variables, so credentials stay in your platform's secret store.
+No fork, no clone, no build. Credentials stay in your platform's secret store.
 
 ## How it works
 
@@ -56,8 +56,9 @@ included.
   (`when: 'has(user.claims.tier) && user.claims.tier == "free"'`). Fail-open on storage outages.
 - **CEL model routing** — map client-facing aliases like `"smart"` to concrete provider+model by
   user tier, request shape or headers; fall back with per-model rules and a default provider.
-- **Runs anywhere** — Cloudflare Workers (KV or Durable Object storage), Docker, Fly.io, Cloud
-  Run, Render, bare Node. Redis and Postgres storage for multi-instance deployments.
+- **One way to run it** — a single container image plus PostgreSQL. Scale to as many replicas as
+  you like against one database; rate-limit counters stay exact because every increment is one
+  atomic SQL statement.
 - **Extensible** — auth verifiers, providers, and storage backends are pluggable factories in a
   registry; add your own without forking core.
 
@@ -111,53 +112,23 @@ multi-provider routing.
 version tag (`:1.2.3` / `:1.2`) for reproducible deploys, or `:edge` to track `main`. To build the
 image yourself instead: `docker build -t omni-model .`.
 
-### One-click deploys
+### Production: Postgres
 
-[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/tiepvuvan/omni-model)
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/tiepvuvan/omni-model)
-[![Run on Google Cloud](https://deploy.cloud.run/button.svg)](https://deploy.cloud.run/?git_repo=https://github.com/tiepvuvan/omni-model)
-
-- **Render** — no fork. The [`render.yaml`](render.yaml) Blueprint runs the prebuilt GHCR image,
-  provisions a managed Key Value (Redis) datastore for rate limits, and prompts you for your
-  provider API keys.
-- **Cloudflare Workers** — Cloudflare clones the repository into your account, provisions the
-  `OMNI_DO` Durable Object, applies the named Worker configuration, and prompts for the JWT and
-  optional upstream-key secrets. The starter is ready without dashboard configuration; edit its
-  environment variables later for Firebase App Check, routing, or a different provider.
-- **Cloud Run** — no fork. The button defaults to Firestore and Firebase App Check, generates a
-  JWT fallback secret, and lets you add an optional OpenAI-compatible upstream key later. Follow the
-  [Cloud Run guide](docs/installation/cloud-run.mdx) for Firestore IAM and Secret Manager.
-- **Fly.io** — `fly launch --copy-config` (a `fly.toml` ships in the repo).
-
-**Cloudflare without a fork.** Every release also ships a **prebuilt worker** — the edge counterpart
-of the container image. Download it, supply config at runtime, done:
+`memory` storage is fine for one process, but it loses everything on restart and shares nothing
+between replicas. Point the container at PostgreSQL instead:
 
 ```sh
-curl -LO https://github.com/tiepvuvan/omni-model/releases/latest/download/worker.js
-curl -LO https://github.com/tiepvuvan/omni-model/releases/latest/download/wrangler.jsonc
-npx wrangler deploy \
-  --var OMNI_STORAGE_TYPE:durable-object \
-  --var OMNI_PROVIDERS_DEFAULT_TYPE:openai
+docker run -p 8787:8787 \
+  -e DATABASE_URL=postgres://omni:secret@db:5432/omni \
+  -e OMNI_STORAGE_TYPE=postgres \
+  -e 'OMNI_STORAGE_POSTGRES_URL=${DATABASE_URL}' \
+  ... \
+  ghcr.io/tiepvuvan/omni-model:latest
 ```
 
-No fork, no clone, no build. You trade push-to-deploy CI for a `curl` + redeploy on updates.
-
-Full platform walkthroughs — including Cloudflare KV vs Durable Object storage — in
-the [installation guides](docs/installation/cloudflare.mdx).
-
-### Serverless on Firebase (no backend)
-
-For mobile/web apps with no server at all, install the **Firebase Extension**
-(`extensions/omni-model-proxy`): your app calls an OpenAI-compatible **Callable Function**, and the
-Firebase SDKs attach the caller's **Firebase Auth** and **App Check** tokens automatically —
-omni-model maps them to identities and enforces per-user limits in **Firestore**. Streaming works
-via the callable streaming API. See [docs/installation/firebase.mdx](docs/installation/firebase.mdx).
-
-```js
-const chat = httpsCallable(getFunctions(), "ext-omni-model-proxy-chat");
-const { stream, data } = await chat.stream({ model: "gpt-4o-mini", messages });
-for await (const c of stream) render(c.choices?.[0]?.delta?.content ?? "");
-```
+The container creates its tables on first boot. Run as many replicas as you like against one
+database — every counter increment is a single atomic SQL statement, so limits stay exact. See the
+[Docker guide](docs/installation/docker.mdx) for Compose, health checks, and scaling notes.
 
 ## Configuration
 
@@ -240,14 +211,10 @@ curl https://ai.example.com/v1/chat/completions \
 
 Rate-limit counters, token budgets and attestation keys live in pluggable storage:
 
-| Type | Counter atomicity | Shared across instances | Use when |
-| --- | --- | --- | --- |
-| `memory` | exact (single process) | no | local dev; a single long-lived instance |
-| `cloudflare-kv` | approximate (non-atomic RMW) | yes (eventually consistent) | Workers; best-effort limits are enough |
-| `durable-object` | exact (serialized per key) | yes | Workers; limits and budgets must be exact |
-| `redis` | exact (server-side Lua) | yes | containers with more than one instance |
-| `postgres` | exact (single-statement upsert) | yes | you already run Postgres and want no new infra |
-| `firestore` | exact (transaction, per-user keys) | yes | serverless on Firebase / Cloud Functions |
+| Type | Counter atomicity | Shared across instances | Survives restart | Use when |
+| --- | --- | --- | --- | --- |
+| `postgres` | exact (single-statement upsert) | yes | yes | production, at any number of replicas |
+| `memory` | exact (single process) | no | no | local development |
 
 Details and options per backend in [docs/reference/configuration.mdx](docs/reference/configuration.mdx).
 
@@ -270,7 +237,7 @@ documented in [CLAUDE.md](CLAUDE.md); an embedding example is in
 ## Contributing
 
 See [CLAUDE.md](CLAUDE.md) — the contributor guide covers the architecture rules, toolchain,
-testing conventions and PR checklist. `pnpm ci` (lint + build + test) must be green.
+testing conventions and PR checklist. `pnpm run ci` (lint + build + test) must be green.
 
 ## License
 

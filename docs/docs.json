@@ -16,13 +16,7 @@
       },
       {
         "group": "Installation",
-        "pages": [
-          "installation/firebase",
-          "installation/cloudflare",
-          "installation/render",
-          "installation/fly-io",
-          "installation/cloud-run"
-        ]
+        "pages": ["installation/docker"]
       },
       {
         "group": "Security",

@@ -22,6 +22,9 @@ type CompiledKey =
   | { kind: "expression"; expression: CompiledExpression };
 
 interface CompiledRule {
+  /** Counter keyspace. `config.id ?? config.name`. */
+  id: string;
+  /** Display name, reported in decisions and headers. */
   name: string;
   when: CompiledExpression | null;
   key: CompiledKey;
@@ -43,12 +46,16 @@ function windowStartFor(nowMs: number, windowMs: number): number {
   return Math.floor(nowMs / windowMs) * windowMs;
 }
 
-function requestKey(rule: string, limitKey: string, windowStart: number): string {
-  return `rl:req:${rule}:${limitKey}:${windowStart}`;
+/**
+ * Counter keys are namespaced by the rule's stable `id` (not its display name),
+ * so renaming a rule from a dashboard preserves its counters.
+ */
+function requestKey(ruleId: string, limitKey: string, windowStart: number): string {
+  return `rl:req:${ruleId}:${limitKey}:${windowStart}`;
 }
 
-function tokenKey(rule: string, limitKey: string, windowStart: number): string {
-  return `rl:tok:${rule}:${limitKey}:${windowStart}`;
+function tokenKey(ruleId: string, limitKey: string, windowStart: number): string {
+  return `rl:tok:${ruleId}:${limitKey}:${windowStart}`;
 }
 
 function compileExpression(
@@ -100,6 +107,7 @@ function compileRule(rule: RateLimitRuleConfig, engine: ExpressionEngine): Compi
     key = { kind: rule.key };
   }
   return {
+    id: rule.id ?? rule.name,
     name: rule.name,
     when: rule.when === undefined ? null : compileExpression(engine, rule.when, rule.name, "when"),
     key,
@@ -122,7 +130,7 @@ function compileRule(rule: RateLimitRuleConfig, engine: ExpressionEngine): Compi
  * - Rejected requests still consume request-window slots — attempts count by
  *   design, so hammering an exhausted limit never earns extra throughput.
  * - Storage failures fail OPEN: a rule whose counter cannot be read or written
- *   is treated as passing (logged at error level). A Redis outage must not
+ *   is treated as passing (logged at error level). A database outage must not
  *   take the API down.
  */
 export function createRateLimiter(
@@ -134,14 +142,23 @@ export function createRateLimiter(
     throw new ConfigError(`invalid rate limit rules:\n${z.prettifyError(parsed.error)}`);
   }
   const compiled: CompiledRule[] = [];
+  const seenIds = new Set<string>();
   const seenNames = new Set<string>();
   for (const rule of parsed.data) {
-    if (seenNames.has(rule.name)) {
+    const id = rule.id ?? rule.name;
+    if (seenIds.has(id)) {
       throw new ConfigError(
-        `duplicate rate limit rule name "${rule.name}"; rule names isolate counter keyspaces ` +
-          "and must be unique",
+        `duplicate rate limit rule id "${id}"; ids isolate counter keyspaces and must be unique ` +
+          "(a rule without an explicit `id` uses its `name`)",
       );
     }
+    if (seenNames.has(rule.name)) {
+      throw new ConfigError(
+        `duplicate rate limit rule name "${rule.name}"; names identify rules in decisions and ` +
+          "response headers and must be unique",
+      );
+    }
+    seenIds.add(id);
     seenNames.add(rule.name);
     compiled.push(compileRule(rule, deps.engine));
   }
@@ -229,7 +246,7 @@ export function createRateLimiter(
         const windowStart = windowStartFor(nowMs, rule.tokens.windowMs);
         let used: number;
         try {
-          used = await storage.getCounter(tokenKey(rule.name, limitKey, windowStart));
+          used = await storage.getCounter(tokenKey(rule.id, limitKey, windowStart));
         } catch (error) {
           log.error(`rate limit storage read failed; rule "${rule.name}" fails open`, {
             rule: rule.name,
@@ -251,7 +268,7 @@ export function createRateLimiter(
         let count: number;
         try {
           count = await storage.increment(
-            requestKey(rule.name, limitKey, windowStart),
+            requestKey(rule.id, limitKey, windowStart),
             1,
             rule.requests.ttlSeconds,
           );
@@ -281,7 +298,7 @@ export function createRateLimiter(
           const windowStart = windowStartFor(nowMs, rule.tokens.windowMs);
           try {
             await storage.increment(
-              tokenKey(rule.name, limitKey, windowStart),
+              tokenKey(rule.id, limitKey, windowStart),
               total,
               rule.tokens.ttlSeconds,
             );

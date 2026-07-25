@@ -135,10 +135,9 @@ App Attest gives three layers of protection:
   cannot be replayed.
 
 <Warning>
-Strict replay protection depends on atomic storage. On eventually-consistent
-backends (like Cloudflare KV) the single-use guarantee is best-effort — use
-`durable-object`, `redis`, or `postgres` [storage](/reference/configuration) for
-strict App Attest replay protection.
+Strict replay protection depends on atomic, *shared* storage. `memory` storage
+only protects a single process, so use `postgres`
+[storage](/reference/configuration) whenever you run more than one replica.
 </Warning>
 
 ## `type: apple-device-check`

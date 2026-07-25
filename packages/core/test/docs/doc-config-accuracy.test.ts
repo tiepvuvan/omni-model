@@ -52,10 +52,9 @@ const TEST_ENV = {
   OPENAI_API_KEY: "sk-test",
   ANTHROPIC_API_KEY: "sk-test",
   GEMINI_API_KEY: "sk-test",
-  REDIS_URL: "redis://localhost:6379",
   // Referenced by the documented local-development verifier.
   OMNI_DEV_SECRET: "dev-secret",
-  OMNI_JWT_SECRET: "cloud-run-jwt-secret",
+  OMNI_JWT_SECRET: "container-jwt-secret",
   DATABASE_URL: "postgres://localhost/omni",
   SUPABASE_JWT_SECRET: "secret",
 };
@@ -160,7 +159,7 @@ describe("full config examples in the reference page parse", () => {
       "OMNI_RATE_LIMITS_JSON",
       "OMNI_PROVIDERS_JSON",
       "OMNI_ROUTING_JSON",
-      "OMNI_STORAGE_FIRESTORE_COLLECTION",
+      "OMNI_STORAGE_POSTGRES_URL",
       "OMNI_PROVIDERS_DEFAULT_TYPE",
       "OMNI_SECURITY_FIREBASE_AUTH_ENABLED",
       "OMNI_SECURITY_FIREBASE_APPCHECK_ENABLED",
@@ -178,16 +177,16 @@ describe("full config examples in the reference page parse", () => {
   });
 });
 
-describe("the Cloud Run production configuration", () => {
-  it("uses environment variables for Firestore storage and JWT authentication", () => {
-    const cloudRunPage = repoFile("docs/installation/cloud-run.mdx");
-    expect(cloudRunPage).toContain("OMNI_STORAGE_TYPE=firestore");
-    expect(cloudRunPage).toContain("OMNI_SECURITY_JWT_ENABLED=true");
+describe("the documented container production configuration", () => {
+  it("uses environment variables for Postgres storage and JWT authentication", () => {
+    const dockerPage = repoFile("docs/installation/docker.mdx");
+    expect(dockerPage).toContain("OMNI_STORAGE_TYPE=postgres");
+    expect(dockerPage).toContain("OMNI_SECURITY_JWT_ENABLED=true");
 
     const config = parseEnvironmentConfig({
       ...TEST_ENV,
-      OMNI_STORAGE_TYPE: "firestore",
-      OMNI_STORAGE_FIRESTORE_COLLECTION: "omni_ratelimits",
+      OMNI_STORAGE_TYPE: "postgres",
+      OMNI_STORAGE_POSTGRES_URL: "$" + "{DATABASE_URL}",
       OMNI_SECURITY_JWT_ENABLED: "true",
       OMNI_SECURITY_JWT_SECRET: "$" + "{OMNI_JWT_SECRET}",
       OMNI_SECURITY_JWT_ALGORITHMS: '["HS256"]',
@@ -196,7 +195,10 @@ describe("the Cloud Run production configuration", () => {
       OMNI_RATE_LIMITS_JSON:
         '[{"name":"per-user-requests","key":"user","requests":{"limit":30,"window":"1h"}}]',
     });
-    expect(config.storage.type).toBe("firestore");
+    expect(config.storage).toMatchObject({
+      type: "postgres",
+      url: "postgres://localhost/omni",
+    });
     expect(config.security.providers).toMatchObject([{ type: "jwt" }]);
   });
 });

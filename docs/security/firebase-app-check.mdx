@@ -14,10 +14,10 @@ this verifier with a user token verifier such as
 [`firebase-auth`](/security/custom-jwt) when you need both.
 
 <Note>
-**Self-hosted vs. serverless.** On the self-hosted proxy you enforce App Check
-with this verifier. The serverless [Firebase Extension](/installation/firebase)
-enforces App Check **natively** on its callable functions — the client SDK
-attaches the token automatically and you do not configure a verifier there.
+**You do not need Firebase Hosting or Functions to use this.** The verifier only
+validates App Check tokens against Google's public keys, so it works from any
+container. Only `consume: true` (replay protection) additionally needs Firebase
+Admin credentials — see below.
 </Note>
 
 ## Configuration
@@ -36,10 +36,9 @@ export OMNI_SECURITY_JSON='{
 <ParamField path="projectNumber" type="string">
 The **numeric** Firebase project number — not the project id. The verifier pins
 the issuer to `https://firebaseappcheck.googleapis.com/<projectNumber>` and the
-audience to `projects/<projectNumber>`. It is optional for `@omni-model/node`
-on Cloud Run or Compute Engine: startup reads the numeric project id from the
-Google metadata server. Specify it for local/container deployments or whenever
-the Firebase project differs from the GCP project that runs the proxy.
+audience to `projects/<projectNumber>`. Required: set it here, or as
+`OMNI_GCP_PROJECT_NUMBER` in the environment. It is the `GCM_SENDER_ID` in your
+app's `GoogleService-Info.plist` / `google-services.json`.
 </ParamField>
 <ParamField path="appIds" type="string[]">
 Optional allowlist of Firebase app ids, matched against the token `sub`. When
@@ -49,10 +48,10 @@ omitted, any app in the project is accepted.
 Header carrying the raw App Check token (no `Bearer` prefix).
 </ParamField>
 <ParamField path="consume" type="boolean" default="false">
-Enable Firebase's limited-use token replay protection. The Node runtime consumes each token using
-the Firebase Admin SDK; a second use returns `401`. Only enable this after every client obtains a
-new limited-use token for every proxy request. It is supported by `@omni-model/node` on Cloud Run,
-GCE, or another Node environment with Application Default Credentials; Workers do not support it.
+Enable Firebase's limited-use token replay protection. The proxy consumes each token using the
+Firebase Admin SDK; a second use returns `401`. Only enable this after every client obtains a new
+limited-use token for every proxy request. This is the one App Check feature that needs Firebase
+Admin credentials in the container — see below.
 </ParamField>
 <ParamField path="clockToleranceSeconds" type="integer" default="60">
 Allowed clock skew, in seconds.
@@ -73,7 +72,9 @@ export OMNI_SECURITY_FIREBASE_APPCHECK_CONSUME=true
 ```
 
 This adds a Firebase verification round trip to every request and fails closed if it cannot be
-completed. The Cloud Run runtime service account needs the Firebase App Check Token Verifier role:
+completed. Give the container a service account credential (mount the key and set
+`GOOGLE_APPLICATION_CREDENTIALS`, plus `FIREBASE_PROJECT_ID`), and grant that account the Firebase
+App Check Token Verifier role:
 
 ```sh
 gcloud projects add-iam-policy-binding "$PROJECT_ID" \
@@ -84,23 +85,24 @@ gcloud projects add-iam-policy-binding "$PROJECT_ID" \
 Clients must request a **new limited-use token per request**; an ordinary cached App Check session
 token will succeed once and then be rejected as a replay. For example, on Apple platforms use
 `try await AppCheck.appCheck().limitedUseToken()` instead of `token(forcingRefresh:)` before
-placing the result in `X-Firebase-AppCheck`. For Firebase callable functions, enable their
-`CONSUME_APP_CHECK_TOKEN` install parameter and configure the callable client for limited-use
-tokens. Firebase documents the latency and attestation-quota tradeoff for this beta protection in
-its [custom-backend replay-protection guide](https://firebase.google.com/docs/app-check/custom-resource-backend).
+placing the result in `X-Firebase-AppCheck`. Firebase documents the latency and attestation-quota
+tradeoff for this beta protection in its
+[custom-backend replay-protection guide](https://firebase.google.com/docs/app-check/custom-resource-backend).
 
 <Note>
-**GCP zero-config.** When the Node server runs on Cloud Run or Compute Engine
-and the Firebase project is the same GCP project, this is enough:
+**Supplying the project number from the environment.** If you would rather keep
+it out of the config document, set `OMNI_GCP_PROJECT_NUMBER` and omit the field:
 
 ```sh
+export OMNI_GCP_PROJECT_NUMBER=1234567890
 export OMNI_SECURITY_PROVIDERS_JSON='[{"type":"firebase-app-check"}]'
 ```
 
-The runtime obtains the project number before it starts serving requests. This
-does not enroll an app in Firebase App Check or configure an attestation
-provider; complete those steps in the Firebase console first. Explicit
-`projectNumber` always wins, which is how cross-project deployments work.
+Explicit `projectNumber` always wins, which is how cross-project deployments
+work. Either way it must resolve at startup — a missing project number is a
+startup failure, not a per-request one. Note that this does not enroll an app in
+Firebase App Check or configure an attestation provider; complete those steps in
+the Firebase console first.
 </Note>
 
 ## Sending the token
@@ -134,14 +136,14 @@ export OMNI_SECURITY_JSON='{
 With `mode: all`, a missing credential fails with `credential missing for
 <name>`, and the merged identity carries both `device.id` (from App Check) and
 `user.id` (from Firebase Auth) into [routing and rate-limit rules](/model-routing/routing).
-On Cloud Run / GCE, both values are discovered from the metadata server. Outside
-GCP, use explicit `projectNumber` and `projectId` values instead.
+Set `projectNumber` (App Check) and `projectId` (Firebase Auth) explicitly —
+they are different values from the same Firebase project.
 
 ## Related
 
 <CardGroup cols={2}>
-  <Card title="Firebase Extension" icon="firebase" href="/installation/firebase">
-    Serverless deploy with native App Check enforcement.
+  <Card title="Install with Docker" icon="docker" href="/installation/docker">
+    Run the proxy as a container against PostgreSQL.
   </Card>
   <Card title="JWT-family verifiers" icon="key" href="/security/custom-jwt">
     Firebase Auth, Supabase, and custom JWT.

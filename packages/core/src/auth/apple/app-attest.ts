@@ -407,9 +407,9 @@ export const appleAppAttestVerifierFactory: AuthVerifierFactory = {
         // all delete the challenge at the end — a TOCTOU that defeats single-use.
         // `increment` is the storage layer's atomic primitive: exactly one
         // caller sees the post-increment value 1, so only the first replay wins.
-        // (On eventually-consistent backends like Cloudflare KV this is
-        // best-effort per the CounterStore contract; use durable-object/redis/
-        // postgres storage for strict App Attest replay protection.)
+        // (This relies on the CounterStore atomicity contract; use `postgres`
+        // storage — not `memory` — for strict replay protection across
+        // multiple proxy instances.)
         const claim = await ctx.storage.increment(
           CHALLENGE_CLAIM_PREFIX + challenge,
           1,

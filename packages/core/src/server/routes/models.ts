@@ -14,10 +14,14 @@ import type { RouteDeps } from "./chat.js";
  */
 export function createModelsHandler(deps: RouteDeps): (c: Context<AppEnv>) => Promise<Response> {
   return async (c) => {
-    if (deps.allowedModels.length > 0) {
+    // From the bundle, not a captured value: `allowedModels` is enforced here
+    // *and* inside the router, and the two must never disagree about what
+    // exists.
+    const bundle = deps.requireBundle();
+    if (bundle.allowedModels.length > 0) {
       const body: ModelList = {
         object: "list",
-        data: deps.allowedModels.map((id) => ({
+        data: bundle.allowedModels.map((id) => ({
           id,
           object: "model",
           created: 0,
@@ -30,7 +34,7 @@ export function createModelsHandler(deps: RouteDeps): (c: Context<AppEnv>) => Pr
     const runtime = deps.runtimeFor(c);
     const listable: { providerId: string; list: (ctx: RuntimeContext) => Promise<ModelInfo[]> }[] =
       [];
-    for (const provider of deps.providers.values()) {
+    for (const provider of bundle.providers.values()) {
       const list = provider.listModels?.bind(provider);
       if (list !== undefined) listable.push({ providerId: provider.id, list });
     }
@@ -39,7 +43,7 @@ export function createModelsHandler(deps: RouteDeps): (c: Context<AppEnv>) => Pr
     const byId = new Map<string, ModelInfo>();
     settled.forEach((result, index) => {
       if (result.status === "rejected") {
-        deps.log.warn("provider listModels failed; skipping its models", {
+        bundle.log.warn("provider listModels failed; skipping its models", {
           provider: listable[index]?.providerId,
           error: result.reason instanceof Error ? result.reason.message : String(result.reason),
         });

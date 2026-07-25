@@ -88,8 +88,9 @@ describe("environment configuration", () => {
 
   it("builds storage, a default provider, Firebase Auth, and App Check from ergonomic variables", () => {
     const config = parseEnvironmentConfig({
-      OMNI_STORAGE_TYPE: "firestore",
-      OMNI_STORAGE_FIRESTORE_COLLECTION: "omni_ratelimits",
+      OMNI_STORAGE_TYPE: "postgres",
+      OMNI_STORAGE_POSTGRES_URL: "postgres://localhost:5432/omni",
+      OMNI_STORAGE_POSTGRES_MIGRATE: "false",
       OMNI_PROVIDERS_DEFAULT_TYPE: "openai-compatible",
       OMNI_PROVIDERS_DEFAULT_BASE_URL: "https://gateway.example.com/v1",
       OMNI_PROVIDERS_DEFAULT_API_KEY: "gateway-key",
@@ -111,7 +112,11 @@ describe("environment configuration", () => {
       ]),
     });
 
-    expect(config.storage).toMatchObject({ type: "firestore", collection: "omni_ratelimits" });
+    expect(config.storage).toMatchObject({
+      type: "postgres",
+      url: "postgres://localhost:5432/omni",
+      migrate: false,
+    });
     expect(config.providers.default).toMatchObject({
       type: "openai-compatible",
       baseUrl: "https://gateway.example.com/v1",

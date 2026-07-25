@@ -11,10 +11,10 @@ export interface KVStore {
 export interface CounterStore {
   /**
    * Increment `key` by `amount` and return the post-increment value. The TTL
-   * applies from the first write of the key. Backends should make this as
-   * atomic as they can (Redis INCRBY, Postgres upsert, Durable Object serial
-   * execution); eventually-consistent stores such as Cloudflare KV provide
-   * best-effort counting and must document that.
+   * applies from the first write of the key. Backends must make this atomic
+   * (the Postgres adapter does it in a single upsert statement) so counters
+   * stay correct across concurrent proxy instances; a backend that can only
+   * count best-effort must document that.
    */
   increment(key: string, amount: number, ttlSeconds: number): Promise<number>;
   /** Current counter value; 0 when the key is absent or expired. */

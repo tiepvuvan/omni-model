@@ -6,8 +6,8 @@ name: Publish container image
 #   - manual run (workflow_dispatch)
 #
 # Consumers then `docker pull ghcr.io/<owner>/<repo>:<tag>` — no fork, and
-# updates are a pull + redeploy. The image ships no baked config; provide it at
-# runtime via OMNI_CONFIG / OMNI_CONFIG_PATH / a mounted /app/omni.yaml.
+# updates are a pull + redeploy. The image ships no baked config: point it at a
+# PostgreSQL database and configure it through the admin API.
 on:
   push:
     branches: [main]

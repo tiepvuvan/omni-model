@@ -1,7 +1,7 @@
 {
   "name": "@omni-model/node",
   "version": "0.1.0",
-  "description": "Node.js server for omni-model: loads environment configuration and serves the proxy (for Docker, Fly.io, Cloud Run, and bare Node).",
+  "description": "Node.js server for omni-model: loads configuration and serves the proxy in a container.",
   "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",
@@ -25,9 +25,7 @@
   "dependencies": {
     "@hono/node-server": "^2.0.0",
     "@omni-model/core": "workspace:*",
-    "@omni-model/storage-firestore": "workspace:*",
-    "@omni-model/storage-postgres": "workspace:*",
-    "@omni-model/storage-redis": "workspace:*",
+    "@omni-model/postgres": "workspace:*",
     "firebase-admin": "^12.7.0",
     "hono": "^4.12.0"
   }

@@ -18,8 +18,9 @@ import type {
   ProviderFactory,
 } from "../../src/providers/types.js";
 import { createDefaultRegistry } from "../../src/registry.js";
-import { createOmniApp } from "../../src/server/app.js";
+import { createOmniApp, createOmniProxy } from "../../src/server/app.js";
 import type { OmniAppInit } from "../../src/server/types.js";
+import { MemoryStorageAdapter } from "../../src/storage/memory.js";
 import type { StorageAdapter } from "../../src/storage/types.js";
 import type { Logger } from "../../src/types.js";
 
@@ -310,6 +311,66 @@ export async function createTestApp(options: TestAppOptions) {
     ...options.initOverrides,
   });
   return { app, providers: instances, collector };
+}
+
+export interface TestProxyOptions extends Omit<TestAppOptions, "yaml"> {
+  /** Initial fixture. Omit to boot unconfigured. */
+  yaml?: string;
+}
+
+/**
+ * Like {@link createTestApp} but exposes the holder, for suites that reconfigure
+ * a *running* app. Fixtures are still YAML; `reload` takes one and applies it
+ * exactly as a saved revision would.
+ */
+export async function createTestProxy(options: TestProxyOptions = {}) {
+  const registry = createDefaultRegistry();
+  const { factory, instances } = createFakeProviderSetup(options.behaviors);
+  registry.providers.set(factory.type, factory);
+  registry.auth.set("fake-auth", createFakeAuthFactory());
+  registry.auth.set("test-authenticated", createAlwaysAuthenticatedFactory());
+  const collector = createWaitUntilCollector();
+
+  const toDocument = (yaml: string): Record<string, unknown> => {
+    const config = parseConfigObject(parseYaml(yaml), options.env ?? {});
+    if (config.security.providers.length === 0 && (options.injectVerifier ?? true)) {
+      config.security.providers = [{ type: "test-authenticated" }];
+    }
+    return config as unknown as Record<string, unknown>;
+  };
+
+  const { app, holder } = await createOmniProxy({
+    registry,
+    storage: options.storage ?? new MemoryStorageAdapter(options.now ?? (() => FIXED_NOW)),
+    fetch: bannedFetch,
+    now: options.now ?? (() => FIXED_NOW),
+    waitUntil: collector.waitUntil,
+    logger: options.logger ?? silentLogger,
+    ...options.initOverrides,
+  });
+
+  if (options.yaml !== undefined) {
+    const result = await holder.reload(toDocument(options.yaml), { revision: 1 });
+    if (!result.ok) throw new Error(`initial fixture was rejected: ${result.error}`);
+  }
+
+  let revision = options.yaml === undefined ? 0 : 1;
+  return {
+    app,
+    holder,
+    providers: instances,
+    collector,
+    /** Apply a new fixture, as saving a revision would. */
+    reload: (yaml: string) => {
+      revision += 1;
+      return holder.reload(toDocument(yaml), { revision });
+    },
+    /** Apply a raw document, for asserting rejection of invalid configuration. */
+    reloadRaw: (document: unknown) => {
+      revision += 1;
+      return holder.reload(document, { revision });
+    },
+  };
 }
 
 export function chatRequest(

@@ -2,9 +2,10 @@ import type { Context } from "hono";
 import { badRequest, OmniError } from "../../errors.js";
 import type { ChatCompletionRequest } from "../../openai/types.js";
 import type { RequestFacts } from "../../routing/types.js";
+import type { RuntimeBundle } from "../../runtime/bundle.js";
 import type { RuntimeContext } from "../../types.js";
 import { buildRequestFacts } from "../facts.js";
-import { executeChat, type PipelineDeps } from "../pipeline.js";
+import { executeChat } from "../pipeline.js";
 import {
   createPublicChatResponseMetadata,
   redactChatCompletion,
@@ -13,16 +14,26 @@ import {
 } from "../response.js";
 import type { AppEnv } from "../types.js";
 
-/** Dependencies shared by every `/v1` route handler. */
-export interface RouteDeps extends PipelineDeps {
+/**
+ * Dependencies shared by every `/v1` route handler.
+ *
+ * Everything configuration-derived comes from {@link requireBundle}, read once
+ * per request. A request therefore serves entirely from the bundle it started
+ * with, even if a reload swaps in a new one mid-flight.
+ */
+export interface RouteDeps {
+  /**
+   * The bundle to serve this request with. Throws a 503 when the proxy has no
+   * active configuration.
+   */
+  requireBundle: () => RuntimeBundle;
   /** Per-request runtime: `waitUntil` bound to the platform execution context. */
   runtimeFor: (c: Context<AppEnv>) => RuntimeContext;
-  /** Resolve the client IP (gated on `server.trustProxyHeaders`, or socket-based). */
-  clientIp: (c: Context<AppEnv>) => string | null;
-  /** Reject request bodies larger than this many bytes with a 413. */
-  maxBodyBytes: number;
-  /** Exact client model names exposed and accepted when configured. */
-  allowedModels: readonly string[];
+  /**
+   * Resolve the client IP. Takes `trustProxyHeaders` from the bundle rather
+   * than capturing it, since it is reconfigurable.
+   */
+  clientIp: (c: Context<AppEnv>, trustProxyHeaders: boolean) => string | null;
 }
 
 function payloadTooLarge(maxBodyBytes: number): OmniError {
@@ -142,7 +153,10 @@ const STREAM_RESPONSE_HEADERS = {
  */
 export function createChatHandler(deps: RouteDeps): (c: Context<AppEnv>) => Promise<Response> {
   return async (c) => {
-    const body = await readJsonObject(c, deps.maxBodyBytes);
+    // Captured once: this request is served entirely by this bundle, so a
+    // reload cannot swap the router out from under a response already streaming.
+    const bundle = deps.requireBundle();
+    const body = await readJsonObject(c, bundle.maxBodyBytes);
     if (typeof body.model !== "string" || body.model.length === 0) {
       throw badRequest("you must provide a model parameter", { param: "model" });
     }
@@ -154,9 +168,9 @@ export function createChatHandler(deps: RouteDeps): (c: Context<AppEnv>) => Prom
     const request = body as ChatCompletionRequest;
 
     const runtime = deps.runtimeFor(c);
-    const facts = factsFor(c, request, runtime.now(), deps.clientIp(c));
+    const facts = factsFor(c, request, runtime.now(), deps.clientIp(c, bundle.trustProxyHeaders));
 
-    const result = await executeChat(deps, facts, request, runtime, {
+    const result = await executeChat(bundle, facts, request, runtime, {
       signal: c.req.raw.signal,
     });
     const metadata = createPublicChatResponseMetadata(request.model, runtime.now());
@@ -165,14 +179,14 @@ export function createChatHandler(deps: RouteDeps): (c: Context<AppEnv>) => Prom
       case "completion": {
         const usage = result.completion.usage;
         if (usage !== undefined) {
-          runtime.waitUntil(deps.limiter.recordUsage(facts, usage));
+          runtime.waitUntil(bundle.limiter.recordUsage(facts, usage));
         }
         return c.json(redactChatCompletion(result.completion, metadata));
       }
       case "stream": {
         runtime.waitUntil(
           result.usage.then((usage) =>
-            usage === null ? undefined : deps.limiter.recordUsage(facts, usage),
+            usage === null ? undefined : bundle.limiter.recordUsage(facts, usage),
           ),
         );
         return new Response(redactChatCompletionStream(result.sse, metadata), {
