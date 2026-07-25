@@ -14,6 +14,7 @@ import type { StorageAdapter } from "../storage/types.js";
 import type { Logger, RuntimeContext } from "../types.js";
 import { createAuthMiddleware } from "./auth.js";
 import { extractClientIp } from "./facts.js";
+import { createRequestTracker, type RequestTracker } from "./lifecycle.js";
 import { createRequestLoggingMiddleware } from "./logging.js";
 import { createChatHandler, type RouteDeps } from "./routes/chat.js";
 import { createEmbeddingsHandler } from "./routes/embeddings.js";
@@ -52,6 +53,11 @@ export interface OmniProxy {
   holder: BundleHolder;
   /** The storage backend the app was built with. */
   storage: StorageAdapter;
+  /**
+   * In-flight request accounting, for a shutdown that lets answers finish.
+   * The host calls `beginShutdown()` then `drain()`; see `RequestTracker`.
+   */
+  tracker: RequestTracker;
 }
 
 async function resolveStorage(
@@ -146,6 +152,12 @@ export async function createOmniProxy(init: OmniProxyInit): Promise<OmniProxy> {
 
   const app = new Hono<AppEnv>();
 
+  const tracker = createRequestTracker({
+    now,
+    onRefused: (path) =>
+      (holder.current()?.log ?? bootLog).debug("refused a request during shutdown", { path }),
+  });
+
   app.onError((error, c) => {
     // The only place the original error is still available, since Hono converts
     // it to a response before any outer middleware resumes.
@@ -234,6 +246,15 @@ export async function createOmniProxy(init: OmniProxyInit): Promise<OmniProxy> {
   // Readiness: this instance can actually serve /v1.
   app.get("/readyz", (c) => {
     const status = holder.status();
+    // Draining wins over configured: the point of failing readiness during a
+    // shutdown is to get the load balancer to stop sending work here while the
+    // requests already accepted finish.
+    if (tracker.draining()) {
+      return c.json(
+        { status: "draining", revision: status.revision, inFlight: tracker.inFlight() },
+        503,
+      );
+    }
     return c.json(
       {
         status: status.configured ? "ready" : "not_configured",
@@ -244,7 +265,12 @@ export async function createOmniProxy(init: OmniProxyInit): Promise<OmniProxy> {
     );
   });
 
-  // Outermost on /v1 so a request refused by anything inside — a rate limit, a
+  // Outermost on /v1: counts a request as in flight until its response body is
+  // fully written, which for a stream is long after the handler returned. Ahead
+  // of logging so a request refused during shutdown is still logged.
+  app.use("/v1/*", tracker.middleware);
+
+  // Then logging, so a request refused by anything inside — a rate limit, a
   // revoked client key, an unknown model — still produces a log row.
   app.use(
     "/v1/*",
@@ -275,7 +301,7 @@ export async function createOmniProxy(init: OmniProxyInit): Promise<OmniProxy> {
   app.get("/v1/models", createModelsHandler(deps));
   app.post("/v1/embeddings", createEmbeddingsHandler(deps));
 
-  return { app, holder, storage };
+  return { app, holder, storage, tracker };
 }
 
 /**

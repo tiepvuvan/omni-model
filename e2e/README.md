@@ -1,14 +1,27 @@
 # End-to-end tests
 
-These exercise the **whole chain** against a real upstream — the omni-model proxy plus both Swift
-integrations — so a regression anywhere (routing, translation, streaming, auth, the Foundation
-Models executor) fails a test instead of a shipped app.
+These exercise the **whole chain** — the omni-model proxy, its operator API, and both Swift
+integrations — so a regression anywhere (routing, translation, streaming, auth, configuration
+reload, the Foundation Models executor) fails a test instead of a shipped app.
 
-They're **opt-in** and cost a few tenths of a cent (tiny prompts, `openai/gpt-4o-mini`). Get an
-[OpenRouter](https://openrouter.ai) key, then:
+There are two independent gates, because the suites need different things:
+
+| Gate | Suites | Cost |
+| --- | --- | --- |
+| `TEST_POSTGRES_URL` | `admin-api`, `config-reload` | Free. A real database, no upstream. |
+| `OPENROUTER_API_KEY` | `openrouter-chat`, `auth-firebase`, `auth-apple` | A few tenths of a cent. |
+
+The database-backed ones run in CI on every push. For the upstream ones, get an
+[OpenRouter](https://openrouter.ai) key:
 
 ```sh
 OPENROUTER_API_KEY=sk-or-... e2e/run.sh
+```
+
+The database-backed ones on their own:
+
+```sh
+pnpm test:pg:up && TEST_POSTGRES_URL=postgres://omni:secret@localhost:55432/omni_test pnpm test:e2e
 ```
 
 To also verify **Firebase Auth / App Check**, add the project's identifiers (from its
@@ -40,18 +53,22 @@ export FIREBASE_PROJECT_NUMBER=...   # plist GCM_SENDER_ID
 
 | Suite | Command | Covers |
 | --- | --- | --- |
+| **Admin API** | `pnpm test:e2e` | The operator journey from an **empty database**, over HTTP: first-run sign-up, storing an encrypted credential, configuring the proxy from nothing, minting a write key, a real request needing both a client key and a user token, finding it in the logs with token counts, revoking the key, and an append-only rollback. Needs `TEST_POSTGRES_URL`. |
+| **Config reload** | `pnpm test:e2e` | **Two instances, one database**: a revision saved on one reaches the other with no restart, a rejected revision leaves both serving the previous one, an in-flight stream finishes on the bundle it started with, and rate-limit counters are shared rather than per instance. Needs `TEST_POSTGRES_URL`. |
 | **Proxy** | `pnpm test:e2e` | Real `@omni-model/node` container → OpenRouter: chat, **streaming**, a **tool-calling round-trip**, usage, and an upstream-error case. |
 | **Firebase auth** | `pnpm test:e2e` | **Firebase Auth** (and **App Check**): a REAL ID token minted from the project via Identity Toolkit is accepted (200); no/forged credential is rejected (401). Needs Firebase env (above). |
 | **Apple auth** | `pnpm test:e2e` | **DeviceCheck** server side (the proxy's ES256 JWT is accepted by Apple → Team/Key/`.p8` valid) and the **App Attest** challenge route, with the Firebase verifiers alongside under `mode: "any"`. Needs Apple env (above). Device-signed tokens themselves are verified via the example iOS app's on-device screen. |
 | **MacPaw** | `swift test` in `swift/OmniModelClientKit` (macOS) | MacPaw/OpenAI client + `OmniAuthMiddleware` → proxy: chat + streaming. |
 | **Foundation Models** | `xcodebuild test` in `swift/OmniModelFoundation` (iOS 27 sim) | `LanguageModelSession` → `OmniProxyExecutor` → proxy: `respond` + streaming. |
 
-`e2e/run.sh` runs all of them. `pnpm test:e2e` covers the first three, each booting its own ephemeral
-server. The Swift suites talk to a proxy the script starts on `http://localhost:8788` (the iOS
-simulator reaches the host's `localhost`).
+`e2e/run.sh` runs all of them. `pnpm test:e2e` covers the JavaScript ones, each booting its own
+ephemeral server. The Swift suites talk to a proxy the script starts on `http://localhost:8788` (the
+iOS simulator reaches the host's `localhost`).
 
 ## Self-guarding
 
+- The admin-API and config-reload suites **skip themselves** without `TEST_POSTGRES_URL`. CI's
+  integration job supplies one, so they run on every push.
 - The proxy E2E test **skips itself** when `OPENROUTER_API_KEY` is unset — so `pnpm test:e2e` is a
   no-op in CI without the secret, and the default `pnpm test` never includes these (separate
   `vitest.e2e.config.ts`).

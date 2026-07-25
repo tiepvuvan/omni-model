@@ -118,9 +118,19 @@ export class PostgresConfigStore implements ConfigStore {
         })
         .returning();
       if (row === undefined) throw new Error("saving a configuration revision returned no row");
-      return toStoredConfig(row);
+      const saved = toStoredConfig(row);
+      // Marked as seen *inside* the transaction, before COMMIT. The trigger's
+      // NOTIFY is delivered to the listening connection at commit time, so doing
+      // this after `transaction()` resolves is a race the listener sometimes
+      // wins — and then the instance that just saved a revision redundantly
+      // reloads it. Nothing breaks, but it is work we claim not to do.
+      //
+      // Safe even if the transaction then rolls back: the id came from a
+      // sequence, and a rolled-back insert burns that value rather than
+      // returning it to a later revision.
+      this.lastSeen = Math.max(this.lastSeen, saved.revision);
+      return saved;
     });
-    this.lastSeen = Math.max(this.lastSeen, stored.revision);
     return stored;
   }
 

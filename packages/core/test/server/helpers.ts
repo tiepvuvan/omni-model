@@ -93,6 +93,8 @@ export interface FakeProviderBehavior {
   /** When set, `chat` returns a stream of these chunks. */
   streamChunks?: ChatCompletionChunk[];
   streamUsage?: Usage | null;
+  /** Holds the stream open after its chunks, so "still writing" is observable. */
+  streamGate?: Promise<unknown>;
   /** When set, `chat` returns this error result. */
   error?: { status: number; body: OpenAIErrorBody };
   /** When set, `listModels` is defined and resolves with these. */
@@ -157,9 +159,13 @@ export class FakeProvider implements ChatProvider {
       const usage = new Promise<Usage | null>((resolve) => {
         settle = resolve;
       });
-      const sse = sseFromChunks(behavior.streamChunks, () => {
-        settle(behavior.streamUsage ?? null);
-      });
+      const sse = sseFromChunks(
+        behavior.streamChunks,
+        () => {
+          settle(behavior.streamUsage ?? null);
+        },
+        behavior.streamGate,
+      );
       return { kind: "stream", sse, usage };
     }
     return {
@@ -175,10 +181,15 @@ export class FakeProvider implements ChatProvider {
  * Pull-based so a consumer cancelling mid-stream is observable, and `onEnd` runs
  * exactly once on every exit path — done or cancelled — mirroring what the real
  * providers guarantee about their usage promise.
+ *
+ * `gate` holds the stream open after the chunks and before `[DONE]`. That is the
+ * window a shutdown has to respect — the handler has long returned and the
+ * answer is still being written — and without a gate it is unobservably short.
  */
 export function sseFromChunks(
   chunks: ChatCompletionChunk[],
   onEnd: () => void = () => {},
+  gate?: Promise<unknown>,
 ): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
   let index = 0;
@@ -189,7 +200,7 @@ export function sseFromChunks(
     onEnd();
   };
   return new ReadableStream<Uint8Array>({
-    pull(controller) {
+    async pull(controller) {
       if (index < chunks.length) {
         controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunks[index])}\n\n`));
         index += 1;
@@ -197,6 +208,7 @@ export function sseFromChunks(
       }
       if (index === chunks.length) {
         index += 1;
+        if (gate !== undefined) await gate;
         controller.enqueue(encoder.encode("data: [DONE]\n\n"));
         return;
       }
@@ -372,7 +384,7 @@ export async function createTestProxy(options: TestProxyOptions = {}) {
     return config as unknown as Record<string, unknown>;
   };
 
-  const { app, holder } = await createOmniProxy({
+  const { app, holder, tracker } = await createOmniProxy({
     registry,
     storage: options.storage ?? new MemoryStorageAdapter(options.now ?? (() => FIXED_NOW)),
     fetch: bannedFetch,
@@ -391,6 +403,7 @@ export async function createTestProxy(options: TestProxyOptions = {}) {
   return {
     app,
     holder,
+    tracker,
     providers: instances,
     collector,
     /** Apply a new fixture, as saving a revision would. */

@@ -161,7 +161,7 @@ CREATE TRIGGER omni_config_revisions_notify
 
 /** Every migration, in application order. */
 export const MIGRATIONS: readonly Migration[] = [
-  { version: 1, name: 'baseline', sql: `${BASELINE_TABLES}\n${CONFIG_CHANGE_FEED}` },
+  { version: 1, name: "baseline", sql: `${BASELINE_TABLES}\n${CONFIG_CHANGE_FEED}` },
 ];
 
 /** Highest version this build knows how to apply. */

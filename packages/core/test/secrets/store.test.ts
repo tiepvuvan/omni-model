@@ -99,9 +99,7 @@ describe("EnvelopeSecretStore", () => {
     // Which key sealed a value is read from the sealed value itself, so there is
     // no column that could claim a rotation that did not happen.
     expect(sealedKeyId(sealedUnderNew?.jwe ?? "")).toBe(rotatedKeyring.active.id);
-    expect(sealedKeyId(sealedUnderNew?.jwe ?? "")).not.toBe(
-      sealedKeyId(sealedUnderOld?.jwe ?? ""),
-    );
+    expect(sealedKeyId(sealedUnderNew?.jwe ?? "")).not.toBe(sealedKeyId(sealedUnderOld?.jwe ?? ""));
     // Same id, same value, new key: references and behaviour are unchanged.
     expect(sealedUnderNew?.id).toBe(sealedUnderOld?.id);
     expect(await store.reveal(sealedUnderNew?.id ?? "")).toBe("sk-value");

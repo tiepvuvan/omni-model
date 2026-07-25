@@ -1,10 +1,4 @@
-import {
-  openSecret,
-  sealSecret,
-  sealedKeyId,
-  secretFingerprint,
-  secretHint,
-} from "./envelope.js";
+import { openSecret, sealedKeyId, sealSecret, secretFingerprint, secretHint } from "./envelope.js";
 import type { Keyring } from "./keyring.js";
 import type { SecretDescription, SecretRow, SecretRowStore, SecretStore } from "./types.js";
 

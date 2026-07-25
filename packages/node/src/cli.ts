@@ -2,12 +2,16 @@
 import { parseArgs } from "node:util";
 import { resolveConfigSource } from "./config.js";
 import { createFirstOperator } from "./create-admin.js";
+import { importConfig } from "./import-config.js";
+import { applyMigrations } from "./migrate.js";
 import { startServer } from "./server.js";
 
 const USAGE = `omni-model — self-hosted OpenAI-compatible AI proxy
 
 Usage:
   omni-model [options]                       Serve the proxy (default)
+  omni-model migrate                         Apply pending schema migrations and exit
+  omni-model import-config <file.json>       Save a configuration as a new revision
   omni-model create-admin --email <e>        Create an operator account
 
 Options:
@@ -15,6 +19,7 @@ Options:
       --email <e>      Operator email (create-admin)
       --password <p>   Operator password; or set OMNI_ADMIN_PASSWORD (create-admin)
       --name <n>       Operator display name (create-admin)
+      --note <n>       Audit note recorded with the revision (import-config)
   -h, --help           Show this help and exit
 
 Configuration lives in the database and is reloaded without a restart. On first boot
@@ -26,7 +31,11 @@ With no configuration at all the server still starts: /healthz answers, /v1/*
 returns 503, and /readyz explains what is missing.
 
 Set OMNI_ADMIN_SECRET to enable the admin API at /admin/api. The first operator can
-sign up through it while no account exists, or be created with create-admin.`;
+sign up through it while no account exists, or be created with create-admin.
+
+SIGTERM drains in-flight requests, including streams still being written, before
+exiting. OMNI_SHUTDOWN_DRAIN_MS bounds the wait (default 25000). A second signal
+exits immediately.`;
 
 function parsePort(raw: string): number {
   const port = Number(raw);
@@ -48,10 +57,15 @@ async function serve(port: number | undefined): Promise<void> {
   );
 
   let shuttingDown = false;
-  const shutdown = (): void => {
-    // Guard against a second signal (e.g. SIGINT then SIGTERM) closing twice.
-    if (shuttingDown) return;
+  const shutdown = (signal: string): void => {
+    // A second signal means "stop waiting": the first drains, the second exits.
+    // Without that escape hatch, Ctrl-C during a long stream looks like a hang.
+    if (shuttingDown) {
+      console.error(`${signal} again: exiting without finishing in-flight requests`);
+      process.exit(130);
+    }
     shuttingDown = true;
+    console.log(`${signal} received: draining ${server.inFlight()} in-flight request(s)`);
     server.close().then(
       () => process.exit(0),
       (error: unknown) => {
@@ -60,8 +74,64 @@ async function serve(port: number | undefined): Promise<void> {
       },
     );
   };
-  process.on("SIGINT", shutdown);
-  process.on("SIGTERM", shutdown);
+  process.on("SIGINT", () => shutdown("SIGINT"));
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
+}
+
+type Values = {
+  port?: string;
+  email?: string;
+  password?: string;
+  name?: string;
+  note?: string;
+  help?: boolean;
+};
+
+async function createAdmin(values: Values): Promise<void> {
+  // Password from the environment by default, so it does not land in shell
+  // history or a process listing.
+  const password = values.password ?? process.env.OMNI_ADMIN_PASSWORD;
+  if (values.email === undefined || password === undefined) {
+    throw new Error(
+      "create-admin needs --email and a password (--password or OMNI_ADMIN_PASSWORD)",
+    );
+  }
+  const operator = await createFirstOperator({
+    env: process.env,
+    email: values.email,
+    password,
+    ...(values.name === undefined ? {} : { name: values.name }),
+  });
+  console.log(`created operator ${operator.email} with the admin role`);
+}
+
+async function migrate(): Promise<void> {
+  const result = await applyMigrations({ env: process.env });
+  console.log(
+    result.applied.length === 0
+      ? `schema is already at version ${result.version}`
+      : `applied migration(s) ${result.applied.join(", ")}; schema is at version ${result.version}`,
+  );
+  if (result.ahead !== undefined) {
+    console.log(
+      `note: the database is at version ${result.ahead}, ahead of this build — a newer ` +
+        "instance has already migrated it",
+    );
+  }
+}
+
+async function importConfigCommand(file: string | undefined, values: Values): Promise<void> {
+  if (file === undefined) {
+    throw new Error("import-config needs a path to a JSON configuration document");
+  }
+  const saved = await importConfig({
+    env: process.env,
+    file,
+    ...(values.note === undefined ? {} : { note: values.note }),
+  });
+  console.log(
+    `saved revision ${saved.revision} from ${file}; every running instance will adopt it`,
+  );
 }
 
 async function main(): Promise<void> {
@@ -73,6 +143,7 @@ async function main(): Promise<void> {
       email: { type: "string" },
       password: { type: "string" },
       name: { type: "string" },
+      note: { type: "string" },
       help: { type: "boolean", short: "h" },
     },
   });
@@ -82,30 +153,18 @@ async function main(): Promise<void> {
     return;
   }
 
-  const command = positionals[0] ?? "serve";
-  if (command === "create-admin") {
-    // Password from the environment by default, so it does not land in shell
-    // history or a process listing.
-    const password = values.password ?? process.env.OMNI_ADMIN_PASSWORD;
-    if (values.email === undefined || password === undefined) {
-      throw new Error(
-        "create-admin needs --email and a password (--password or OMNI_ADMIN_PASSWORD)",
-      );
-    }
-    const operator = await createFirstOperator({
-      env: process.env,
-      email: values.email,
-      password,
-      ...(values.name === undefined ? {} : { name: values.name }),
-    });
-    console.log(`created operator ${operator.email} with the admin role`);
-    return;
+  switch (positionals[0] ?? "serve") {
+    case "serve":
+      return serve(values.port === undefined ? undefined : parsePort(values.port));
+    case "migrate":
+      return migrate();
+    case "import-config":
+      return importConfigCommand(positionals[1], values);
+    case "create-admin":
+      return createAdmin(values);
+    default:
+      throw new Error(`unknown command "${positionals[0]}". Try: omni-model --help`);
   }
-  if (command !== "serve") {
-    throw new Error(`unknown command "${command}". Try: omni-model --help`);
-  }
-
-  await serve(values.port === undefined ? undefined : parsePort(values.port));
 }
 
 main().catch((error: unknown) => {

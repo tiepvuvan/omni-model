@@ -221,15 +221,17 @@ export async function sweepRequestLogs(
 
       // Content first: deleting a log row cascades its content anyway, but the
       // shorter content clock has to be applied to rows whose metadata stays.
-      const contents = await db.delete(requestContents).where(
-        inArray(
-          requestContents.requestLogId,
-          db
-            .select({ id: requestLogs.id })
-            .from(requestLogs)
-            .where(olderThan(options.contentRetentionMs)),
-        ),
-      );
+      const contents = await db
+        .delete(requestContents)
+        .where(
+          inArray(
+            requestContents.requestLogId,
+            db
+              .select({ id: requestLogs.id })
+              .from(requestLogs)
+              .where(olderThan(options.contentRetentionMs)),
+          ),
+        );
       const logs = await db.delete(requestLogs).where(olderThan(options.retentionMs));
 
       const result: SweepResult = {

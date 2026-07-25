@@ -86,9 +86,7 @@ export class FakeKvPool implements PgPoolLike {
 
     if (lower.startsWith("insert into") && lower.includes("omni_kv")) {
       // The increment is the one that reads back what it wrote.
-      return lower.includes("returning")
-        ? this.increment(arg, values)
-        : this.put(arg, values);
+      return lower.includes("returning") ? this.increment(arg, values) : this.put(arg, values);
     }
 
     if (lower.startsWith("delete from") && lower.includes("omni_kv")) {

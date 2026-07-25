@@ -33,6 +33,7 @@ export * from "./secrets/store.js";
 export * from "./secrets/types.js";
 export * from "./server/app.js";
 export * from "./server/facts.js";
+export * from "./server/lifecycle.js";
 export * from "./server/logging.js";
 export * from "./server/pipeline.js";
 export * from "./server/response.js";

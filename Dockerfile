@@ -39,9 +39,21 @@ COPY --from=build /repo/packages/postgres/dist /app/packages/postgres/dist
 COPY --from=build /repo/packages/admin/dist /app/packages/admin/dist
 COPY --from=build /repo/packages/node/dist /app/packages/node/dist
 # On PATH so `docker exec <container> omni-model create-admin …` works, which is
-# how an operator is seeded in a deployment with no public sign-up.
+# how an operator is seeded in a deployment with no public sign-up. `migrate` and
+# `import-config` are reachable the same way.
 RUN chmod +x /app/packages/node/dist/cli.js \
   && ln -s /app/packages/node/dist/cli.js /usr/local/bin/omni-model
 EXPOSE 8787
+# Liveness, not readiness: `/healthz` answers whenever the process is up, so a
+# misconfigured proxy is left running to be fixed rather than restarted in a
+# loop. Orchestrators should poll `/readyz` to decide whether to route traffic —
+# it also reports "draining" during a shutdown, which is what takes an instance
+# out of rotation while it finishes the requests it already accepted.
+HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
+  CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||8787)+'/healthz').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"
 USER node
+# SIGTERM drains in-flight requests, including streams still being written.
+# Give the container more than that budget: `docker stop -t 30`, or Kubernetes
+# `terminationGracePeriodSeconds: 30` against the 25s default drain.
+STOPSIGNAL SIGTERM
 CMD ["node", "packages/node/dist/cli.js"]

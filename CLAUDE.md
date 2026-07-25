@@ -16,7 +16,7 @@ packages/core              Runtime-agnostic engine. No Node APIs, no platform AP
   src/configstore/         ConfigStore contract (revisions, watch) + memory impl
   src/runtime/             RuntimeBundle (immutable, per-revision) + holder that
                            builds and atomically swaps it
-  src/secrets/             AES-256-GCM envelope encryption, keyring, and the
+  src/secrets/             JWE (dir + A256GCM) sealing via jose, keyring, and the
                            {"$secret": id} resolver
   src/writekeys/           Per-client API keys: format, store, TTL cache
   src/logs/                Request log sink: fail-open buffering, content capping
@@ -26,14 +26,16 @@ packages/core              Runtime-agnostic engine. No Node APIs, no platform AP
   src/routing/             CEL expression engine + router
   src/ratelimit/           Request windows + token budgets over StorageAdapter
   src/server/              Hono app factory + pipeline.ts (transport-agnostic
-                           executeChat/executeEmbeddings)
+                           executeChat/executeEmbeddings) + lifecycle.ts (drain)
   src/storage/             StorageAdapter contract + memory backend
   src/util/                SSE parsing/encoding, duration parsing
 packages/postgres          PostgreSQL backend: owns the schema
-  src/migrations/          Versioned, forward-only migrations (advisory-locked)
+  src/schema.ts            Drizzle table definitions — the source of truth
+  src/db.ts                Drizzle handle over the shared pool
+  src/migrations/          One generated baseline + advisory-locked runner
   src/storage.ts           StorageAdapter over omni_kv (atomic counters)
   src/config-store.ts      ConfigStore over omni_config_revisions (poll + LISTEN)
-  src/secret-store.ts      SecretRowStore over omni_secrets (opaque bytes only)
+  src/secret-store.ts      SecretRowStore over omni_secrets (one opaque JWE)
   src/write-key-store.ts   WriteKeyStore over omni_write_keys (hashes only)
   src/request-log-store.ts Batched log writes, queries, advisory-locked sweep
   src/backend.ts           Storage + config + secret stores over one pool
@@ -46,17 +48,19 @@ packages/node              Node server + CLI — the container entry point
 swift/OmniModelFoundation   Apple Foundation Models LanguageModel package (SPM)
 swift/OmniModelClientKit    MacPaw/OpenAI client + OmniAuthMiddleware (SPM)
 examples/                  Example configs + iOS client (examples/ios, ios-app)
-e2e/                       Live end-to-end suite (proxy → OpenRouter; opt-in)
+e2e/                       End-to-end suites (opt-in; two independent gates)
 docs/                      Mintlify docs site (docs.json + MDX): installation,
                            security, integrations, model routing, reference
 ```
 
 > Non-JS members (`swift/`, `examples/ios*`) are not part of the pnpm workspace or `pnpm run ci`;
 > they build with their own toolchains (`swift build`, `xcodebuild`, `tuist`). Biome ignores them.
-> `e2e/` holds a live-upstream suite (`e2e/run.sh` / `pnpm test:e2e`) that is **opt-in** — it
-> skips without `OPENROUTER_API_KEY` and is not in the default `pnpm test`. It covers the proxy
-> (chat/streaming/tools), the Firebase and Apple verifiers against real credentials, and the two
-> Swift clients. Never commit a key — configs reference `${OPENROUTER_API_KEY}` from the env.
+> `e2e/` is never in the default `pnpm test` (separate `vitest.e2e.config.ts`) and has two gates.
+> `TEST_POSTGRES_URL` runs `admin-api` (the whole operator journey from an empty database) and
+> `config-reload` (two instances over one database); these are free and run in CI.
+> `OPENROUTER_API_KEY` runs the live-upstream suites — the proxy (chat/streaming/tools), the
+> Firebase and Apple verifiers against real credentials, and the two Swift clients via
+> `e2e/run.sh`. Never commit a key — configs reference `${OPENROUTER_API_KEY}` from the env.
 
 > Docs are a Mintlify site. A test (`packages/core/test/docs/`) validates every CEL snippet and
 > config example in `docs/**/*.mdx` + `README.md` against the real schema/engine — keep them
@@ -97,10 +101,12 @@ docs/                      Mintlify docs site (docs.json + MDX): installation,
    storage URL, say — must `interpolateDeep` first.
    `bundle.config` is the *resolved* document and therefore contains plaintext: never serialize it
    to a client, a log, or an admin response. Return the stored revision instead.
-9. **Cryptography lives in exactly one place.** `EnvelopeSecretStore` owns sealing and opening; a
-   backend implements `SecretRowStore` and moves opaque bytes. Never add a second implementation of
-   the envelope. `SecretStore.reveal` is the only path to plaintext and is named to be conspicuous
-   in review — an admin API must not call it.
+9. **Cryptography lives in exactly one place, and is not ours.** `secrets/envelope.ts` is a thin
+   wrapper over jose's JWE (`dir` + `A256GCM`); a backend implements `SecretRowStore` and moves one
+   opaque string. Never hand-roll a second sealing format, and never store the key id in a column —
+   it is in the `kid` header, and a projection that can disagree with the ciphertext is worse than a
+   parse. `SecretStore.reveal` is the only path to plaintext and is named to be conspicuous in
+   review — an admin API must not call it.
 10. **The wire format is OpenAI's, everywhere.** Providers translate before returning
    (`ChatResult` in `src/providers/types.ts`). Streams are SSE bytes of
    `chat.completion.chunk` JSON + `data: [DONE]`. The `usage` promise on stream results must
@@ -130,6 +136,15 @@ docs/                      Mintlify docs site (docs.json + MDX): installation,
     zero accounts exist, and the account it creates is promoted to `admin` — the plugin defaults new
     accounts to `user`, which can sign in and reach nothing. `create-admin` is the non-HTTP path.
     Both are guarded by tests; the gate is the only thing between a public port and a config API.
+19. **A shutdown finishes the answers it started.** `RequestTracker` counts a request until its
+    response *body* is written, which for an SSE stream is long after the handler returned — that
+    window is the whole point. Shutdown refuses new work, keeps listening (a closed socket makes
+    `/readyz` unreachable, and an unreachable probe drains nothing), waits, then closes. Bounded by
+    `OMNI_SHUTDOWN_DRAIN_MS`: one client holding a stream open must not stall a deploy.
+20. **The Drizzle schema is the source of truth; drizzle-kit is a generator, not the migrator.**
+    Ours takes `pg_advisory_xact_lock` over the whole set in one transaction, so concurrent boots
+    cannot half-apply; drizzle-kit's does not. Generated SQL is embedded, never read from files, and
+    its `"public".` qualifiers must be stripped — they pin the schema and break per-schema isolation.
 
 ## Toolchain
 
@@ -145,7 +160,10 @@ pnpm install
 pnpm build          # tsc for every package (this is also the typecheck)
 pnpm test           # vitest run (all packages; DB-backed suites skip)
 pnpm test:pg        # starts PostgreSQL in Docker, then runs everything
+pnpm test:pg:up     # just start it (for TEST_POSTGRES_URL=… pnpm test:e2e)
 pnpm test:pg:down   # stop it
+pnpm test:e2e       # e2e/: admin-api + config-reload need TEST_POSTGRES_URL,
+                    # the rest need OPENROUTER_API_KEY; each skips without its gate
 pnpm lint           # biome check .
 pnpm lint:fix       # biome check --write .
 pnpm run ci         # lint + build + test — must be green before any PR
@@ -163,9 +181,11 @@ pnpm run ci         # lint + build + test — must be green before any PR
   `pnpm test:pg` starts a real Postgres (`docker-compose.test.yml`) and CI runs the same suites
   with `OMNI_REQUIRE_PG=1`, which turns a closed gate into a failure. Give each run its own
   Postgres schema so "applies from scratch" is a real assertion, not leftover state.
-- **SQL is asserted literally.** `packages/postgres/test/support/fake-pool.ts` pattern-matches the
-  adapter's exact statements, so editing one fails the unit tests loudly; the real semantics are
-  re-checked against a live server in `integration.test.ts`. Change both together.
+- **Do not assert generated SQL.** Drizzle writes the statements now, so pinning their text would
+  test its codegen and break on a dependency bump. `packages/postgres/test/support/fake-pool.ts`
+  recognises *operations* and implements the semantics Drizzle cannot give us (expiry, upsert
+  accumulation); whether the SQL is valid is a question only `integration.test.ts` answers. A stub
+  used with Drizzle must accept its `query(queryConfig, values)` form and `rowMode: "array"`.
 - From core tests, import source by relative path with `.js` extension
   (`import { x } from "../../src/routing/router.js"` — Vitest resolves it). Cross-package
   tests import `@omni-model/core` (aliased to source in `vitest.config.ts`).
@@ -181,12 +201,16 @@ pnpm run ci         # lint + build + test — must be green before any PR
 case to `test/runtime/reload.test.ts` proving a reload actually changes it — the whole class of bug
 here is a value that looks dynamic but was captured once.
 
-**A database change**: append a migration to `MIGRATIONS` in
-`packages/postgres/src/migrations/sql.ts` with the next version. Never renumber, edit, or delete a
-shipped migration — applied versions are recorded in `omni_migrations`, so an edited migration
-silently never runs where it already applied. Every relation is `omni_`-prefixed (a test enforces
-this), and the runner applies the whole set in one advisory-locked transaction, so concurrent boots
-and half-applied schemas are both impossible.
+**A database change**: edit `packages/postgres/src/schema.ts`, then
+`pnpm --filter @omni-model/postgres run schema:generate` and append the diff to `MIGRATIONS` in
+`migrations/sql.ts` with the next version. Strip drizzle-kit's `"public".` qualifiers. Never
+renumber, edit, or delete a shipped migration — applied versions are recorded in `omni_migrations`,
+so an edited migration silently never runs where it already applied. Every relation is
+`omni_`-prefixed (a test enforces this), and the runner applies the whole set in one advisory-locked
+transaction, so concurrent boots and half-applied schemas are both impossible. Anything Drizzle
+cannot express (the `NOTIFY` trigger) is appended by hand and documented in `schema.ts` so the next
+regeneration does not lose it. Commit `.drizzle/` — its `meta/` snapshot is what makes the *next*
+`generate` a diff rather than another full baseline.
 
 **A storage backend**: implement `StorageAdapter` + `StorageFactory`
 (`core/src/storage/types.ts`) in a new package; validate options with zod; document atomicity
@@ -222,8 +246,8 @@ a documented endpoint that does not exist fails CI.
 - No new dependencies without discussion. Anything `packages/core` imports must be Web-standard
   only — that constraint is what keeps every component unit-testable offline (see rule 1), so it
   stays even though the container is the only deploy target. Current core deps: hono, zod, jose,
-  @marcbachmann/cel-js, cbor2, @peculiar/x509. `better-auth` is confined to `packages/admin` and
-  must never be imported by core.
+  @marcbachmann/cel-js, cbor2, @peculiar/x509. `better-auth` is confined to `packages/admin`,
+  `drizzle-orm` and `pg` to `packages/postgres`; neither may be imported by core.
 - Never log tokens, API keys, or request bodies. Redact before logging.
 
 ## PR checklist

@@ -170,12 +170,8 @@
           "name": "omni_request_contents_request_log_id_omni_request_logs_id_fk",
           "tableFrom": "omni_request_contents",
           "tableTo": "omni_request_logs",
-          "columnsFrom": [
-            "request_log_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["request_log_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -390,12 +386,8 @@
           "name": "omni_request_logs_write_key_id_omni_write_keys_id_fk",
           "tableFrom": "omni_request_logs",
           "tableTo": "omni_write_keys",
-          "columnsFrom": [
-            "write_key_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["write_key_id"],
+          "columnsTo": ["id"],
           "onDelete": "set null",
           "onUpdate": "no action"
         }

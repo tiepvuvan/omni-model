@@ -123,6 +123,15 @@ configuration keeps serving:
 History is append-only. A rollback stores a *copy* of the old document as a new revision, so the
 audit trail can never be rewritten.
 
+The same thing from a pipeline, with the document in version control:
+
+```sh
+omni-model import-config omni.config.json --note "$GITHUB_SHA"
+```
+
+It validates through the identical path and saves a revision, so no admin session is needed to
+deploy a configuration change. See [the container guide](/installation/docker#commands).
+
 <Note>
   `POST /providers/:id/test` reports the upstream's own answer, including `status: 401` for a rejected
   API key. It is deliberately not derived from whether the model listing succeeded — that call falls
@@ -158,9 +167,13 @@ replaced, not retrieved.
 
 ## Secrets
 
-Credentials are encrypted with AES-256-GCM under `OMNI_ENCRYPTION_KEY` and referenced from
-configuration as `{"$secret": "<id>"}`. References are resolved when a revision is applied, so a
+Credentials are sealed as a **JWE** (`dir` + `A256GCM`) under `OMNI_ENCRYPTION_KEY` and referenced
+from configuration as `{"$secret": "<id>"}`. References are resolved when a revision is applied, so a
 revision dump, an audit log or a rollback diff can never leak a credential.
+
+One `TEXT` column holds the whole sealed value — ciphertext, nonce, tag, the key id in `kid`, and the
+secret's own id. Both ids are inside the authenticated header, so a value cannot be moved to a
+different secret's row and cannot claim a key that did not seal it.
 
 | Endpoint | Purpose |
 | --- | --- |

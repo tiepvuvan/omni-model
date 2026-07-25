@@ -9,7 +9,6 @@ import {
   ConfigError,
   type ConfigStore,
   createConsoleLogger,
-  createDefaultRegistry,
   createMemoryRequestLogSink,
   createMemorySecretStore,
   createOmniProxy,
@@ -24,7 +23,6 @@ import {
   type LogLevel,
   MemoryConfigStore,
   MemoryWriteKeyStore,
-  type OmniRegistry,
   parseDuration,
   type RequestLogSink,
   type RuntimeContext,
@@ -32,12 +30,8 @@ import {
   type StorageAdapter,
   type WriteKeyStore,
 } from "@omni-model/core";
-import {
-  createPostgresBackend,
-  type PgPoolLike,
-  postgresStorageFactory,
-  sweepRequestLogs,
-} from "@omni-model/postgres";
+import { createPostgresBackend, type PgPoolLike, sweepRequestLogs } from "@omni-model/postgres";
+import { containerRegistry } from "./registry.js";
 
 /**
  * Resolve the GCP/Firebase project for the Admin SDK. There is no metadata
@@ -91,21 +85,6 @@ function lazyAppCheckConsumer(
       await resolve();
     },
   });
-}
-
-/**
- * The registry this container can build components from.
- *
- * `createDefaultRegistry` covers core's own components; the Postgres storage
- * backend lives outside core and has to be added here. It matters beyond
- * construction: `GET /admin/api/meta` publishes the registry so a dashboard can
- * render a form per component type, and a registry missing `postgres` would tell
- * an operator running on Postgres that only in-memory storage exists.
- */
-function containerRegistry(): OmniRegistry {
-  const registry = createDefaultRegistry();
-  registry.storage.set(postgresStorageFactory.type, postgresStorageFactory);
-  return registry;
 }
 
 /** Bootstrap readers. These must work on a document that fails validation. */
@@ -192,12 +171,36 @@ export interface RunningServer {
   requestLogs: RequestLogSink;
   /** Null when no admin secret is configured. */
   admin: AdminApp | null;
-  /** Stop accepting connections, stop watching for config changes, close storage. */
-  close(): Promise<void>;
+  /** Requests still being served, streams included. */
+  inFlight(): number;
+  /**
+   * Shut down without truncating answers.
+   *
+   * Refuses new work, waits for what is in flight — including SSE streams still
+   * being written — flushes buffered logs, then closes storage. Bounded: past
+   * `drainTimeoutMs` the remaining connections are cut, because one client
+   * holding a stream open must not stall a deploy.
+   */
+  close(options?: { drainTimeoutMs?: number }): Promise<void>;
 }
 
 /** How often each replica offers to sweep expired logs. */
 const SWEEP_INTERVAL_MS = 15 * 60 * 1000;
+
+/**
+ * Default grace period for in-flight requests.
+ *
+ * Under a platform's own SIGKILL deadline (Kubernetes defaults to 30s), so the
+ * drain finishes on our terms rather than being cut off mid-stream.
+ */
+const DRAIN_TIMEOUT_MS = 25_000;
+
+/** Milliseconds from an environment variable, or undefined when unusable. */
+function parseMillis(value: string | undefined): number | undefined {
+  if (value === undefined || value.trim() === "") return undefined;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
+}
 
 function describeError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -368,13 +371,15 @@ export async function startServer(options: StartOptions): Promise<RunningServer>
   const backend = await createBackend(resolved, runtime, logger, keyring, options);
   let unwatch: (() => void) | undefined;
   let sweepTimer: ReturnType<typeof setInterval> | undefined;
+  /** Set by the first `close()`; every later call awaits the same shutdown. */
+  let closing: Promise<void> | undefined;
 
   try {
     // Surface credential problems at boot when the bootstrap config already
     // wants replay protection, rather than on the first consuming request.
     if (rawConsumesAppCheck(resolved)) await appCheck.warm();
 
-    const { app, holder } = await createOmniProxy({
+    const { app, holder, tracker } = await createOmniProxy({
       env,
       storage: backend.storage,
       ...(backend.secretStore === null ? {} : { secrets: backend.secretStore }),
@@ -477,28 +482,68 @@ export async function startServer(options: StartOptions): Promise<RunningServer>
       writeKeyStore: backend.writeKeyStore,
       requestLogs: backend.requestLogs,
       admin,
-      close: async (): Promise<void> => {
-        try {
-          unwatch?.();
-          if (sweepTimer !== undefined) clearInterval(sweepTimer);
-          // Without this, keep-alive sockets keep `close()` pending until
-          // clients hang up on their own.
-          if ("closeIdleConnections" in server) server.closeIdleConnections();
-          await new Promise<void>((resolve, reject) => {
-            server.close((error) => (error === undefined ? resolve() : reject(error)));
-          });
-          // After the last response, before the pool closes: buffered logs are
-          // the one thing a redeploy would otherwise silently drop.
-          await backend.requestLogs.flush().catch((error: unknown) => {
-            logger.warn("flushing request logs on shutdown failed", {
-              error: describeError(error),
-            });
-          });
-        } finally {
-          await backend.close();
-        }
+      inFlight: () => tracker.inFlight(),
+      close: (options = {}): Promise<void> => {
+        // Idempotent: a second signal, or an `afterEach` that closes what a test
+        // already closed, must not throw ERR_SERVER_NOT_RUNNING.
+        closing ??= shutdown(
+          options.drainTimeoutMs ?? parseMillis(env.OMNI_SHUTDOWN_DRAIN_MS) ?? DRAIN_TIMEOUT_MS,
+        );
+        return closing;
       },
     };
+
+    async function shutdown(drainTimeoutMs: number): Promise<void> {
+      try {
+        unwatch?.();
+        if (sweepTimer !== undefined) clearInterval(sweepTimer);
+
+        // Refuse new work, but keep listening. Closing the socket first would
+        // make `/readyz` unreachable during the drain, and an unreachable
+        // readiness probe tells a load balancer nothing — the whole point is for
+        // it to *see* this instance reporting "draining" while the requests it
+        // already accepted finish. New `/v1` work is refused with 503 by the
+        // tracker instead.
+        tracker.beginShutdown();
+
+        const drained = await tracker.drain(drainTimeoutMs);
+        if (drained.remaining > 0) {
+          // Bounded on purpose: one client holding a stream open must not turn
+          // into a deploy that never completes. Said out loud rather than
+          // truncating silently.
+          logger.warn("shutdown drain timed out; abandoning in-flight requests", {
+            remaining: drained.remaining,
+            waitedMs: drained.waitedMs,
+            drainTimeoutMs,
+          });
+        } else if (drained.waitedMs > 0) {
+          logger.info("drained in-flight requests", { waitedMs: drained.waitedMs });
+        }
+
+        // Now stop listening. Node fires the callback once every connection has
+        // ended; idle keep-alive sockets would otherwise hold it open until the
+        // client hangs up, and anything still streaming past the timeout is cut.
+        const closed = new Promise<void>((resolve, reject) => {
+          server.close((error) => (error === undefined ? resolve() : reject(error)));
+        });
+        if ("closeIdleConnections" in server) server.closeIdleConnections();
+        if (drained.remaining > 0 && "closeAllConnections" in server) {
+          server.closeAllConnections();
+        }
+        await closed;
+
+        // After the last response, before the pool closes: buffered logs are the
+        // one thing a redeploy would otherwise silently drop, and a stream that
+        // just finished only became loggable a moment ago.
+        await backend.requestLogs.flush().catch((error: unknown) => {
+          logger.warn("flushing request logs on shutdown failed", {
+            error: describeError(error),
+          });
+        });
+      } finally {
+        await backend.close();
+      }
+    }
   } catch (error) {
     // Startup failed after the backend was created; don't leak its connections.
     unwatch?.();

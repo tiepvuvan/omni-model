@@ -48,12 +48,23 @@ the connection.
 Migrations are forward-only and additive, which is what makes rolling deploys safe: an older
 replica keeps serving against a newer schema (it logs that the database is ahead and carries on).
 
-omni-model owns every `omni_`-prefixed table in the database or schema you point it at. Give it its
-own database if you need isolation — there is no table-name option, because the schema is created
-from static SQL.
+omni-model owns every `omni_`-prefixed relation in the database or schema you point it at. Nothing
+is schema-qualified, so `search_path` decides where the tables live — give omni-model its own
+database or Postgres schema if you need isolation. There is no table-name option.
 
-Set `OMNI_STORAGE_POSTGRES_MIGRATE=false` if the runtime database user cannot run DDL. You are then
-responsible for applying the schema out of band before the container starts.
+If the runtime database user cannot run DDL, apply the schema as its own step with a privileged
+role and let the server run without one:
+
+```sh
+omni-model migrate
+```
+
+```sh
+OMNI_STORAGE_POSTGRES_MIGRATE=false omni-model
+```
+
+`migrate` takes the same advisory lock the server does, so it is safe to run from an init container
+on every pod start and safe to run while a server is booting. It prints what it applied and exits.
 
 ## Production configuration
 
@@ -120,6 +131,37 @@ reason appears on `/readyz`. A bad edit cannot take the proxy down.
 `storage` is the exception — it is read at boot only. Moving to a different database needs a
 restart, since there is nowhere else to read a corrected configuration from.
 
+### Configuration in version control
+
+For a configuration that lives in a repository rather than in a dashboard, keep the JSON document as
+a file and let CI apply it:
+
+```sh
+omni-model import-config omni.config.json --note "$GITHUB_SHA"
+```
+
+It validates the document with the same two-step schema a boot uses — so a broken one fails the
+pipeline instead of becoming the active revision — then saves it. Every running replica adopts it
+from the database; no restart and no admin session are involved.
+
+### Commands
+
+Every command reads the same `OMNI_STORAGE_*` variables the server does, so they always act on the
+database the server is using.
+
+| Command | Purpose |
+| --- | --- |
+| `omni-model` | Serve the proxy (the image's default). |
+| `omni-model migrate` | Apply pending migrations and exit. |
+| `omni-model import-config <file>` | Validate and save a configuration as a new revision. |
+| `omni-model create-admin --email <e>` | Create an operator account without HTTP. |
+
+In a running container, reach them with `docker exec`:
+
+```sh
+docker exec omni-model omni-model migrate
+```
+
 <Note>
   Stored revisions keep their `${VAR}` references rather than the resolved values, so your
   credentials stay in the platform secret store and never land in the database or in an audit
@@ -142,9 +184,11 @@ Set a 32-byte master key to enable this:
 docker run -e OMNI_ENCRYPTION_KEY="$(openssl rand -base64 32)" ... ghcr.io/tiepvuvan/omni-model:latest
 ```
 
-Values are sealed with AES-256-GCM. The key never leaves the environment, so a database dump — or a
-leaked backup — contains ciphertext and nothing else. A configuration revision holds only the
-reference, which is what makes revisions safe to diff, export and roll back.
+Values are sealed as a **JWE** (`dir` + `A256GCM`) — a standard format, so a stored value is one
+opaque string any JOSE library can read given the key, rather than a layout private to omni-model.
+The key never leaves the environment, so a database dump — or a leaked backup — contains ciphertext
+and nothing else. A configuration revision holds only the reference, which is what makes revisions
+safe to diff, export and roll back.
 
 Rotating a credential is a write plus a reload: the reference keeps its id, so no configuration
 needs editing.
@@ -157,7 +201,8 @@ needs editing.
 
 ### Rotating the master key
 
-Each ciphertext records which key sealed it, so rotation needs no downtime and no migration pass:
+Each sealed value names the key that sealed it, in its JWE `kid` header — so rotation needs no
+downtime and no migration pass:
 
 ```sh
 OMNI_ENCRYPTION_KEY=<the new key>
@@ -187,6 +232,39 @@ It answers 503 with `"status": "not_configured"` when there is no usable configu
 `error` carries the reason. Point your **readiness** probe and load-balancer checks at this one.
 Neither endpoint needs authentication; until a configuration exists, `/v1/*` answers 503
 `not_configured`.
+
+During a shutdown `/readyz` answers 503 with `"status": "draining"` and how many requests are still
+in flight — see below.
+
+## Shutting down without cutting answers off
+
+On `SIGTERM` the container stops accepting new work, waits for what is already running, then exits.
+A streamed completion is the case that matters: the handler returned long ago and the answer is
+still being written, so a naive shutdown truncates it mid-sentence.
+
+In order:
+
+1. New `/v1` requests are refused with 503 `shutting_down`, and `/readyz` reports `draining`. The
+   socket stays open on purpose — closing it would make the readiness probe unreachable, and an
+   unreachable probe tells a load balancer nothing.
+2. In-flight requests finish, streams included.
+3. Buffered request logs are flushed, then the connection pool closes.
+
+The wait is bounded by `OMNI_SHUTDOWN_DRAIN_MS` (default `25000`); past it the remaining connections
+are cut and the reason is logged, because one client holding a stream open must not stall a deploy.
+Give the platform a grace period longer than the drain:
+
+```sh
+docker stop -t 30 omni-model
+```
+
+```yaml
+spec:
+  terminationGracePeriodSeconds: 30
+```
+
+A second `SIGTERM` or `SIGINT` exits immediately, so `Ctrl-C` during a long stream is never mistaken
+for a hang.
 
 ## Scaling out
 
