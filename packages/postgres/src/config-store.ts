@@ -5,7 +5,10 @@ import type {
   StoredConfig,
   StoredConfigMeta,
 } from "@omni-model/core";
+import { desc, eq } from "drizzle-orm";
+import { createDb, type Db } from "./db.js";
 import type { PgClientLike, PgPoolLike } from "./pool.js";
+import { configRevisions } from "./schema.js";
 
 /** Channel the `omni_config_revisions` trigger notifies on activation. */
 const CHANNEL = "omni_config_changed";
@@ -23,40 +26,16 @@ export interface PostgresConfigStoreOptions {
   logger?: Logger;
 }
 
-/** A row as it actually arrives: every column is untrusted until narrowed. */
-interface RevisionRow {
-  id?: unknown;
-  document?: unknown;
-  created_at?: unknown;
-  created_by?: unknown;
-  note?: unknown;
-  is_active?: unknown;
-}
-
-const SELECT_COLUMNS = "id, document, created_at, created_by, note, is_active";
-
-function toNumber(value: unknown): number {
-  // BIGSERIAL comes back as a string from `pg` to avoid precision loss.
-  return typeof value === "number" ? value : Number(value);
-}
-
-function toMillis(value: unknown): number {
-  if (value instanceof Date) return value.getTime();
-  const parsed = Date.parse(String(value));
-  return Number.isNaN(parsed) ? 0 : parsed;
-}
-
-function toStringOrNull(value: unknown): string | null {
-  return typeof value === "string" ? value : null;
-}
+/** One revision as Drizzle returns it. */
+type RevisionRow = typeof configRevisions.$inferSelect;
 
 function toStoredConfig(row: RevisionRow): StoredConfig {
   return {
-    revision: toNumber(row.id),
+    revision: row.id,
     document: row.document,
-    createdAt: toMillis(row.created_at),
-    createdBy: toStringOrNull(row.created_by),
-    note: toStringOrNull(row.note),
+    createdAt: row.createdAt.getTime(),
+    createdBy: row.createdBy,
+    note: row.note,
   };
 }
 
@@ -83,6 +62,7 @@ function notificationRevision(arg: unknown): number | null {
 export class PostgresConfigStore implements ConfigStore {
   readonly type = "postgres";
   private readonly pool: PgPoolLike;
+  private readonly db: Db;
   private readonly pollIntervalMs: number;
   private readonly log: Logger | undefined;
   private readonly listeners = new Set<(revision: number) => void>();
@@ -95,15 +75,17 @@ export class PostgresConfigStore implements ConfigStore {
 
   constructor(pool: PgPoolLike, options: PostgresConfigStoreOptions = {}) {
     this.pool = pool;
+    this.db = createDb(pool);
     this.pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
     this.log = options.logger;
   }
 
   async loadActive(): Promise<StoredConfig | null> {
-    const result = await this.pool.query(
-      `SELECT ${SELECT_COLUMNS} FROM omni_config_revisions WHERE is_active LIMIT 1`,
-    );
-    const row = result.rows[0];
+    const [row] = await this.db
+      .select()
+      .from(configRevisions)
+      .where(eq(configRevisions.isActive, true))
+      .limit(1);
     if (row === undefined) return null;
     const stored = toStoredConfig(row);
     // Reading the active revision counts as having seen it, so a watcher started
@@ -119,59 +101,51 @@ export class PostgresConfigStore implements ConfigStore {
           "previous revision and inserting the new one must be one transaction",
       );
     }
-    const client = await this.pool.connect();
-    try {
-      await client.query("BEGIN");
-      try {
-        // Both statements in one transaction: the partial unique index would
-        // otherwise reject the insert while the old row is still active.
-        await client.query("UPDATE omni_config_revisions SET is_active = FALSE WHERE is_active");
-        const result = await client.query(
-          "INSERT INTO omni_config_revisions (document, created_by, note, is_active) " +
-            `VALUES ($1::jsonb, $2, $3, TRUE) RETURNING ${SELECT_COLUMNS}`,
-          [JSON.stringify(document ?? null), options.createdBy ?? null, options.note ?? null],
-        );
-        await client.query("COMMIT");
-        const row = result.rows[0];
-        if (row === undefined) throw new Error("saving a configuration revision returned no row");
-        const stored = toStoredConfig(row);
-        this.lastSeen = Math.max(this.lastSeen, stored.revision);
-        return stored;
-      } catch (error) {
-        try {
-          await client.query("ROLLBACK");
-        } catch {
-          // The original failure is the one worth surfacing.
-        }
-        throw error;
-      }
-    } finally {
-      client.release();
-    }
+    const stored = await this.db.transaction(async (tx) => {
+      // Both statements in one transaction: the partial unique index would
+      // otherwise reject the insert while the old row is still active.
+      await tx
+        .update(configRevisions)
+        .set({ isActive: false })
+        .where(eq(configRevisions.isActive, true));
+      const [row] = await tx
+        .insert(configRevisions)
+        .values({
+          document: document ?? null,
+          createdBy: options.createdBy ?? null,
+          note: options.note ?? null,
+          isActive: true,
+        })
+        .returning();
+      if (row === undefined) throw new Error("saving a configuration revision returned no row");
+      return toStoredConfig(row);
+    });
+    this.lastSeen = Math.max(this.lastSeen, stored.revision);
+    return stored;
   }
 
   async get(revision: number): Promise<StoredConfig | null> {
-    const result = await this.pool.query(
-      `SELECT ${SELECT_COLUMNS} FROM omni_config_revisions WHERE id = $1`,
-      [revision],
-    );
-    const row = result.rows[0];
+    const [row] = await this.db
+      .select()
+      .from(configRevisions)
+      .where(eq(configRevisions.id, revision))
+      .limit(1);
     return row === undefined ? null : toStoredConfig(row);
   }
 
   async history(limit = 50): Promise<StoredConfigMeta[]> {
-    const result = await this.pool.query(
-      "SELECT id, created_at, created_by, note, is_active FROM omni_config_revisions " +
-        "ORDER BY id DESC LIMIT $1",
-      [limit],
-    );
-    return result.rows.map((row: RevisionRow) => ({
-      revision: toNumber(row.id),
-      createdAt: toMillis(row.created_at),
-      createdBy: toStringOrNull(row.created_by),
-      note: toStringOrNull(row.note),
-      active: row.is_active === true,
-    }));
+    const rows = await this.db
+      .select({
+        revision: configRevisions.id,
+        createdAt: configRevisions.createdAt,
+        createdBy: configRevisions.createdBy,
+        note: configRevisions.note,
+        active: configRevisions.isActive,
+      })
+      .from(configRevisions)
+      .orderBy(desc(configRevisions.id))
+      .limit(limit);
+    return rows.map((row) => ({ ...row, createdAt: row.createdAt.getTime() }));
   }
 
   watch(onChange: (revision: number) => void): () => void {
@@ -215,11 +189,12 @@ export class PostgresConfigStore implements ConfigStore {
   /** The convergence guarantee. Failures are logged and retried next tick. */
   private async poll(): Promise<void> {
     try {
-      const result = await this.pool.query(
-        "SELECT id FROM omni_config_revisions WHERE is_active LIMIT 1",
-      );
-      const row = result.rows[0];
-      if (row !== undefined) this.announce(toNumber(row.id));
+      const [row] = await this.db
+        .select({ id: configRevisions.id })
+        .from(configRevisions)
+        .where(eq(configRevisions.isActive, true))
+        .limit(1);
+      if (row !== undefined) this.announce(row.id);
     } catch (error) {
       this.log?.warn("configuration poll failed; will retry", { error: errorMessage(error) });
     }

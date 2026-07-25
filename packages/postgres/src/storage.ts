@@ -1,10 +1,22 @@
 import { ConfigError, type StorageAdapter, type StorageFactory } from "@omni-model/core";
+import { and, eq, gt, isNotNull, isNull, lte, or, sql } from "drizzle-orm";
 import { z } from "zod";
+import { createDb, type Db } from "./db.js";
 import { runMigrations } from "./migrations/run.js";
 import { createPgPool, type PgPoolLike } from "./pool.js";
+import { kv } from "./schema.js";
 
 /** Write operations between opportunistic expired-row sweeps. */
 const CLEANUP_EVERY = 500;
+
+/** `now() + <seconds> * interval '1 second'`, or NULL for no expiry. */
+function expiryAfter(seconds: number | null) {
+  // A NULL ttl propagates: now() + NULL * interval is NULL, i.e. never expires.
+  return sql`now() + ${seconds}::float8 * interval '1 second'`;
+}
+
+/** True for a row whose TTL has passed. */
+const isExpired = sql`${kv.expiresAt} IS NOT NULL AND ${kv.expiresAt} <= now()`;
 
 /**
  * Postgres-backed storage on the `omni_kv` table. Every operation — including
@@ -22,58 +34,63 @@ const CLEANUP_EVERY = 500;
 export class PostgresStorageAdapter implements StorageAdapter {
   readonly type = "postgres";
   private readonly pool: PgPoolLike;
+  private readonly db: Db;
   private writeOps = 0;
 
   constructor(pool: PgPoolLike) {
     this.pool = pool;
+    this.db = createDb(pool);
   }
 
   async get(key: string): Promise<string | null> {
-    const result = await this.pool.query(
-      "SELECT value FROM omni_kv WHERE key = $1 AND (expires_at IS NULL OR expires_at > now())",
-      [key],
-    );
-    const value = result.rows[0]?.value;
-    return typeof value === "string" ? value : null;
+    const [row] = await this.db
+      .select({ value: kv.value })
+      .from(kv)
+      .where(and(eq(kv.key, key), or(isNull(kv.expiresAt), gt(kv.expiresAt, sql`now()`))))
+      .limit(1);
+    return row?.value ?? null;
   }
 
   async put(key: string, value: string, options?: { ttlSeconds?: number }): Promise<void> {
-    // A NULL ttl propagates: now() + NULL * interval is NULL, i.e. no expiry.
-    await this.pool.query(
-      "INSERT INTO omni_kv (key, value, expires_at) " +
-        "VALUES ($1, $2, now() + $3::float8 * interval '1 second') " +
-        "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, expires_at = EXCLUDED.expires_at",
-      [key, value, options?.ttlSeconds ?? null],
-    );
+    const expiresAt = expiryAfter(options?.ttlSeconds ?? null);
+    await this.db
+      .insert(kv)
+      .values({ key, value, expiresAt })
+      .onConflictDoUpdate({
+        target: kv.key,
+        set: { value: sql`excluded.value`, expiresAt: sql`excluded.expires_at` },
+      });
     this.afterWrite();
   }
 
   async delete(key: string): Promise<void> {
-    await this.pool.query("DELETE FROM omni_kv WHERE key = $1", [key]);
+    await this.db.delete(kv).where(eq(kv.key, key));
     this.afterWrite();
   }
 
   async increment(key: string, amount: number, ttlSeconds: number): Promise<number> {
     // Single-statement upsert: ON CONFLICT sees the live row, so a logically
     // expired (but not yet swept) row is reset to the new amount with a fresh
-    // TTL, while a live row accumulates and keeps its original expiry.
-    const result = await this.pool.query(
-      "INSERT INTO omni_kv (key, value, expires_at) " +
-        "VALUES ($1, $2::text, now() + $3::float8 * interval '1 second') " +
-        "ON CONFLICT (key) DO UPDATE SET " +
-        "value = CASE WHEN omni_kv.expires_at IS NOT NULL AND omni_kv.expires_at <= now() " +
-        "THEN EXCLUDED.value ELSE (omni_kv.value::bigint + $2::bigint)::text END, " +
-        "expires_at = CASE WHEN omni_kv.expires_at IS NOT NULL AND omni_kv.expires_at <= now() " +
-        "THEN EXCLUDED.expires_at ELSE omni_kv.expires_at END " +
-        "RETURNING value",
-      [key, String(amount), ttlSeconds],
-    );
+    // TTL, while a live row accumulates and keeps its original expiry. Doing this
+    // as a read-then-write would lose counts under concurrency.
+    const [row] = await this.db
+      .insert(kv)
+      .values({ key, value: String(amount), expiresAt: expiryAfter(ttlSeconds) })
+      .onConflictDoUpdate({
+        target: kv.key,
+        set: {
+          value: sql`CASE WHEN ${isExpired} THEN excluded.value
+            ELSE (${kv.value}::bigint + ${amount}::bigint)::text END`,
+          expiresAt: sql`CASE WHEN ${isExpired} THEN excluded.expires_at
+            ELSE ${kv.expiresAt} END`,
+        },
+      })
+      .returning({ value: kv.value });
     this.afterWrite();
-    const value = result.rows[0]?.value;
-    if (typeof value !== "string") {
+    if (row === undefined) {
       throw new Error(`postgres increment of "${key}" returned no row`);
     }
-    return Number(value);
+    return Number(row.value);
   }
 
   async getCounter(key: string): Promise<number> {
@@ -90,8 +107,9 @@ export class PostgresStorageAdapter implements StorageAdapter {
   private afterWrite(): void {
     this.writeOps += 1;
     if (this.writeOps % CLEANUP_EVERY !== 0) return;
-    this.pool
-      .query("DELETE FROM omni_kv WHERE expires_at IS NOT NULL AND expires_at <= now()")
+    this.db
+      .delete(kv)
+      .where(and(isNotNull(kv.expiresAt), lte(kv.expiresAt, sql`now()`)))
       .catch(() => {});
   }
 }
@@ -111,8 +129,8 @@ const postgresOptionsSchema = z.strictObject({
  * Storage factory for `storage: { type: postgres, url: postgres://..., migrate? }`.
  *
  * There is deliberately no table-name option: this package owns every `omni_*`
- * table, and static migration SQL cannot honour a rename. Point omni-model at
- * its own database or Postgres schema to isolate it.
+ * table, and the generated migration SQL cannot honour a rename. Point
+ * omni-model at its own database or Postgres schema to isolate it.
  */
 export const postgresStorageFactory: StorageFactory = {
   type: "postgres",

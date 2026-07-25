@@ -111,15 +111,18 @@ describe("PostgresStorageAdapter", () => {
 
   test("a failing sweep is swallowed so writes keep succeeding", async () => {
     let writes = 0;
-    const pool: PgPoolLike = {
-      query: async (text) => {
-        if (text.startsWith("DELETE FROM omni_kv WHERE expires_at")) {
+    // Drizzle passes a query *object*, so read the text out of whichever form
+    // arrives rather than assuming a string.
+    const pool = {
+      query: async (arg: unknown) => {
+        const text = typeof arg === "string" ? arg : String((arg as { text: string }).text);
+        if (/^delete from "omni_kv".*expires_at/i.test(text.replace(/\s+/g, " "))) {
           throw new Error("sweep failed");
         }
         writes += 1;
         return { rows: [] };
       },
-    };
+    } as unknown as PgPoolLike;
     const adapter = new PostgresStorageAdapter(pool);
     for (let i = 0; i < 500; i += 1) await adapter.put(`k${i}`, "v");
     await new Promise((resolve) => setImmediate(resolve));
@@ -131,7 +134,9 @@ describe("PostgresStorageAdapter", () => {
     await adapter.close();
     expect(fake.endCalls).toBe(1);
 
-    const withoutEnd = new PostgresStorageAdapter({ query: (t, v) => fake.query(t, v) });
+    const withoutEnd = new PostgresStorageAdapter({
+      query: (t: unknown, v?: unknown[]) => fake.query(t as string, v),
+    } as unknown as PgPoolLike);
     await expect(withoutEnd.close()).resolves.toBeUndefined();
   });
 });

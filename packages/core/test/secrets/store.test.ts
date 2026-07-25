@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { sealedKeyId } from "../../src/secrets/envelope.js";
 import { createKeyring, type Keyring } from "../../src/secrets/keyring.js";
 import {
   createMemorySecretStore,
@@ -95,8 +96,12 @@ describe("EnvelopeSecretStore", () => {
 
     expect(await store.rotate()).toEqual({ rotated: 1, total: 1 });
     const sealedUnderNew = (await rows.list())[0];
-    expect(sealedUnderNew?.keyId).toBe(rotatedKeyring.active.id);
-    expect(sealedUnderNew?.keyId).not.toBe(sealedUnderOld?.keyId);
+    // Which key sealed a value is read from the sealed value itself, so there is
+    // no column that could claim a rotation that did not happen.
+    expect(sealedKeyId(sealedUnderNew?.jwe ?? "")).toBe(rotatedKeyring.active.id);
+    expect(sealedKeyId(sealedUnderNew?.jwe ?? "")).not.toBe(
+      sealedKeyId(sealedUnderOld?.jwe ?? ""),
+    );
     // Same id, same value, new key: references and behaviour are unchanged.
     expect(sealedUnderNew?.id).toBe(sealedUnderOld?.id);
     expect(await store.reveal(sealedUnderNew?.id ?? "")).toBe("sk-value");

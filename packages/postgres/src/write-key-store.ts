@@ -7,54 +7,48 @@ import {
   type WriteKeyStore,
   writeKeyLabel,
 } from "@omni-model/core";
+import { and, desc, eq, isNull } from "drizzle-orm";
+import { createDb, type Db } from "./db.js";
 import type { PgPoolLike } from "./pool.js";
+import { writeKeys } from "./schema.js";
 
-const COLUMNS =
-  "id, name, prefix, last4, allowed_models, capture_content, metadata, created_by, created_at, " +
-  "expires_at, disabled_at";
+/** Columns a client may see. `key_hash` is deliberately not among them. */
+const PUBLIC_COLUMNS = {
+  id: writeKeys.id,
+  name: writeKeys.name,
+  prefix: writeKeys.prefix,
+  last4: writeKeys.last4,
+  allowedModels: writeKeys.allowedModels,
+  captureContent: writeKeys.captureContent,
+  metadata: writeKeys.metadata,
+  createdBy: writeKeys.createdBy,
+  createdAt: writeKeys.createdAt,
+  expiresAt: writeKeys.expiresAt,
+  disabledAt: writeKeys.disabledAt,
+} as const;
 
-interface Row {
-  id?: unknown;
-  name?: unknown;
-  prefix?: unknown;
-  last4?: unknown;
-  allowed_models?: unknown;
-  capture_content?: unknown;
-  metadata?: unknown;
-  created_by?: unknown;
-  created_at?: unknown;
-  expires_at?: unknown;
-  disabled_at?: unknown;
-}
+type PublicRow = {
+  [K in keyof typeof PUBLIC_COLUMNS]: (typeof writeKeys.$inferSelect)[K];
+};
 
-function toMillis(value: unknown): number {
-  if (value instanceof Date) return value.getTime();
-  const parsed = Date.parse(String(value));
-  return Number.isNaN(parsed) ? 0 : parsed;
-}
-
-function toMillisOrNull(value: unknown): number | null {
-  return value === null || value === undefined ? null : toMillis(value);
-}
-
-function toWriteKey(row: Row): WriteKey {
+function toWriteKey(row: PublicRow): WriteKey {
   return {
-    id: String(row.id),
-    name: String(row.name),
-    prefix: typeof row.prefix === "string" ? row.prefix : "",
-    last4: typeof row.last4 === "string" ? row.last4 : "",
-    // A NULL array means "no restriction"; an empty array means "no models".
-    allowedModels: Array.isArray(row.allowed_models) ? row.allowed_models.map(String) : null,
-    // NULL is meaningful here: it means "inherit the global setting".
-    captureContent: typeof row.capture_content === "boolean" ? row.capture_content : null,
+    id: row.id,
+    name: row.name,
+    prefix: row.prefix,
+    last4: row.last4,
+    // A null array means "no restriction"; an empty array means "no models".
+    allowedModels: row.allowedModels ?? null,
+    // Null is meaningful here: it means "inherit the global setting".
+    captureContent: row.captureContent,
     metadata:
       typeof row.metadata === "object" && row.metadata !== null && !Array.isArray(row.metadata)
         ? (row.metadata as Record<string, unknown>)
         : {},
-    createdBy: typeof row.created_by === "string" ? row.created_by : null,
-    createdAt: toMillis(row.created_at),
-    expiresAt: toMillisOrNull(row.expires_at),
-    disabledAt: toMillisOrNull(row.disabled_at),
+    createdBy: row.createdBy,
+    createdAt: row.createdAt.getTime(),
+    expiresAt: row.expiresAt?.getTime() ?? null,
+    disabledAt: row.disabledAt?.getTime() ?? null,
   };
 }
 
@@ -67,72 +61,79 @@ function toWriteKey(row: Row): WriteKey {
  */
 export class PostgresWriteKeyStore implements WriteKeyStore {
   readonly type = "postgres";
-  private readonly pool: PgPoolLike;
+  private readonly db: Db;
   private readonly now: () => number;
 
   constructor(pool: PgPoolLike, options: { now?: () => number } = {}) {
-    this.pool = pool;
+    this.db = createDb(pool);
     this.now = options.now ?? Date.now;
   }
 
   async create(input: CreateWriteKeyInput): Promise<CreatedWriteKey> {
     const secret = generateWriteKeySecret();
     const label = writeKeyLabel(secret);
-    const result = await this.pool.query(
-      "INSERT INTO omni_write_keys " +
-        "(name, key_hash, prefix, last4, allowed_models, capture_content, metadata, created_by, " +
-        "expires_at) VALUES ($1, $2, $3, $4, $5, $9, $6::jsonb, $7, " +
-        "CASE WHEN $8::float8 IS NULL THEN NULL ELSE to_timestamp($8 / 1000.0) END) " +
-        `RETURNING ${COLUMNS}`,
-      [
-        input.name,
-        await hashWriteKeySecret(secret),
-        label.prefix,
-        label.last4,
-        input.allowedModels ?? null,
-        JSON.stringify(input.metadata ?? {}),
-        input.createdBy ?? null,
-        input.expiresAt ?? null,
-        input.captureContent ?? null,
-      ],
-    );
-    const row = result.rows[0];
+    const [row] = await this.db
+      .insert(writeKeys)
+      .values({
+        name: input.name,
+        keyHash: await hashWriteKeySecret(secret),
+        prefix: label.prefix,
+        last4: label.last4,
+        // Absent *and* null mean unrestricted; only an explicit empty array means
+        // "no models". Collapsing undefined to `[]` would park every new key.
+        // Copied because the contract accepts a readonly array and the column
+        // wants a mutable one.
+        allowedModels:
+          input.allowedModels === undefined || input.allowedModels === null
+            ? null
+            : [...input.allowedModels],
+        captureContent: input.captureContent ?? null,
+        metadata: input.metadata ?? {},
+        createdBy: input.createdBy ?? null,
+        expiresAt:
+          input.expiresAt === undefined || input.expiresAt === null
+            ? null
+            : new Date(input.expiresAt),
+      })
+      .returning(PUBLIC_COLUMNS);
     if (row === undefined) throw new Error("creating a write key returned no row");
     return { writeKey: toWriteKey(row), secret };
   }
 
   async authenticate(secret: string): Promise<WriteKey | null> {
-    const result = await this.pool.query(
-      `SELECT ${COLUMNS} FROM omni_write_keys WHERE key_hash = $1`,
-      [await hashWriteKeySecret(secret)],
-    );
-    const row = result.rows[0];
+    const [row] = await this.db
+      .select(PUBLIC_COLUMNS)
+      .from(writeKeys)
+      .where(eq(writeKeys.keyHash, await hashWriteKeySecret(secret)))
+      .limit(1);
     return row === undefined ? null : toWriteKey(row);
   }
 
   async get(id: string): Promise<WriteKey | null> {
-    const result = await this.pool.query(`SELECT ${COLUMNS} FROM omni_write_keys WHERE id = $1`, [
-      id,
-    ]);
-    const row = result.rows[0];
+    const [row] = await this.db
+      .select(PUBLIC_COLUMNS)
+      .from(writeKeys)
+      .where(eq(writeKeys.id, id))
+      .limit(1);
     return row === undefined ? null : toWriteKey(row);
   }
 
   async list(): Promise<WriteKey[]> {
-    const result = await this.pool.query(
-      `SELECT ${COLUMNS} FROM omni_write_keys ORDER BY created_at DESC`,
-    );
-    return result.rows.map(toWriteKey);
+    const rows = await this.db
+      .select(PUBLIC_COLUMNS)
+      .from(writeKeys)
+      .orderBy(desc(writeKeys.createdAt));
+    return rows.map(toWriteKey);
   }
 
   async revoke(id: string): Promise<boolean> {
-    // `disabled_at IS NULL` makes this idempotent and lets the caller tell a
+    // `disabledAt IS NULL` makes this idempotent and lets the caller tell a
     // first revocation from a repeat, without a separate read.
-    const result = await this.pool.query(
-      "UPDATE omni_write_keys SET disabled_at = to_timestamp($2 / 1000.0) " +
-        "WHERE id = $1 AND disabled_at IS NULL RETURNING id",
-      [id, this.now()],
-    );
-    return result.rows.length > 0;
+    const updated = await this.db
+      .update(writeKeys)
+      .set({ disabledAt: new Date(this.now()) })
+      .where(and(eq(writeKeys.id, id), isNull(writeKeys.disabledAt)))
+      .returning({ id: writeKeys.id });
+    return updated.length > 0;
   }
 }

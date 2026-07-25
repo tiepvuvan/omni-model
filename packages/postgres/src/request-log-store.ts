@@ -1,24 +1,18 @@
 import type { Logger, RequestLogEntry, RequestLogWriter } from "@omni-model/core";
+import { and, desc, eq, gte, inArray, lt, sql } from "drizzle-orm";
+import { createDb, type Db } from "./db.js";
 import type { PgPoolLike, PgQueryResult } from "./pool.js";
-
-/** Columns written per log row, in parameter order. */
-const INSERT_COLUMNS =
-  "id, ts, request_id, write_key_id, user_id, device_id, auth_provider, model_requested, " +
-  "model_routed, provider_id, route_name, stream, status, error_code, prompt_tokens, " +
-  "completion_tokens, total_tokens, latency_ms, ttfb_ms, ip, user_agent, rate_limit_rule";
-
-const FIELDS_PER_ROW = 22;
+import { requestContents, requestLogs } from "./schema.js";
 
 /** Advisory-lock key for the retention sweep. Arbitrary but permanent. */
 const SWEEP_LOCK_ID = 1_869_768_810;
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 function uuidOrNull(value: string | null): string | null {
   // `write_key_id` is a UUID column; a non-UUID would abort the whole batch, and
   // one malformed value must not cost every other row in it.
-  if (value === null) return null;
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)
-    ? value
-    : null;
+  return value !== null && UUID.test(value) ? value : null;
 }
 
 /**
@@ -29,54 +23,43 @@ function uuidOrNull(value: string | null): string | null {
  * thousand requests a minute the round trips, not the inserts, are the cost.
  */
 export class PostgresRequestLogWriter implements RequestLogWriter {
-  private readonly pool: PgPoolLike;
+  private readonly db: Db;
 
   constructor(pool: PgPoolLike) {
-    this.pool = pool;
+    this.db = createDb(pool);
   }
 
   async write(entries: readonly RequestLogEntry[]): Promise<void> {
     if (entries.length === 0) return;
 
+    // Ids are generated here rather than by the default, so the content rows can
+    // reference them without a second round trip to read them back.
     const ids = entries.map(() => crypto.randomUUID());
-    const values: unknown[] = [];
-    const rows: string[] = [];
-    entries.forEach((entry, index) => {
-      const base = index * FIELDS_PER_ROW;
-      rows.push(
-        `($${base + 1}, to_timestamp($${base + 2} / 1000.0), ` +
-          Array.from({ length: FIELDS_PER_ROW - 2 }, (_, i) => `$${base + 3 + i}`).join(", ") +
-          ")",
-      );
-      values.push(
-        ids[index],
-        entry.ts,
-        entry.requestId,
-        uuidOrNull(entry.writeKeyId),
-        entry.userId,
-        entry.deviceId,
-        entry.authProvider,
-        entry.modelRequested ?? "",
-        entry.modelRouted,
-        entry.providerId,
-        entry.routeName,
-        entry.stream,
-        entry.status,
-        entry.errorCode,
-        entry.promptTokens,
-        entry.completionTokens,
-        entry.totalTokens,
-        entry.latencyMs,
-        entry.ttfbMs,
-        entry.ip,
-        entry.userAgent,
-        entry.rateLimitRule,
-      );
-    });
-
-    await this.pool.query(
-      `INSERT INTO omni_request_logs (${INSERT_COLUMNS}) VALUES ${rows.join(", ")}`,
-      values,
+    await this.db.insert(requestLogs).values(
+      entries.map((entry, index) => ({
+        id: ids[index] as string,
+        ts: new Date(entry.ts),
+        requestId: entry.requestId,
+        writeKeyId: uuidOrNull(entry.writeKeyId),
+        userId: entry.userId,
+        deviceId: entry.deviceId,
+        authProvider: entry.authProvider,
+        modelRequested: entry.modelRequested ?? "",
+        modelRouted: entry.modelRouted,
+        providerId: entry.providerId,
+        routeName: entry.routeName,
+        stream: entry.stream,
+        status: entry.status,
+        errorCode: entry.errorCode,
+        promptTokens: entry.promptTokens,
+        completionTokens: entry.completionTokens,
+        totalTokens: entry.totalTokens,
+        latencyMs: entry.latencyMs,
+        ttfbMs: entry.ttfbMs,
+        ip: entry.ip,
+        userAgent: entry.userAgent,
+        rateLimitRule: entry.rateLimitRule,
+      })),
     );
 
     const withContent = entries
@@ -84,22 +67,13 @@ export class PostgresRequestLogWriter implements RequestLogWriter {
       .filter((row) => row.entry.content !== undefined);
     if (withContent.length === 0) return;
 
-    const contentValues: unknown[] = [];
-    const contentRows: string[] = [];
-    withContent.forEach((row, index) => {
-      const base = index * 4;
-      contentRows.push(`($${base + 1}, $${base + 2}::jsonb, $${base + 3}, $${base + 4})`);
-      contentValues.push(
-        row.id,
-        JSON.stringify(row.entry.content?.messages ?? null),
-        row.entry.content?.completion ?? null,
-        row.entry.content?.truncated ?? false,
-      );
-    });
-    await this.pool.query(
-      "INSERT INTO omni_request_contents (request_log_id, messages, completion, truncated) " +
-        `VALUES ${contentRows.join(", ")}`,
-      contentValues,
+    await this.db.insert(requestContents).values(
+      withContent.map((row) => ({
+        requestLogId: row.id,
+        messages: row.entry.content?.messages ?? null,
+        completion: row.entry.content?.completion ?? null,
+        truncated: row.entry.content?.truncated ?? false,
+      })),
     );
   }
 }
@@ -124,6 +98,9 @@ export interface RequestLogRow extends RequestLogEntry {
   id: string;
 }
 
+type LogRow = typeof requestLogs.$inferSelect;
+type ContentRow = typeof requestContents.$inferSelect;
+
 /**
  * Read request logs, newest first.
  *
@@ -135,80 +112,70 @@ export async function queryRequestLogs(
   pool: PgPoolLike,
   query: RequestLogQuery = {},
 ): Promise<RequestLogRow[]> {
-  const where: string[] = [];
-  const values: unknown[] = [];
-  const add = (clause: string, value: unknown): void => {
-    values.push(value);
-    where.push(clause.replace("$?", `$${values.length}`));
-  };
+  const db = createDb(pool);
+  const filters = [
+    query.before === undefined ? undefined : lt(requestLogs.ts, new Date(query.before)),
+    query.since === undefined ? undefined : gte(requestLogs.ts, new Date(query.since)),
+    query.writeKeyId === undefined ? undefined : eq(requestLogs.writeKeyId, query.writeKeyId),
+    query.userId === undefined ? undefined : eq(requestLogs.userId, query.userId),
+    query.requestId === undefined ? undefined : eq(requestLogs.requestId, query.requestId),
+    query.minStatus === undefined ? undefined : gte(requestLogs.status, query.minStatus),
+  ].filter((filter) => filter !== undefined);
+  const where = filters.length === 0 ? undefined : and(...filters);
+  const limit = Math.min(Math.max(query.limit ?? 100, 1), 1000);
 
-  if (query.before !== undefined) add("l.ts < to_timestamp($? / 1000.0)", query.before);
-  if (query.since !== undefined) add("l.ts >= to_timestamp($? / 1000.0)", query.since);
-  if (query.writeKeyId !== undefined) add("l.write_key_id = $?", query.writeKeyId);
-  if (query.userId !== undefined) add("l.user_id = $?", query.userId);
-  if (query.requestId !== undefined) add("l.request_id = $?", query.requestId);
-  if (query.minStatus !== undefined) add("l.status >= $?", query.minStatus);
-  values.push(Math.min(Math.max(query.limit ?? 100, 1), 1000));
-  const limitParam = `$${values.length}`;
+  if (query.includeContent !== true) {
+    const rows = await db
+      .select()
+      .from(requestLogs)
+      .where(where)
+      .orderBy(desc(requestLogs.ts))
+      .limit(limit);
+    return rows.map((row) => toRow(row, null));
+  }
 
-  const content = query.includeContent === true;
-  const result = await pool.query(
-    `SELECT l.*${content ? ", c.messages, c.completion, c.truncated" : ""} ` +
-      "FROM omni_request_logs l " +
-      (content ? "LEFT JOIN omni_request_contents c ON c.request_log_id = l.id " : "") +
-      (where.length === 0 ? "" : `WHERE ${where.join(" AND ")} `) +
-      `ORDER BY l.ts DESC LIMIT ${limitParam}`,
-    values,
-  );
-  return result.rows.map((row) => toRow(row, content));
+  const rows = await db
+    .select({ log: requestLogs, content: requestContents })
+    .from(requestLogs)
+    .leftJoin(requestContents, eq(requestContents.requestLogId, requestLogs.id))
+    .where(where)
+    .orderBy(desc(requestLogs.ts))
+    .limit(limit);
+  return rows.map((row) => toRow(row.log, row.content));
 }
 
-function millis(value: unknown): number {
-  if (value instanceof Date) return value.getTime();
-  const parsed = Date.parse(String(value));
-  return Number.isNaN(parsed) ? 0 : parsed;
-}
-
-function str(value: unknown): string | null {
-  return typeof value === "string" ? value : null;
-}
-
-function num(value: unknown): number | null {
-  if (value === null || value === undefined) return null;
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : null;
-}
-
-function toRow(row: Record<string, unknown>, withContent: boolean): RequestLogRow {
+function toRow(row: LogRow, content: ContentRow | null): RequestLogRow {
   const entry: RequestLogRow = {
-    id: String(row.id),
-    requestId: str(row.request_id) ?? "",
-    ts: millis(row.ts),
-    writeKeyId: str(row.write_key_id),
-    userId: str(row.user_id),
-    deviceId: str(row.device_id),
-    authProvider: str(row.auth_provider),
-    modelRequested: str(row.model_requested),
-    modelRouted: str(row.model_routed),
-    providerId: str(row.provider_id),
-    routeName: str(row.route_name),
-    stream: row.stream === true,
-    status: num(row.status) ?? 0,
-    errorCode: str(row.error_code),
-    rateLimitRule: str(row.rate_limit_rule),
-    promptTokens: num(row.prompt_tokens),
-    completionTokens: num(row.completion_tokens),
-    totalTokens: num(row.total_tokens),
-    latencyMs: num(row.latency_ms),
-    ttfbMs: num(row.ttfb_ms),
-    ip: str(row.ip),
-    userAgent: str(row.user_agent),
+    id: row.id,
+    requestId: row.requestId ?? "",
+    ts: row.ts.getTime(),
+    writeKeyId: row.writeKeyId,
+    userId: row.userId,
+    deviceId: row.deviceId,
+    authProvider: row.authProvider,
+    modelRequested: row.modelRequested,
+    modelRouted: row.modelRouted,
+    providerId: row.providerId,
+    routeName: row.routeName,
+    stream: row.stream,
+    status: row.status,
+    errorCode: row.errorCode,
+    rateLimitRule: row.rateLimitRule,
+    promptTokens: row.promptTokens,
+    completionTokens: row.completionTokens,
+    totalTokens: row.totalTokens,
+    latencyMs: row.latencyMs,
+    ttfbMs: row.ttfbMs,
+    ip: row.ip,
+    userAgent: row.userAgent,
   };
-  if (withContent && (row.messages !== null || row.completion !== null)) {
+  // Absent rather than null when nothing was captured, so a caller can tell
+  // "content capture was off" from "the prompt was empty".
+  if (content !== null && (content.messages !== null || content.completion !== null)) {
     entry.content = {
-      messages: row.messages ?? null,
-      completion: str(row.completion),
-      truncated: row.truncated === true,
+      messages: content.messages ?? null,
+      completion: content.completion,
+      truncated: content.truncated,
     };
   }
   return entry;
@@ -229,6 +196,8 @@ export interface SweepResult {
  * Every replica can therefore run this on a timer and exactly one does the work.
  *
  * Content is swept on its own clock, so usage history can outlive the prompts.
+ * The lock is session-scoped, so it is taken on a checked-out client and
+ * released in a `finally` — a pooled `query` might unlock on a different backend.
  */
 export async function sweepRequestLogs(
   pool: PgPoolLike,
@@ -246,18 +215,23 @@ export async function sweepRequestLogs(
       return { ran: false, logsDeleted: 0, contentsDeleted: 0 };
     }
     try {
+      const db = createDb(pool);
+      const olderThan = (ms: number) =>
+        lt(requestLogs.ts, sql`now() - ${ms}::float8 * interval '1 millisecond'`);
+
       // Content first: deleting a log row cascades its content anyway, but the
       // shorter content clock has to be applied to rows whose metadata stays.
-      const contents = await client.query(
-        "DELETE FROM omni_request_contents WHERE request_log_id IN (" +
-          "SELECT id FROM omni_request_logs WHERE ts < now() - $1::float8 * interval '1 millisecond'" +
-          ")",
-        [options.contentRetentionMs],
+      const contents = await db.delete(requestContents).where(
+        inArray(
+          requestContents.requestLogId,
+          db
+            .select({ id: requestLogs.id })
+            .from(requestLogs)
+            .where(olderThan(options.contentRetentionMs)),
+        ),
       );
-      const logs = await client.query(
-        "DELETE FROM omni_request_logs WHERE ts < now() - $1::float8 * interval '1 millisecond'",
-        [options.retentionMs],
-      );
+      const logs = await db.delete(requestLogs).where(olderThan(options.retentionMs));
+
       const result: SweepResult = {
         ran: true,
         logsDeleted: rowCount(logs),
@@ -278,6 +252,6 @@ export async function sweepRequestLogs(
   }
 }
 
-function rowCount(result: PgQueryResult): number {
+function rowCount(result: PgQueryResult | { rowCount?: number | null }): number {
   return typeof result.rowCount === "number" ? result.rowCount : 0;
 }

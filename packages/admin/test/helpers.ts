@@ -87,7 +87,13 @@ export function fakeAuth(users: Record<string, FakeActor>): AdminAuthLike {
 export function fakePool(options: { users?: number } = {}): PgPoolLike {
   const users = options.users ?? 0;
   return {
-    query: async (text: string) => {
+    // Better Auth and our raw statements pass a string; Drizzle passes a query
+    // object and asks for array row mode, so both forms have to be handled.
+    query: async (arg: unknown) => {
+      const config = typeof arg === "string" ? { text: arg } : (arg as { text: string });
+      const text = config.text;
+      const empty = { rows: [], rowCount: 0, fields: [] };
+
       if (text.includes('FROM "user" LIMIT 1')) {
         return { rows: users > 0 ? [{ 1: 1 }] : [], rowCount: users > 0 ? 1 : 0 };
       }
@@ -96,9 +102,12 @@ export function fakePool(options: { users?: number } = {}): PgPoolLike {
       }
       // Promotion of the first operator; the fake sign-up returns no user id, so
       // this is only reached when a test drives it directly.
-      if (text.includes('UPDATE "user" SET role'))
+      if (text.includes('UPDATE "user" SET role')) {
         return { rows: [{ id: "u-first" }], rowCount: 1 };
-      if (text.includes("omni_request_logs")) return { rows: [], rowCount: 0 };
+      }
+      // Log and usage queries: no rows, which is a real state (nothing logged
+      // yet) and enough to exercise the HTTP shape around them.
+      if (text.includes("omni_request_logs")) return empty;
       throw new Error(`unexpected query in a pool-free test: ${text}`);
     },
   } as unknown as PgPoolLike;

@@ -68,13 +68,19 @@ export interface SecretStore {
   close?(): Promise<void>;
 }
 
-/** A stored row, as a backend persists it. Contains no plaintext. */
+/**
+ * A stored row, as a backend persists it. Contains no plaintext.
+ *
+ * The sealed value is one opaque string (a JWE), so a backend needs a single
+ * text column and no knowledge of how it is framed. There is deliberately no
+ * `keyId` column: which key sealed a value is in the JWE header, and a
+ * projection that can disagree with the ciphertext is worse than a parse.
+ */
 export interface SecretRow {
   id: string;
   name: string;
-  ciphertext: Uint8Array;
-  iv: Uint8Array;
-  keyId: string;
+  /** JWE compact serialization. See `sealSecret`. */
+  jwe: string;
   hint: string;
   fingerprint: string;
   createdAt: number;
@@ -85,7 +91,7 @@ export interface SecretRow {
  * Row persistence for {@link SecretStore}, with no knowledge of cryptography.
  *
  * Splitting it this way means the encryption lives in exactly one place, so a
- * new backend cannot get the crypto subtly wrong — it only has to store bytes.
+ * new backend cannot get the crypto subtly wrong — it only has to store text.
  */
 export interface SecretRowStore {
   upsert(row: SecretRow): Promise<void>;

@@ -16,14 +16,17 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json"
+    "build": "tsc -p tsconfig.json",
+    "schema:generate": "drizzle-kit generate --name baseline"
   },
   "dependencies": {
     "@omni-model/core": "workspace:*",
+    "drizzle-orm": "^0.45.2",
     "pg": "^8.22.0",
     "zod": "^4.4.0"
   },
   "devDependencies": {
-    "@types/pg": "^8.15.0"
+    "@types/pg": "^8.15.0",
+    "drizzle-kit": "^0.31.10"
   }
 }

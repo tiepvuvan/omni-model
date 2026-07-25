@@ -19,16 +19,30 @@ describe("MIGRATIONS", () => {
     // collide with whatever else lives in the operator's database. A migration
     // that only ALTERs creates nothing, which is fine — the constraint is on the
     // names, not the count.
+    // Identifiers may be quoted: drizzle-kit generates `CREATE TABLE "omni_kv"`,
+    // while the hand-written trigger statements are unquoted.
     const touched: string[] = [];
     for (const migration of MIGRATIONS) {
       for (const [, name] of migration.sql.matchAll(
-        /(?:CREATE (?:UNIQUE )?(?:TABLE|INDEX)(?: IF NOT EXISTS)?|ALTER TABLE) (\w+)/g,
+        /(?:CREATE (?:UNIQUE )?(?:TABLE|INDEX|TRIGGER)(?: IF NOT EXISTS)?|ALTER TABLE|DROP TRIGGER(?: IF EXISTS)?) "?(\w+)"?/g,
       )) {
         touched.push(name as string);
       }
     }
     expect(touched.length).toBeGreaterThan(0);
     for (const name of touched) expect(name).toMatch(/^omni_/);
+  });
+
+  test("never hardcodes a schema, so search_path decides where tables live", () => {
+    // drizzle-kit emits `REFERENCES "public"."omni_…"`. Left in, that pins every
+    // deployment to the `public` schema and breaks the documented "point it at
+    // its own schema" isolation — silently, because the CREATEs are unqualified
+    // and only the foreign keys fail.
+    for (const migration of MIGRATIONS) {
+      expect(migration.sql, `migration ${migration.version} qualifies a schema`).not.toMatch(
+        /"?public"?\s*\.\s*"?omni_/i,
+      );
+    }
   });
 });
 

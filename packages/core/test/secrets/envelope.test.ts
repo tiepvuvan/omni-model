@@ -3,6 +3,7 @@ import { ConfigError } from "../../src/errors.js";
 import {
   openSecret,
   sealSecret,
+  sealedKeyId,
   secretFingerprint,
   secretHint,
 } from "../../src/secrets/envelope.js";
@@ -12,6 +13,19 @@ import { createKeyring, keyringFromEnv } from "../../src/secrets/keyring.js";
 function keyMaterial(seed: number): string {
   const bytes = new Uint8Array(32).fill(seed);
   return btoa(String.fromCharCode(...bytes));
+}
+
+function decodeBase64Url(value: string): Uint8Array {
+  const padded = value.replace(/-/g, "+").replace(/_/g, "/");
+  const binary = atob(padded.padEnd(Math.ceil(padded.length / 4) * 4, "="));
+  return Uint8Array.from(binary, (character) => character.charCodeAt(0));
+}
+
+function encodeBase64Url(bytes: Uint8Array): string {
+  return btoa(String.fromCharCode(...bytes))
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
 }
 
 const KEY_A = keyMaterial(1);
@@ -85,24 +99,57 @@ describe("keyringFromEnv", () => {
 });
 
 describe("sealSecret / openSecret", () => {
+  /** The five compact-JWE segments: header, key, iv, ciphertext, tag. */
+  function parts(sealed: string): string[] {
+    const segments = sealed.split(".");
+    expect(segments).toHaveLength(5);
+    return segments;
+  }
+
+  /** Replace one segment, leaving a structurally valid but altered JWE. */
+  function tamper(sealed: string, index: number): string {
+    const segments = parts(sealed);
+    const original = segments[index] as string;
+    // Flip the first character to something else in the base64url alphabet.
+    segments[index] = (original[0] === "A" ? "B" : "A") + original.slice(1);
+    return segments.join(".");
+  }
+
   it("round-trips a value", async () => {
     const keyring = await createKeyring({ active: KEY_A });
     const sealed = await sealSecret(keyring, "id-1", "sk-super-secret");
 
     expect(await openSecret(keyring, "id-1", sealed)).toBe("sk-super-secret");
-    expect(sealed.keyId).toBe(keyring.active.id);
+    expect(sealedKeyId(sealed)).toBe(keyring.active.id);
+  });
+
+  it("is a standard JWE: dir + A256GCM, with the key and secret ids in the header", async () => {
+    // Asserted because the format is now the storage format: a silent change to
+    // `alg`/`enc` would be a silent change to what is in the database.
+    const keyring = await createKeyring({ active: KEY_A });
+    const sealed = await sealSecret(keyring, "id-1", "sk-secret");
+    const [header, encryptedKey] = parts(sealed);
+
+    expect(JSON.parse(new TextDecoder().decode(decodeBase64Url(header as string)))).toEqual({
+      alg: "dir",
+      enc: "A256GCM",
+      kid: keyring.active.id,
+      omni_sid: "id-1",
+    });
+    // `dir` derives no content key, so there is nothing to wrap.
+    expect(encryptedKey).toBe("");
   });
 
   it("never produces the plaintext in its ciphertext or a repeated nonce", async () => {
     const keyring = await createKeyring({ active: KEY_A });
     const value = "sk-super-secret";
-    const a = await sealSecret(keyring, "id-1", value);
-    const b = await sealSecret(keyring, "id-1", value);
+    const a = parts(await sealSecret(keyring, "id-1", value));
+    const b = parts(await sealSecret(keyring, "id-1", value));
 
-    expect(new TextDecoder().decode(a.ciphertext)).not.toContain(value);
+    expect(a[3]).not.toContain(value);
     // A reused AES-GCM nonce under one key is catastrophic, so this must differ.
-    expect([...a.iv].join()).not.toBe([...b.iv].join());
-    expect([...a.ciphertext].join()).not.toBe([...b.ciphertext].join());
+    expect(a[2]).not.toBe(b[2]);
+    expect(a[3]).not.toBe(b[3]);
   });
 
   it("handles unicode and long values", async () => {
@@ -115,39 +162,48 @@ describe("sealSecret / openSecret", () => {
   it("refuses a tampered ciphertext rather than returning garbage", async () => {
     const keyring = await createKeyring({ active: KEY_A });
     const sealed = await sealSecret(keyring, "id-1", "sk-secret");
-    const tampered = new Uint8Array(sealed.ciphertext);
-    tampered[0] ^= 0xff;
-
-    await expect(
-      openSecret(keyring, "id-1", { ...sealed, ciphertext: tampered }),
-    ).rejects.toThrow();
+    await expect(openSecret(keyring, "id-1", tamper(sealed, 3))).rejects.toThrow();
   });
 
   it("refuses a tampered nonce", async () => {
     const keyring = await createKeyring({ active: KEY_A });
     const sealed = await sealSecret(keyring, "id-1", "sk-secret");
-    const iv = new Uint8Array(sealed.iv);
-    iv[0] ^= 0xff;
+    await expect(openSecret(keyring, "id-1", tamper(sealed, 2))).rejects.toThrow();
+  });
 
-    await expect(openSecret(keyring, "id-1", { ...sealed, iv })).rejects.toThrow();
+  it("refuses a tampered authentication tag", async () => {
+    const keyring = await createKeyring({ active: KEY_A });
+    const sealed = await sealSecret(keyring, "id-1", "sk-secret");
+    await expect(openSecret(keyring, "id-1", tamper(sealed, 4))).rejects.toThrow();
   });
 
   it("refuses a ciphertext moved to a different secret id", async () => {
-    // The id is authenticated, so someone with database write access cannot
-    // swap the bytes of one credential into another row and have it decrypt.
+    // The id is in the authenticated header, so someone with database write
+    // access cannot swap one credential's value into another row: the header
+    // still names the row it was sealed for, and that is checked.
     const keyring = await createKeyring({ active: KEY_A });
     const sealed = await sealSecret(keyring, "openai-key", "sk-openai");
 
-    await expect(openSecret(keyring, "anthropic-key", sealed)).rejects.toThrow();
+    await expect(openSecret(keyring, "anthropic-key", sealed)).rejects.toBeInstanceOf(ConfigError);
+    await expect(openSecret(keyring, "anthropic-key", sealed)).rejects.toThrow(
+      /sealed for a different secret/,
+    );
   });
 
-  it("refuses a ciphertext under the wrong key", async () => {
+  it("refuses a header rewritten to claim a different key", async () => {
     const a = await createKeyring({ active: KEY_A });
     const b = await createKeyring({ active: KEY_B });
     const sealed = await sealSecret(a, "id-1", "sk-secret");
-    // Same recorded key id, different key material: forge the id to isolate the
-    // decryption failure from the "key not in keyring" path.
-    await expect(openSecret(b, "id-1", { ...sealed, keyId: b.active.id })).rejects.toThrow();
+    // Rewrite `kid` to a key `b` does have, so this exercises the decryption
+    // failure rather than the "key not in keyring" path. The header is part of
+    // the AAD, so editing it breaks the tag.
+    const segments = parts(sealed);
+    segments[0] = encodeBase64Url(
+      new TextEncoder().encode(
+        JSON.stringify({ alg: "dir", enc: "A256GCM", kid: b.active.id, omni_sid: "id-1" }),
+      ),
+    );
+    await expect(openSecret(b, "id-1", segments.join("."))).rejects.toThrow();
   });
 
   it("explains how to recover when the sealing key was retired too early", async () => {

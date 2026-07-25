@@ -1,4 +1,10 @@
-import { openSecret, sealSecret, secretFingerprint, secretHint } from "./envelope.js";
+import {
+  openSecret,
+  sealSecret,
+  sealedKeyId,
+  secretFingerprint,
+  secretHint,
+} from "./envelope.js";
 import type { Keyring } from "./keyring.js";
 import type { SecretDescription, SecretRow, SecretRowStore, SecretStore } from "./types.js";
 
@@ -8,7 +14,9 @@ function describe(row: SecretRow): SecretDescription {
     name: row.name,
     hint: row.hint,
     fingerprint: row.fingerprint,
-    keyId: row.keyId,
+    // Read from the sealed value itself, so it cannot claim a key that did not
+    // seal it.
+    keyId: sealedKeyId(row.jwe),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -41,14 +49,11 @@ export class EnvelopeSecretStore implements SecretStore {
     // Reuse the id on replacement so every configuration referencing this
     // secret keeps working when the credential behind it is rotated.
     const id = existing?.id ?? crypto.randomUUID();
-    const sealed = await sealSecret(this.keyring, id, value);
     const now = this.now();
     const row: SecretRow = {
       id,
       name,
-      ciphertext: sealed.ciphertext,
-      iv: sealed.iv,
-      keyId: sealed.keyId,
+      jwe: await sealSecret(this.keyring, id, value),
       hint: secretHint(value),
       fingerprint: await secretFingerprint(value),
       createdAt: existing?.createdAt ?? now,
@@ -61,11 +66,7 @@ export class EnvelopeSecretStore implements SecretStore {
   async reveal(id: string): Promise<string | null> {
     const row = await this.rows.findById(id);
     if (row === null) return null;
-    return openSecret(this.keyring, row.id, {
-      ciphertext: row.ciphertext,
-      iv: row.iv,
-      keyId: row.keyId,
-    });
+    return openSecret(this.keyring, row.id, row.jwe);
   }
 
   async describe(id: string): Promise<SecretDescription | null> {
@@ -90,20 +91,13 @@ export class EnvelopeSecretStore implements SecretStore {
     const rows = await this.rows.list();
     let rotated = 0;
     for (const row of rows) {
-      if (row.keyId === this.keyring.active.id) continue;
+      if (sealedKeyId(row.jwe) === this.keyring.active.id) continue;
       // Decrypt with the old key, re-seal with the active one. The value never
       // leaves this loop, and the id is unchanged so references keep resolving.
-      const plaintext = await openSecret(this.keyring, row.id, {
-        ciphertext: row.ciphertext,
-        iv: row.iv,
-        keyId: row.keyId,
-      });
-      const sealed = await sealSecret(this.keyring, row.id, plaintext);
+      const plaintext = await openSecret(this.keyring, row.id, row.jwe);
       await this.rows.upsert({
         ...row,
-        ciphertext: sealed.ciphertext,
-        iv: sealed.iv,
-        keyId: sealed.keyId,
+        jwe: await sealSecret(this.keyring, row.id, plaintext),
         updatedAt: this.now(),
       });
       rotated += 1;

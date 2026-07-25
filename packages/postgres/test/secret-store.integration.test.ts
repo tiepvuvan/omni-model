@@ -1,4 +1,9 @@
-import { createKeyring, EnvelopeSecretStore, silentLogger } from "@omni-model/core";
+import {
+  createKeyring,
+  EnvelopeSecretStore,
+  sealedKeyId,
+  silentLogger,
+} from "@omni-model/core";
 import { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { runMigrations } from "../src/migrations/run.js";
@@ -52,7 +57,9 @@ describe.skipIf(!url)("PostgresSecretRowStore (integration)", () => {
     await Promise.all(pools.map((p) => p.end().catch(() => {})));
   });
 
-  test("migration 6 replaced key_version with a text key_id", async () => {
+  test("stores one sealed text column, with no key id beside it", async () => {
+    // The sealed value carries its own key id in the JWE header, so a `key_id`
+    // column would be a projection that could disagree with the ciphertext.
     const columns = await pool.query(
       "SELECT column_name, data_type FROM information_schema.columns " +
         "WHERE table_schema = $1 AND table_name = 'omni_secrets' ORDER BY column_name",
@@ -61,21 +68,23 @@ describe.skipIf(!url)("PostgresSecretRowStore (integration)", () => {
     const byName = new Map(
       columns.rows.map((row) => [String(row.column_name), String(row.data_type)]),
     );
-    expect(byName.get("key_id")).toBe("text");
-    expect(byName.has("key_version")).toBe(false);
+    expect(byName.get("jwe")).toBe("text");
+    expect(byName.has("key_id")).toBe(false);
+    expect(byName.has("ciphertext")).toBe(false);
+    expect(byName.has("iv")).toBe(false);
   });
 
-  test("round-trips a secret through BYTEA", async () => {
+  test("round-trips a secret", async () => {
     const description = await store.put("openai", CANARY);
     expect(description.hint).toBe("…alue");
+    expect(description.keyId).toMatch(/^[0-9a-f]{12}$/);
     expect(await store.reveal(description.id)).toBe(CANARY);
   });
 
   test("the database never contains the plaintext", async () => {
     // The claim a backup has to satisfy. Cast the whole row to text and look.
     const dump = await pool.query(
-      "SELECT id::text || name || encode(ciphertext, 'hex') || encode(iv, 'hex') || " +
-        "key_id || hint || fingerprint AS blob FROM omni_secrets",
+      "SELECT id::text || name || jwe || hint || fingerprint AS blob FROM omni_secrets",
     );
     const blob = dump.rows.map((row) => String(row.blob)).join("\n");
 
@@ -83,6 +92,13 @@ describe.skipIf(!url)("PostgresSecretRowStore (integration)", () => {
     expect(blob).not.toContain("canary");
     // ...and the value is genuinely in there, encrypted.
     expect(blob.length).toBeGreaterThan(CANARY.length);
+  });
+
+  test("what is stored is a compact JWE, readable by any JOSE implementation", async () => {
+    const rows = await pool.query("SELECT jwe FROM omni_secrets LIMIT 1");
+    const jwe = String(rows.rows[0]?.jwe);
+    expect(jwe.split(".")).toHaveLength(5);
+    expect(sealedKeyId(jwe)).toMatch(/^[0-9a-f]{12}$/);
   });
 
   test("replacing a credential keeps the id and updates the fingerprint", async () => {
@@ -122,7 +138,8 @@ describe.skipIf(!url)("PostgresSecretRowStore (integration)", () => {
   test("rotate() re-seals persisted rows under the new active key", async () => {
     const rows = new PostgresSecretRowStore(scopedPool());
     const before = await rows.list();
-    const oldKeyId = before[0]?.keyId;
+    const oldKeyId = sealedKeyId(before[0]?.jwe ?? "");
+    expect(oldKeyId).not.toBe("");
 
     const rotated = new EnvelopeSecretStore(
       rows,
@@ -131,7 +148,7 @@ describe.skipIf(!url)("PostgresSecretRowStore (integration)", () => {
     expect(await rotated.rotate()).toEqual({ rotated: 1, total: 1 });
 
     const after = await rows.list();
-    expect(after[0]?.keyId).not.toBe(oldKeyId);
+    expect(sealedKeyId(after[0]?.jwe ?? "")).not.toBe(oldKeyId);
     expect(await rotated.reveal(after[0]?.id ?? "")).toBe("sk-rotated-credential");
     // Idempotent, so a rotation job can run on every boot.
     expect(await rotated.rotate()).toEqual({ rotated: 0, total: 1 });
