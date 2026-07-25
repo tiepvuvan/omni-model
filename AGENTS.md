@@ -37,6 +37,11 @@ packages/postgres          PostgreSQL backend: owns the schema
   src/write-key-store.ts   WriteKeyStore over omni_write_keys (hashes only)
   src/request-log-store.ts Batched log writes, queries, advisory-locked sweep
   src/backend.ts           Storage + config + secret stores over one pool
+packages/admin             Operator API. Authorization + HTTP over existing stores
+  src/auth.ts              Better Auth instance, its migrator, first-operator helpers
+  src/session.ts           requireAdmin: 401 unauthenticated vs 403 not-an-operator
+  src/app.ts               Hono sub-app; the first-run sign-up gate lives here
+  src/routes/              config · writekeys · secrets · logs · meta
 packages/node              Node server + CLI — the container entry point
 swift/OmniModelFoundation   Apple Foundation Models LanguageModel package (SPM)
 swift/OmniModelClientKit    MacPaw/OpenAI client + OmniAuthMiddleware (SPM)
@@ -114,6 +119,17 @@ docs/                      Mintlify docs site (docs.json + MDX): installation,
     responses you have not inspected is an out-of-memory condition waiting to happen.
 15. **Never log or echo a credential.** Config errors name *paths*, never values — there are tests
     asserting no plaintext reaches an error message or a log field. Keep it that way.
+16. **Admin writes are validate → persist → apply, in that order.** `holder.validate()` is a dry run
+    for exactly this. Applying before persisting would leave one replica running a configuration no
+    other replica has if the write then failed; other replicas adopt the revision from the store.
+17. **The admin API adds authorization and transport, not mechanism.** Every endpoint drives a
+    contract core already owns, and every mutation is validated by the *same* two-step schema
+    startup uses — so the API rejects exactly what a boot would have rejected, with the same
+    message. If an endpoint needs new behavior, that behavior belongs in core.
+18. **First-run is open exactly once, and it ends somewhere usable.** Sign-up is reachable only while
+    zero accounts exist, and the account it creates is promoted to `admin` — the plugin defaults new
+    accounts to `user`, which can sign in and reach nothing. `create-admin` is the non-HTTP path.
+    Both are guarded by tests; the gate is the only thing between a public port and a config API.
 
 ## Toolchain
 
@@ -188,7 +204,15 @@ on success. Need extra endpoints (challenge flows)? Use `routes`.
 
 Then: add the factory to `createDefaultRegistry` (`core/src/registry.ts`), export it from the
 package barrel, add tests, and document its environment variables in
-`docs/reference/configuration.mdx`.
+`docs/reference/configuration.mdx`. Always set `optionsSchema` — `GET /admin/api/meta` publishes it
+as JSON Schema so a dashboard can render a form for your component, and a missing schema is an
+empty form rather than an error.
+
+**An admin endpoint**: add it to the right file under `packages/admin/src/routes/`, mounted below
+`requireAdmin`. Mutations go through the `save()` helper in `routes/config.ts` so they cannot skip
+validate-then-persist-then-apply. Then add it to the table in `docs/reference/admin-api.mdx`: a test
+(`packages/admin/test/docs.test.ts`) drives every documented path against the real routing table, so
+a documented endpoint that does not exist fails CI.
 
 ## Style
 
@@ -198,7 +222,8 @@ package barrel, add tests, and document its environment variables in
 - No new dependencies without discussion. Anything `packages/core` imports must be Web-standard
   only — that constraint is what keeps every component unit-testable offline (see rule 1), so it
   stays even though the container is the only deploy target. Current core deps: hono, zod, jose,
-  @marcbachmann/cel-js, cbor2, @peculiar/x509.
+  @marcbachmann/cel-js, cbor2, @peculiar/x509. `better-auth` is confined to `packages/admin` and
+  must never be imported by core.
 - Never log tokens, API keys, or request bodies. Redact before logging.
 
 ## PR checklist

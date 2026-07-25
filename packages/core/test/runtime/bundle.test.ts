@@ -120,7 +120,7 @@ describe("buildBundle", () => {
     );
   });
 
-  it("resolves ${VAR} references at build time, not at store time", () => {
+  it("resolves environment references at build time, not at store time", () => {
     // Regression: stored revisions keep their `${VAR}` references so the
     // database never holds a secret, which means whoever turns a document into
     // something runnable has to resolve them. Skipping this once shipped a

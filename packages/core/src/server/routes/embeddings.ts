@@ -31,13 +31,16 @@ export function createEmbeddingsHandler(
       throw badRequest("'input' is a required property", { param: "input" });
     }
     const request = body as EmbeddingsRequest;
+
+    // Before the allowlist check: a refused request should still say which model
+    // it asked for. See the same ordering in the chat handler.
+    const draft = draftOf(c);
+    if (draft !== undefined) draft.modelRequested = request.model;
+
     assertModelAllowedForClient(c, request.model);
 
     const runtime = deps.runtimeFor(c);
     const facts = factsFor(c, request, runtime.now(), deps.clientIp(c, bundle.trustProxyHeaders));
-
-    const draft = draftOf(c);
-    if (draft !== undefined) draft.modelRequested = request.model;
 
     const result = await executeEmbeddings(
       bundle,

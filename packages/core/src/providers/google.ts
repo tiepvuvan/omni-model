@@ -835,6 +835,7 @@ class GoogleProvider implements ChatProvider {
  */
 export const googleProviderFactory: ProviderFactory = {
   type: "google",
+  optionsSchema: googleOptionsSchema,
   create(id, options): ChatProvider {
     // The raw provider block still carries the discriminating `type` key.
     const { type: _type, ...rest } = options;

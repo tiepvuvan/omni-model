@@ -215,15 +215,14 @@ export function createChatHandler(deps: RouteDeps): (c: Context<AppEnv>) => Prom
       });
     }
     const request = body as ChatCompletionRequest;
-    assertModelAllowedForClient(c, request.model);
-
-    const runtime = deps.runtimeFor(c);
-    const facts = factsFor(c, request, runtime.now(), deps.clientIp(c, bundle.trustProxyHeaders));
 
     const draft = draftOf(c);
     const capture =
       draft !== undefined &&
       shouldCaptureContent(c.get("writeKey") ?? null, bundle.logging.content);
+    // Before the allowlist check, not after: "which model was this client
+    // refused" is the whole reason that row gets looked at, and a rejection
+    // thrown first would log it with no model at all.
     if (draft !== undefined) {
       draft.modelRequested = request.model;
       draft.stream = request.stream === true;
@@ -233,6 +232,11 @@ export function createChatHandler(deps: RouteDeps): (c: Context<AppEnv>) => Prom
         draft.truncated = draft.truncated || prompt.truncated;
       }
     }
+
+    assertModelAllowedForClient(c, request.model);
+
+    const runtime = deps.runtimeFor(c);
+    const facts = factsFor(c, request, runtime.now(), deps.clientIp(c, bundle.trustProxyHeaders));
 
     const result = await executeChat(
       bundle,

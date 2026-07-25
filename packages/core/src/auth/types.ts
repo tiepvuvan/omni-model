@@ -1,3 +1,4 @@
+import type { ZodTypeLike } from "../schema-shape.js";
 import type { StorageAdapter } from "../storage/types.js";
 import type { RuntimeContext } from "../types.js";
 
@@ -53,6 +54,16 @@ export interface AuthVerifier {
 
 export interface AuthVerifierFactory {
   readonly type: string;
+  /**
+   * The zod schema this factory validates its options with.
+   *
+   * Optional, and purely descriptive: validation still happens inside `create`.
+   * Exposing it lets the admin API publish the real option contracts as JSON
+   * Schema, so a dashboard renders a form per component type instead of
+   * hardcoding one for each — and cannot drift from what the factory accepts.
+   */
+  readonly optionsSchema?: ZodTypeLike;
+
   /**
    * `options` is one entry of `security.providers` from the environment configuration;
    * factories validate their own options with zod.

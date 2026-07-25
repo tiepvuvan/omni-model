@@ -332,6 +332,7 @@ function streamResult(upstream: ReadableStream<Uint8Array>): ChatResult {
 /** OpenAI itself: `apiKey` required, `baseUrl` defaults to the public API. */
 export const openAIProviderFactory: ProviderFactory = {
   type: "openai",
+  optionsSchema: openAIOptionsSchema,
   create(id, options) {
     return new OpenAICompatibleProvider(
       id,
@@ -344,6 +345,7 @@ export const openAIProviderFactory: ProviderFactory = {
 /** Any OpenAI-compatible endpoint: `baseUrl` required, `apiKey` optional. */
 export const openAICompatibleProviderFactory: ProviderFactory = {
   type: "openai-compatible",
+  optionsSchema: openAICompatibleOptionsSchema,
   create(id, options) {
     return new OpenAICompatibleProvider(
       id,

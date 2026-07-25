@@ -1,0 +1,276 @@
+---
+title: Admin API
+description: Configure providers, auth modes, rate limits, routing, write keys and secrets at runtime over HTTP.
+---
+
+The admin API is how a running proxy is configured. Everything the
+[configuration reference](/reference/configuration) describes can be read and written over HTTP, and
+a saved change reaches every replica within seconds — no restart, no redeploy.
+
+It is mounted on the same port as the proxy, under `/admin/api`, and it is **off unless
+`OMNI_ADMIN_SECRET` is set**.
+
+```sh
+docker run -p 8787:8787 \
+  -e OMNI_STORAGE_TYPE=postgres \
+  -e OMNI_STORAGE_POSTGRES_URL="$DATABASE_URL" \
+  -e OMNI_ENCRYPTION_KEY="$(openssl rand -base64 32)" \
+  -e OMNI_ADMIN_SECRET="$(openssl rand -base64 32)" \
+  ghcr.io/tiepvuvan/omni-model
+```
+
+<Warning>
+  `OMNI_ADMIN_SECRET` must be at least 32 characters and requires PostgreSQL storage: operator
+  accounts and sessions live in the same database as everything else.
+</Warning>
+
+Hosting a dashboard on a different origin needs two more variables — session cookies are otherwise
+issued for the wrong host, and a credentialed cross-origin request is refused:
+
+| Variable | Purpose |
+| --- | --- |
+| `OMNI_ADMIN_BASE_URL` | The proxy's public origin, e.g. `https://proxy.example.com`. |
+| `OMNI_ADMIN_ALLOWED_ORIGINS` | Comma-separated dashboard origins, e.g. `https://admin.example.com`. |
+
+<Note>
+  Set `OMNI_ADMIN_BASE_URL` once and leave it. Sessions survive a restart with unchanged
+  configuration, but **changing this variable invalidates every existing session** — everyone has to
+  sign in again. `OMNI_ADMIN_SECRET` behaves the same way, since it is what signs them.
+</Note>
+
+## The first operator
+
+Sign-up is open **only while no account exists**, and the account it creates is granted the operator
+role. Once one exists, sign-up is closed permanently.
+
+```sh
+curl -c cookies.txt https://your-proxy/admin/api/auth/sign-up/email \
+  -H 'content-type: application/json' \
+  -d '{"email":"you@example.com","password":"a long passphrase","name":"You"}'
+```
+
+`GET /admin/api/setup` answers whether that is still possible, without authentication:
+
+```json
+{ "needsFirstOperator": true, "operators": 0 }
+```
+
+The non-interactive equivalent, for an automated deploy or for getting back in after sign-up has
+closed:
+
+```sh
+OMNI_ADMIN_PASSWORD='a long passphrase' \
+  omni-model create-admin --email you@example.com --name You
+```
+
+It reads the same `OMNI_STORAGE_*` and `OMNI_ADMIN_SECRET` variables the server does, so it always
+lands in the database the server is using. Re-running it against an existing email promotes that
+account rather than failing.
+
+## Signing in
+
+```sh
+curl -c cookies.txt https://your-proxy/admin/api/auth/sign-in/email \
+  -H 'content-type: application/json' \
+  -d '{"email":"you@example.com","password":"a long passphrase"}'
+
+curl -b cookies.txt https://your-proxy/admin/api/me
+```
+
+Authentication is [Better Auth](https://better-auth.com) with email, password and sessions. Every
+route below `/admin/api` requires a session **and** the operator role: no session is `401`, a
+signed-in non-operator is `403`. The two are deliberately distinct, so a member without the role can
+tell that their login is fine.
+
+## Configuration
+
+| Endpoint | Purpose |
+| --- | --- |
+| `GET /admin/api/config` | The stored document, plus which revision is applied and any error. |
+| `PUT /admin/api/config` | `{ "config": {...}, "note": "why" }` — validate, store, apply. |
+| `POST /admin/api/config/validate` | Would this work? Applies and stores nothing. |
+| `GET /admin/api/config/revisions` | History, newest first. |
+| `GET /admin/api/config/revisions/:n` | One revision. |
+| `POST /admin/api/config/revisions/:n/rollback` | Re-apply an old document as a **new** revision. |
+| `PUT /admin/api/security` · `/rate-limits` · `/routing` · `/logging` | Replace one block: `{ "value": {...} }`. |
+| `PUT`/`DELETE /admin/api/providers/:id` | Add, replace or remove one provider. |
+| `POST /admin/api/providers/:id/test` | Probe the live upstream. |
+
+A save is **validated, then stored, then applied** — in that order. Applying first would leave the
+replica that handled the request running a configuration no other replica has, if the write then
+failed. Other replicas pick the revision up from the database.
+
+```sh
+curl -b cookies.txt -X PUT https://your-proxy/admin/api/providers/frontier \
+  -H 'content-type: application/json' \
+  -d '{"value":{"type":"anthropic","apiKey":{"$secret":"<id>"}},"note":"add Claude"}'
+```
+
+An invalid change is a `400` carrying the same message startup would have printed, and the previous
+configuration keeps serving:
+
+```json
+{
+  "error": {
+    "message": "providers.nope: unknown provider type \"nope\" (registered: anthropic, google, openai, openai-compatible)",
+    "type": "invalid_request_error",
+    "param": "config",
+    "code": "invalid_config"
+  }
+}
+```
+
+History is append-only. A rollback stores a *copy* of the old document as a new revision, so the
+audit trail can never be rewritten.
+
+<Note>
+  `POST /providers/:id/test` reports the upstream's own answer, including `status: 401` for a rejected
+  API key. It is deliberately not derived from whether the model listing succeeded — that call falls
+  back to the configured model list on failure, which would report a dead credential as healthy.
+</Note>
+
+## Write keys
+
+See [write keys](/reference/write-keys) for what they are and how clients send them.
+
+| Endpoint | Purpose |
+| --- | --- |
+| `GET /admin/api/write-keys` | Descriptions only; no endpoint returns a key. |
+| `POST /admin/api/write-keys` | Mint one. The plaintext is in the response **once**. |
+| `DELETE /admin/api/write-keys/:id` | Revoke. The row is kept so logs stay attributable. |
+| `GET /admin/api/write-keys/:id/usage?hours=24` | Requests, failures and tokens for one client. |
+
+```sh
+curl -b cookies.txt -X POST https://your-proxy/admin/api/write-keys \
+  -H 'content-type: application/json' \
+  -d '{"name":"ios app","allowedModels":["gpt-4o-mini"],"captureContent":false}'
+```
+
+```json
+{
+  "writeKey": { "id": "…", "name": "ios app", "prefix": "omk_gH3k…", "last4": "9fA2" },
+  "secret": "omk_gH3k…9fA2"
+}
+```
+
+Store `secret` immediately. Only its SHA-256 is kept, so it cannot be recovered — a lost key is
+replaced, not retrieved.
+
+## Secrets
+
+Credentials are encrypted with AES-256-GCM under `OMNI_ENCRYPTION_KEY` and referenced from
+configuration as `{"$secret": "<id>"}`. References are resolved when a revision is applied, so a
+revision dump, an audit log or a rollback diff can never leak a credential.
+
+| Endpoint | Purpose |
+| --- | --- |
+| `GET /admin/api/secrets` | Names, hints and fingerprints. |
+| `PUT /admin/api/secrets` | `{ "name": "openai", "value": "sk-…" }`. Replacing by name keeps the id. |
+| `GET /admin/api/secrets/:id` | One description. |
+| `DELETE /admin/api/secrets/:id` | Delete. `409 secret_in_use` if the active configuration references it. |
+| `POST /admin/api/secrets/rotate` | Re-seal everything under the current master key. |
+
+The API is **write-only**: there is no endpoint that returns a value, and `GET /secrets/:id/value`
+answers `400` saying so rather than `404`, so "why can't I read it back" has an answer.
+
+Because replacing a value by name keeps the id, rotating a credential does not require editing every
+configuration that references it:
+
+```sh
+curl -b cookies.txt -X PUT https://your-proxy/admin/api/secrets \
+  -H 'content-type: application/json' \
+  -d '{"name":"openai","value":"sk-the-new-one"}'
+```
+
+## Logs and usage
+
+See [logging](/reference/logging) for what is recorded and for retention.
+
+| Endpoint | Purpose |
+| --- | --- |
+| `GET /admin/api/logs` | Filter by `writeKeyId`, `userId`, `since`, `before`, `minStatus`, `limit`. Returns `nextBefore` as the next page's cursor. |
+| `GET /admin/api/logs/:requestId` | One request, by the id the client was given in `x-omni-request-id`. |
+| `GET /admin/api/usage/summary?hours=24` | Requests, failures, tokens and mean latency per client. |
+
+Both log endpoints accept `includeContent=true`, which returns the stored prompt and completion.
+Reading it is recorded in the server log with the operator's email — an accountable act even for an
+operator who is allowed to perform it.
+
+## Building a dashboard
+
+Two endpoints exist specifically so a UI does not have to hardcode what this build supports.
+
+`GET /admin/api/meta` publishes every registered provider, verifier and storage type **with its
+options schema as JSON Schema**, so a form can be generated per component type rather than written
+six times — and cannot drift from what the factory actually accepts.
+
+```json
+{
+  "providers": [{ "type": "anthropic", "optionsSchema": { "properties": { "apiKey": … } } }],
+  "authVerifiers": [{ "type": "firebase-app-check", "optionsSchema": { … } }],
+  "configSchema": { … },
+  "secretsAvailable": true,
+  "logsAvailable": true
+}
+```
+
+`POST /admin/api/routing/simulate` evaluates a hypothetical request against the live rules:
+
+```sh
+curl -b cookies.txt -X POST https://your-proxy/admin/api/routing/simulate \
+  -H 'content-type: application/json' \
+  -d '{"model":"gpt-4o","clientName":"ios app","claims":{"plan":"pro"}}'
+```
+
+```json
+{
+  "matched": true,
+  "route": "premium-clients",
+  "provider": "frontier",
+  "rules": [{ "rule": "premium-clients", "providerId": "frontier", "outcome": "match" }],
+  "warnings": [],
+  "facts": { "request": { "model": "gpt-4o" }, "client": { "name": "ios app" }, … }
+}
+```
+
+`rules` reports what each rule did, including the ones that **failed**, and `warnings` turns those
+into sentences. This matters because [CEL](/model-routing/expressions) has two silent footguns: a
+rule that reads a missing claim *throws*, and only a literal `true` counts as a match. In both cases
+the proxy correctly skips the rule and serves the request — so the mistake never shows up in
+production. Here it does:
+
+```json
+{
+  "rules": [{ "rule": "pro-only", "outcome": "error", "error": "no such key: plan" }],
+  "warnings": [
+    "rule \"pro-only\" throws for this request and can therefore never match: no such key: plan. Guard optional fields with has(), e.g. has(user.claims.plan) && user.claims.plan == \"pro\"."
+  ]
+}
+```
+
+## Health
+
+`/healthz` and `/readyz` are not part of the admin API and need no session.
+
+| Endpoint | Meaning |
+| --- | --- |
+| `GET /healthz` | Always `200` while the process is alive. |
+| `GET /readyz` | `200` when a configuration is applied; otherwise `503` with the reason. |
+| `GET /admin/api/status` | The applied revision, provider ids, verifier names and logging settings. |
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="Every setting" icon="sliders" href="/reference/configuration">
+    The document these endpoints read and write.
+  </Card>
+  <Card title="Write keys" icon="fingerprint" href="/reference/write-keys">
+    Identify and revoke the applications calling your proxy.
+  </Card>
+  <Card title="Logging" icon="list" href="/reference/logging">
+    What is recorded per request, and for how long.
+  </Card>
+  <Card title="Run the container" icon="docker" href="/installation/docker">
+    Deploying the image.
+  </Card>
+</CardGroup>

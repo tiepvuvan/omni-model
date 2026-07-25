@@ -196,6 +196,38 @@ describe("request logging", () => {
     });
   });
 
+  it("records the model a client was refused, not an empty one", async () => {
+    const { app, writeKeys, logs } = await setup();
+    const { secret } = await writeKeys.create({ name: "ios-app", allowedModels: ["cheap"] });
+
+    const response = await app.fetch(chatRequest(CHAT_BODY, { [WRITE_KEY_HEADER]: secret }));
+    expect(response.status).toBe(404);
+
+    // Regression: the allowlist check used to run before the draft was filled in,
+    // so the row an operator looks at to answer "which model is this client being
+    // refused" carried no model at all.
+    expect((await logs())[0]).toMatchObject({
+      status: 404,
+      errorCode: "model_not_found",
+      modelRequested: "smart",
+      modelRouted: null,
+      providerId: null,
+    });
+  });
+
+  it("records the model when a request is refused by the deployment allowlist", async () => {
+    const { app, logs } = await setup(
+      [
+        "version: 1",
+        "storage: { type: memory }",
+        "providers:\n  main: { type: fake }",
+        "routing:\n  defaultProvider: main\n  allowedModels: [cheap]",
+      ].join("\n"),
+    );
+    expect((await app.fetch(chatRequest(CHAT_BODY))).status).toBe(404);
+    expect((await logs())[0]).toMatchObject({ status: 404, modelRequested: "smart" });
+  });
+
   it("can be turned off and on by a reload", async () => {
     const { app, reload, logs } = await setup(fixture({ logging: "\n  requests: false" }));
     await app.fetch(chatRequest(CHAT_BODY));

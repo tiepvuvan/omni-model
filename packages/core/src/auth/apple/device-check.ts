@@ -43,6 +43,7 @@ const optionsSchema = z.strictObject({
  */
 export const appleDeviceCheckVerifierFactory: AuthVerifierFactory = {
   type: "apple-device-check",
+  optionsSchema: optionsSchema,
   create(options: Record<string, unknown>, _runtime: RuntimeContext): AuthVerifier {
     const parsed = optionsSchema.safeParse(options);
     if (!parsed.success) {

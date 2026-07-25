@@ -3,9 +3,19 @@ title: Configuration reference
 description: Configure omni-model entirely with environment variables, including providers, security, rate limits, and model routing.
 ---
 
-omni-model reads its configuration entirely from environment variables. It does not read YAML files,
-mounted configuration files, or an inline YAML variable. Every configuration change is an
-environment change, so it takes effect when the container restarts.
+omni-model keeps its configuration in **PostgreSQL**, as an append-only series of revisions. The
+environment variables on this page seed the first revision, on the first boot against an empty
+database — after that the database is authoritative and the [admin API](/reference/admin-api)
+changes configuration without a restart.
+
+That means the same document shape is described twice on this page: once as environment variables
+(what an automated deploy sets) and once as JSON (what the admin API stores). They are the same
+document. It does not read YAML files, mounted configuration files, or an inline YAML variable.
+
+<Note>
+Editing an environment variable on a deployment that already has a stored revision changes nothing.
+Change it through the admin API, or start from an empty database.
+</Note>
 
 <Info>
 Keep credentials in your platform's secret store. Configuration values can reference them with
@@ -481,11 +491,48 @@ its own options at startup, so unsupported fields fail before the service accept
 
 See [Model routing](/model-routing/routing) for the CEL request context and a full routing example.
 
+## Bootstrap variables
+
+These four are the only variables the database cannot hold, because they are what the container
+needs before it can read the database.
+
+| Variable | Purpose |
+| --- | --- |
+| `OMNI_STORAGE_TYPE` + `OMNI_STORAGE_POSTGRES_URL` | Where everything lives. Storage cannot be changed by saving a revision. |
+| `OMNI_ENCRYPTION_KEY` | Base64 32-byte master key for [encrypted secrets](/reference/admin-api#secrets). `OMNI_ENCRYPTION_KEY_PREVIOUS` is accepted for decryption during a rotation. |
+| `OMNI_ADMIN_SECRET` | Signs operator sessions, minimum 32 characters. **Without it there is no admin API at all.** |
+| `PORT`, `OMNI_LOG_LEVEL` | Process-level settings. |
+
+Optional, for a dashboard hosted separately from the proxy:
+
+| Variable | Purpose |
+| --- | --- |
+| `OMNI_ADMIN_BASE_URL` | The proxy's public origin, so session cookies are issued for the right host behind a reverse proxy. |
+| `OMNI_ADMIN_ALLOWED_ORIGINS` | Comma-separated origins allowed to send credentialed admin requests. |
+
+```sh
+docker run -p 8787:8787 \
+  -e OMNI_STORAGE_TYPE=postgres \
+  -e OMNI_STORAGE_POSTGRES_URL="$DATABASE_URL" \
+  -e OMNI_ENCRYPTION_KEY="$(openssl rand -base64 32)" \
+  -e OMNI_ADMIN_SECRET="$(openssl rand -base64 32)" \
+  ghcr.io/tiepvuvan/omni-model
+```
+
+<Warning>
+Keep `OMNI_ENCRYPTION_KEY` for as long as the database lives. It decrypts every stored credential;
+lose it and every secret has to be re-entered.
+</Warning>
+
 ## Validation and interpolation
 
-The service validates the fully merged environment configuration at startup. Unknown top-level
-fields, invalid JSON, missing secrets, unknown providers, invalid CEL, or invalid component options
-stop the revision before it serves traffic.
+Every configuration — seeded, or saved through the admin API — is validated before it is applied.
+Unknown top-level fields, invalid JSON, missing secrets, unknown providers, invalid CEL, or invalid
+component options are rejected with the same message in both cases.
+
+A rejected revision never takes a running proxy down: the previous configuration keeps serving and
+the error comes back to whoever tried to save it. A rejected *seed* leaves the proxy unconfigured,
+answering 503 on `/v1` and explaining why on `/readyz`.
 
 String values support:
 
@@ -495,5 +542,6 @@ ${NAME:-fallback}   environment value with a fallback
 $${NAME}            a literal ${NAME}
 ```
 
-Use `omni-model init` to print a starter set of environment blocks, and
-`omni-model deploy` to send those blocks to a supported target.
+References are resolved when a revision is applied, not when it is stored, so a stored revision never
+contains a resolved credential. For credentials that have no environment variable to point at, use
+[`{"$secret": "…"}` references](/reference/admin-api#secrets) instead.

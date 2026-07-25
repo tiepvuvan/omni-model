@@ -4,4 +4,5 @@
  * implements the CLI's environment-first config lookup order.
  */
 export * from "./config.js";
+export * from "./create-admin.js";
 export * from "./server.js";

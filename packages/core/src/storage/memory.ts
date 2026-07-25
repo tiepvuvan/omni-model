@@ -1,3 +1,4 @@
+import { z } from "zod";
 import type { StorageAdapter, StorageFactory } from "./types.js";
 
 interface Entry {
@@ -64,6 +65,10 @@ export class MemoryStorageAdapter implements StorageAdapter {
 
 export const memoryStorageFactory: StorageFactory = {
   type: "memory",
+  // Published even though it holds nothing but the discriminator: a dashboard
+  // renders forms from these schemas, and a missing one is indistinguishable
+  // from a schema it failed to read.
+  optionsSchema: z.strictObject({ type: z.literal("memory") }),
   // Use the injected clock so counter expiry stays in step with the limiter's
   // `now()` (they must agree for fixed windows to expire correctly under a
   // fake clock in tests, and under any custom clock in production).

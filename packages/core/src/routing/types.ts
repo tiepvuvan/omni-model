@@ -69,7 +69,30 @@ export interface RouteDecision {
   routeName: string | null;
 }
 
+/** What one rule did when evaluated against a set of facts. */
+export interface RuleEvaluation {
+  /** Route name, or `model-rule[n]` for a model rule. */
+  rule: string;
+  providerId: string;
+  /** `"match"` wins; the others are why it did not. */
+  outcome: "match" | "no-match" | "error" | "non-boolean";
+  /** Why it threw, for `"error"`. */
+  error?: string;
+  /** What it returned, for `"non-boolean"`. */
+  resultType?: string;
+}
+
 export interface Router {
   /** Throws `OmniError` (404 model_not_found) when nothing can serve the request. */
   resolve(facts: RequestFacts): RouteDecision;
+  /**
+   * Evaluate every rule against `facts` and report what each one did.
+   *
+   * `resolve` deliberately treats a rule that throws as "no match", because one
+   * broken condition must not 500 every request — which also makes the breakage
+   * invisible. This reports it instead, using the same compiled expressions, so
+   * an operator can be told that a rule never fires and why. It has no effect on
+   * the decision and never throws.
+   */
+  explain(facts: RequestFacts): RuleEvaluation[];
 }

@@ -44,7 +44,12 @@
       },
       {
         "group": "Reference",
-        "pages": ["reference/configuration", "reference/write-keys", "reference/logging"]
+        "pages": [
+          "reference/configuration",
+          "reference/admin-api",
+          "reference/write-keys",
+          "reference/logging"
+        ]
       }
     ]
   },

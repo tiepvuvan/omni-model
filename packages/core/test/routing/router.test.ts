@@ -13,6 +13,7 @@ function makeFacts(overrides?: {
   model?: string;
   claims?: Record<string, unknown>;
   path?: string;
+  clientName?: string;
 }): RequestFacts {
   return {
     request: {
@@ -25,6 +26,10 @@ function makeFacts(overrides?: {
     },
     user: { id: "u1", authenticated: true, provider: "jwt", claims: overrides?.claims ?? {} },
     device: { id: null },
+    client:
+      overrides?.clientName === undefined
+        ? { id: null, name: null, authenticated: false }
+        : { id: "key-1", name: overrides.clientName, authenticated: true },
     http: {
       method: "POST",
       path: overrides?.path ?? "/v1/chat/completions",
@@ -242,5 +247,112 @@ describe("createRouter", () => {
       );
     expect(build).toThrow(ConfigError);
     expect(build).toThrow(/broken/);
+  });
+});
+
+/**
+ * `explain` exists because `resolve` is deliberately forgiving: a rule that
+ * throws is skipped so one bad condition cannot 500 every request. That is right
+ * for serving traffic and it is also why a broken rule is invisible — these
+ * assertions are what make it visible to an operator.
+ */
+describe("Router.explain", () => {
+  it("reports each rule up to the one that matched", () => {
+    const router = createRouter(
+      config({
+        routes: [
+          { name: "premium", when: 'client.name == "ios"', provider: "anthropic" },
+          { name: "catch-all", when: "true", provider: "openai" },
+        ],
+      }),
+      providerIds,
+      engine,
+    );
+
+    expect(router.explain(makeFacts({ clientName: "ios" }))).toEqual([
+      { rule: "premium", providerId: "anthropic", outcome: "match" },
+    ]);
+    expect(router.explain(makeFacts({ clientName: "android" }))).toEqual([
+      { rule: "premium", providerId: "anthropic", outcome: "no-match" },
+      { rule: "catch-all", providerId: "openai", outcome: "match" },
+    ]);
+  });
+
+  it("reports a rule that throws, which resolve() silently skips", () => {
+    const router = createRouter(
+      config({
+        defaultProvider: "openai",
+        routes: [{ name: "pro-only", when: 'user.claims.plan == "pro"', provider: "anthropic" }],
+      }),
+      providerIds,
+      engine,
+    );
+    const facts = makeFacts();
+
+    // resolve() serves the request from the default provider, giving no hint
+    // that the rule is broken.
+    expect(router.resolve(facts).routeName).toBeNull();
+
+    const [evaluation] = router.explain(facts);
+    expect(evaluation?.outcome).toBe("error");
+    expect(evaluation?.rule).toBe("pro-only");
+    expect(evaluation?.error).toBeTruthy();
+  });
+
+  it("distinguishes a guarded miss from a throw", () => {
+    const router = createRouter(
+      config({
+        routes: [
+          {
+            name: "pro-only",
+            when: 'has(user.claims.plan) && user.claims.plan == "pro"',
+            provider: "anthropic",
+          },
+        ],
+      }),
+      providerIds,
+      engine,
+    );
+    expect(router.explain(makeFacts())[0]?.outcome).toBe("no-match");
+    expect(router.explain(makeFacts({ claims: { plan: "pro" } }))[0]?.outcome).toBe("match");
+  });
+
+  it("reports a non-boolean result, which never counts as a match", () => {
+    const router = createRouter(
+      config({ routes: [{ name: "truthy", when: '"yes"', provider: "openai" }] }),
+      providerIds,
+      engine,
+    );
+    expect(router.explain(makeFacts())).toEqual([
+      { rule: "truthy", providerId: "openai", outcome: "non-boolean", resultType: "string" },
+    ]);
+  });
+
+  it("covers model rules under their generated names", () => {
+    const router = createRouter(
+      config({
+        modelRules: [{ match: 'request.model.startsWith("claude")', provider: "anthropic" }],
+      }),
+      providerIds,
+      engine,
+    );
+    expect(router.explain(makeFacts({ model: "claude-sonnet-5" }))).toEqual([
+      { rule: "model-rule[0]", providerId: "anthropic", outcome: "match" },
+    ]);
+  });
+
+  it("never throws, even when every rule is broken", () => {
+    const router = createRouter(
+      config({
+        routes: [
+          { name: "a", when: "user.claims.missing", provider: "openai" },
+          { name: "b", when: "device.missing", provider: "openai" },
+        ],
+      }),
+      providerIds,
+      engine,
+    );
+    const outcomes = router.explain(makeFacts()).map((rule) => rule.outcome);
+    expect(outcomes).toEqual(["error", "error"]);
   });
 });

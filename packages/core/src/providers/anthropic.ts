@@ -733,6 +733,7 @@ class AnthropicProvider implements ChatProvider {
 /** Provider factory for `type: anthropic` blocks. */
 export const anthropicProviderFactory: ProviderFactory = {
   type: "anthropic",
+  optionsSchema: anthropicOptionsSchema,
   create(id, options) {
     const parsed = anthropicOptionsSchema.safeParse(options);
     if (!parsed.success) {

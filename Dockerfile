@@ -20,6 +20,7 @@ WORKDIR /repo
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY packages/core/package.json packages/core/
 COPY packages/postgres/package.json packages/postgres/
+COPY packages/admin/package.json packages/admin/
 COPY packages/node/package.json packages/node/
 RUN pnpm install --prod --frozen-lockfile
 
@@ -35,7 +36,12 @@ WORKDIR /app
 COPY --from=prod-deps /repo /app
 COPY --from=build /repo/packages/core/dist /app/packages/core/dist
 COPY --from=build /repo/packages/postgres/dist /app/packages/postgres/dist
+COPY --from=build /repo/packages/admin/dist /app/packages/admin/dist
 COPY --from=build /repo/packages/node/dist /app/packages/node/dist
+# On PATH so `docker exec <container> omni-model create-admin …` works, which is
+# how an operator is seeded in a deployment with no public sign-up.
+RUN chmod +x /app/packages/node/dist/cli.js \
+  && ln -s /app/packages/node/dist/cli.js /usr/local/bin/omni-model
 EXPOSE 8787
 USER node
 CMD ["node", "packages/node/dist/cli.js"]

@@ -110,6 +110,8 @@ export interface RequestLogQuery {
   since?: number;
   writeKeyId?: string;
   userId?: string;
+  /** The proxy-generated id a client was given, for looking up one request. */
+  requestId?: string;
   /** Only failures. */
   minStatus?: number;
   limit?: number;
@@ -144,6 +146,7 @@ export async function queryRequestLogs(
   if (query.since !== undefined) add("l.ts >= to_timestamp($? / 1000.0)", query.since);
   if (query.writeKeyId !== undefined) add("l.write_key_id = $?", query.writeKeyId);
   if (query.userId !== undefined) add("l.user_id = $?", query.userId);
+  if (query.requestId !== undefined) add("l.request_id = $?", query.requestId);
   if (query.minStatus !== undefined) add("l.status >= $?", query.minStatus);
   values.push(Math.min(Math.max(query.limit ?? 100, 1), 1000));
   const limitParam = `$${values.length}`;

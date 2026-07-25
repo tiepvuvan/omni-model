@@ -35,6 +35,16 @@ export interface BundleHolder {
    * proxy down.
    */
   reload(document: unknown, options?: { revision?: number }): Promise<ReloadResult>;
+  /**
+   * Build a bundle from `document` and throw it away, reporting whether it would
+   * work.
+   *
+   * This is what lets a save be ordered correctly: validate, *then* persist,
+   * *then* apply. Validating by calling `reload` would apply the change locally
+   * before it was stored, so a failed write would leave this replica running a
+   * configuration no other replica has.
+   */
+  validate(document: unknown): Promise<ReloadResult>;
 }
 
 export interface BundleHolderDeps {
@@ -81,55 +91,72 @@ export function createBundleHolder(deps: BundleHolderDeps): BundleHolder {
       lastError,
     }),
 
+    async validate(document): Promise<ReloadResult> {
+      return build(document, null, { apply: false });
+    },
+
     async reload(document, options = {}): Promise<ReloadResult> {
-      // Secrets first: this is the only async step, and doing it before the
-      // synchronous build keeps the swap itself instantaneous.
-      let resolved: unknown;
-      try {
-        resolved = await resolveSecretRefs(document, deps.secrets ?? null);
-      } catch (error) {
-        lastError = errorMessage(error);
-        log.error("configuration rejected; keeping the previous configuration", {
-          revision: options.revision ?? null,
-          configured: bundle !== null,
-          error: lastError,
-        });
-        return { ok: false, error: lastError, kind: "unresolved_secret" };
-      }
-
-      const input: BuildBundleInput = {
-        config: resolved,
-        registry: deps.registry,
-        storage: deps.storage,
-        engine: deps.engine,
-        runtime: deps.runtime,
-        ...(deps.logger === undefined ? {} : { logger: deps.logger }),
-        revision: options.revision ?? null,
-      };
-
-      let next: RuntimeBundle;
-      try {
-        next = buildBundle(input);
-      } catch (error) {
-        lastError = errorMessage(error);
-        log.error("configuration rejected; keeping the previous configuration", {
-          revision: options.revision ?? null,
-          configured: bundle !== null,
-          error: lastError,
-        });
-        return { ok: false, error: lastError, kind: "invalid_config" };
-      }
-
-      const previous = bundle;
-      bundle = next;
-      lastError = null;
-      log.info(previous === null ? "configuration loaded" : "configuration reloaded", {
-        revision: next.revision,
-        providers: next.providers.size,
-        verifiers: next.verifiers.length,
-        rateLimits: next.config.rateLimits.length,
-      });
-      return { ok: true, bundle: next };
+      return build(document, options.revision ?? null, { apply: true });
     },
   };
+
+  async function build(
+    document: unknown,
+    revision: number | null,
+    options: { apply: boolean },
+  ): Promise<ReloadResult> {
+    type RejectKind = "invalid_config" | "unresolved_secret";
+    const reject = (error: unknown, kind: RejectKind): ReloadResult => {
+      const message = errorMessage(error);
+      // A dry run must not overwrite the recorded reason for the *live* state.
+      if (options.apply) {
+        lastError = message;
+        log.error("configuration rejected; keeping the previous configuration", {
+          revision,
+          configured: bundle !== null,
+          error: message,
+        });
+      }
+      return { ok: false, error: message, kind };
+    };
+
+    // Secrets first: this is the only async step, and doing it before the
+    // synchronous build keeps the swap itself instantaneous.
+    let resolved: unknown;
+    try {
+      resolved = await resolveSecretRefs(document, deps.secrets ?? null);
+    } catch (error) {
+      return reject(error, "unresolved_secret");
+    }
+
+    const input: BuildBundleInput = {
+      config: resolved,
+      registry: deps.registry,
+      storage: deps.storage,
+      engine: deps.engine,
+      runtime: deps.runtime,
+      ...(deps.logger === undefined ? {} : { logger: deps.logger }),
+      revision,
+    };
+
+    let next: RuntimeBundle;
+    try {
+      next = buildBundle(input);
+    } catch (error) {
+      return reject(error, "invalid_config");
+    }
+
+    if (!options.apply) return { ok: true, bundle: next };
+
+    const previous = bundle;
+    bundle = next;
+    lastError = null;
+    log.info(previous === null ? "configuration loaded" : "configuration reloaded", {
+      revision: next.revision,
+      providers: next.providers.size,
+      verifiers: next.verifiers.length,
+      rateLimits: next.config.rateLimits.length,
+    });
+    return { ok: true, bundle: next };
+  }
 }

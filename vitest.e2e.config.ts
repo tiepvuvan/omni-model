@@ -9,6 +9,7 @@ const pkg = (path: string): string => fileURLToPath(new URL(`./packages/${path}`
 export default defineConfig({
   resolve: {
     alias: {
+      "@omni-model/admin": pkg("admin/src/index.ts"),
       "@omni-model/core": pkg("core/src/index.ts"),
       "@omni-model/postgres": pkg("postgres/src/index.ts"),
       "@omni-model/node": pkg("node/src/index.ts"),

@@ -1,6 +1,7 @@
 import type { AddressInfo } from "node:net";
 import { type ServerType, serve } from "@hono/node-server";
 import { getConnInfo } from "@hono/node-server/conninfo";
+import { ADMIN_SECRET_VARIABLE, type AdminApp, createAdminApp } from "@omni-model/admin";
 import {
   BufferedRequestLogSink,
   type BundleHolder,
@@ -23,6 +24,7 @@ import {
   type LogLevel,
   MemoryConfigStore,
   MemoryWriteKeyStore,
+  type OmniRegistry,
   parseDuration,
   type RequestLogSink,
   type RuntimeContext,
@@ -32,6 +34,7 @@ import {
 } from "@omni-model/core";
 import {
   createPostgresBackend,
+  type PgPoolLike,
   postgresStorageFactory,
   sweepRequestLogs,
 } from "@omni-model/postgres";
@@ -88,6 +91,21 @@ function lazyAppCheckConsumer(
       await resolve();
     },
   });
+}
+
+/**
+ * The registry this container can build components from.
+ *
+ * `createDefaultRegistry` covers core's own components; the Postgres storage
+ * backend lives outside core and has to be added here. It matters beyond
+ * construction: `GET /admin/api/meta` publishes the registry so a dashboard can
+ * render a form per component type, and a registry missing `postgres` would tell
+ * an operator running on Postgres that only in-memory storage exists.
+ */
+function containerRegistry(): OmniRegistry {
+  const registry = createDefaultRegistry();
+  registry.storage.set(postgresStorageFactory.type, postgresStorageFactory);
+  return registry;
 }
 
 /** Bootstrap readers. These must work on a document that fails validation. */
@@ -147,6 +165,11 @@ export interface StartOptions {
   secretStore?: SecretStore;
   /** Inject a write key store (tests); otherwise derived from the backend. */
   writeKeyStore?: WriteKeyStore;
+  /**
+   * Enable the admin API. Defaults to OMNI_ADMIN_SECRET from the environment;
+   * without a secret there is no admin surface at all.
+   */
+  adminSecret?: string;
   /** Inject a request log sink (tests); otherwise derived from the backend. */
   requestLogs?: RequestLogSink;
 }
@@ -167,6 +190,8 @@ export interface RunningServer {
   writeKeyStore: WriteKeyStore;
   /** Where request logs are buffered before being written. */
   requestLogs: RequestLogSink;
+  /** Null when no admin secret is configured. */
+  admin: AdminApp | null;
   /** Stop accepting connections, stop watching for config changes, close storage. */
   close(): Promise<void>;
 }
@@ -196,6 +221,8 @@ interface Backend {
   secretStore: SecretStore | null;
   writeKeyStore: WriteKeyStore;
   requestLogs: RequestLogSink;
+  /** The pool, when running on Postgres: the admin API stores its own tables in it. */
+  pool: PgPoolLike | null;
   /** Delete logs past their retention window; null when unsupported. */
   sweepLogs: ((retentionMs: number, contentRetentionMs: number) => Promise<void>) | null;
   close(): Promise<void>;
@@ -223,6 +250,7 @@ async function createBackend(
         options.secretStore ?? (keyring === null ? null : createMemorySecretStore(keyring)),
       writeKeyStore: options.writeKeyStore ?? new MemoryWriteKeyStore(),
       requestLogs: options.requestLogs ?? createMemoryRequestLogSink(),
+      pool: null,
       sweepLogs: null,
       close: async () => {
         await configStore.close?.();
@@ -254,6 +282,7 @@ async function createBackend(
       writeKeyStore: options.writeKeyStore ?? new CachedWriteKeyStore(backend.writeKeyStore),
       requestLogs:
         options.requestLogs ?? new BufferedRequestLogSink(backend.requestLogWriter, { logger }),
+      pool: backend.pool,
       sweepLogs: async (retentionMs, contentRetentionMs) => {
         await sweepRequestLogs(backend.pool, { retentionMs, contentRetentionMs, logger });
       },
@@ -261,13 +290,13 @@ async function createBackend(
     };
   }
 
-  const registry = createDefaultRegistry();
+  const registry = containerRegistry();
   const factory = registry.storage.get(type);
   if (factory === undefined) {
     // Storage is bootstrap-level, so this is fatal: unlike the rest of the
     // configuration there is no "serve 503 until it is fixed" path — without
     // storage there is nowhere to read a corrected configuration from.
-    const registered = [...registry.storage.keys(), postgresStorageFactory.type].sort().join(", ");
+    const registered = [...registry.storage.keys()].sort().join(", ");
     throw new ConfigError(
       `storage: unknown type "${type}" (registered storage types: ${registered})`,
     );
@@ -289,6 +318,7 @@ async function createBackend(
       options.secretStore ?? (keyring === null ? null : createMemorySecretStore(keyring)),
     writeKeyStore: options.writeKeyStore ?? new MemoryWriteKeyStore(),
     requestLogs: options.requestLogs ?? createMemoryRequestLogSink(),
+    pool: null,
     sweepLogs: null,
     close: async () => {
       await configStore.close?.();
@@ -361,6 +391,44 @@ export async function startServer(options: StartOptions): Promise<RunningServer>
           : (getConnInfo(c).remote.address ?? null),
     });
 
+    const adminSecret = options.adminSecret ?? env[ADMIN_SECRET_VARIABLE];
+    let admin: AdminApp | null = null;
+    if (adminSecret !== undefined && adminSecret.trim() !== "") {
+      if (backend.pool === null) {
+        throw new ConfigError(
+          `${ADMIN_SECRET_VARIABLE} is set but the admin API needs PostgreSQL storage ` +
+            "(it stores operator accounts and sessions there)",
+        );
+      }
+      admin = createAdminApp({
+        pool: backend.pool,
+        secret: adminSecret,
+        ...(env.OMNI_ADMIN_BASE_URL === undefined ? {} : { baseURL: env.OMNI_ADMIN_BASE_URL }),
+        ...(env.OMNI_ADMIN_ALLOWED_ORIGINS === undefined
+          ? {}
+          : {
+              allowedOrigins: env.OMNI_ADMIN_ALLOWED_ORIGINS.split(",")
+                .map((origin) => origin.trim())
+                .filter((origin) => origin !== ""),
+            }),
+        holder,
+        configStore: backend.configStore,
+        writeKeys: backend.writeKeyStore,
+        secrets: backend.secretStore,
+        registry: containerRegistry(),
+        runtime,
+        logger,
+      });
+      // After the proxy's own migrations, never interleaved: two migrators
+      // holding different locks on one database is how boot deadlocks.
+      await admin.migrate();
+      // Mounted on the proxy app so one port serves both surfaces.
+      app.route("/", admin.app);
+      logger.info("admin API enabled at /admin/api");
+    } else {
+      logger.info(`admin API disabled (set ${ADMIN_SECRET_VARIABLE} to enable it)`);
+    }
+
     await applyInitialConfig(holder, backend.configStore, bootstrap, logger);
 
     unwatch = backend.configStore.watch((revision) => {
@@ -408,6 +476,7 @@ export async function startServer(options: StartOptions): Promise<RunningServer>
       secretStore: backend.secretStore,
       writeKeyStore: backend.writeKeyStore,
       requestLogs: backend.requestLogs,
+      admin,
       close: async (): Promise<void> => {
         try {
           unwatch?.();

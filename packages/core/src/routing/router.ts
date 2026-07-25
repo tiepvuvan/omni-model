@@ -7,6 +7,7 @@ import type {
   RequestFacts,
   RouteDecision,
   Router,
+  RuleEvaluation,
 } from "./types.js";
 
 /** A route or model rule with its `when`/`match` expression compiled. */
@@ -92,6 +93,16 @@ export function createRouter(
     assertKnownProvider(defaultProvider, providerIds, "routing.defaultProvider");
   }
 
+  /** The CEL variable namespaces. Shared so `explain` cannot drift from `resolve`. */
+  const varsFor = (facts: RequestFacts): Record<string, unknown> => ({
+    request: facts.request,
+    user: facts.user,
+    device: facts.device,
+    client: facts.client,
+    http: facts.http,
+    now: facts.now,
+  });
+
   return {
     resolve(facts: RequestFacts): RouteDecision {
       if (allowedModels.size > 0 && allowedModels.has(facts.request.model) === false) {
@@ -102,14 +113,7 @@ export function createRouter(
         );
       }
 
-      const vars: Record<string, unknown> = {
-        request: facts.request,
-        user: facts.user,
-        device: facts.device,
-        client: facts.client,
-        http: facts.http,
-        now: facts.now,
-      };
+      const vars = varsFor(facts);
 
       for (const rule of rules) {
         let result: unknown;
@@ -147,6 +151,34 @@ export function createRouter(
         `The model \`${facts.request.model}\` does not exist or no route is configured to serve it.`,
         { code: "model_not_found", param: "model" },
       );
+    },
+
+    explain(facts: RequestFacts): RuleEvaluation[] {
+      const vars = varsFor(facts);
+      const evaluations: RuleEvaluation[] = [];
+      for (const rule of rules) {
+        const base = { rule: rule.routeName, providerId: rule.providerId };
+        try {
+          const result = rule.when.evaluate(vars);
+          if (result === true) {
+            evaluations.push({ ...base, outcome: "match" });
+            // Later rules never run, so reporting them would be a lie.
+            break;
+          }
+          evaluations.push(
+            typeof result === "boolean"
+              ? { ...base, outcome: "no-match" }
+              : { ...base, outcome: "non-boolean", resultType: typeof result },
+          );
+        } catch (error) {
+          evaluations.push({
+            ...base,
+            outcome: "error",
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+      return evaluations;
     },
   };
 }

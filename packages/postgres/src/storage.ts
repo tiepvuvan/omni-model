@@ -116,6 +116,7 @@ const postgresOptionsSchema = z.strictObject({
  */
 export const postgresStorageFactory: StorageFactory = {
   type: "postgres",
+  optionsSchema: postgresOptionsSchema,
   async create(options: Record<string, unknown>, runtime): Promise<StorageAdapter> {
     const parsed = postgresOptionsSchema.safeParse(options);
     if (!parsed.success) {

@@ -7,6 +7,7 @@ import type {
   OpenAIErrorBody,
   Usage,
 } from "../openai/types.js";
+import type { ZodTypeLike } from "../schema-shape.js";
 import type { RuntimeContext } from "../types.js";
 
 export interface ProviderCallOptions {
@@ -63,6 +64,16 @@ export interface ChatProvider {
 
 export interface ProviderFactory {
   readonly type: string;
+  /**
+   * The zod schema this factory validates its options with.
+   *
+   * Optional, and purely descriptive: validation still happens inside `create`.
+   * Exposing it lets the admin API publish the real option contracts as JSON
+   * Schema, so a dashboard renders a form per component type instead of
+   * hardcoding one for each — and cannot drift from what the factory accepts.
+   */
+  readonly optionsSchema?: ZodTypeLike;
+
   /**
    * `id` is the config key; `options` the raw provider block from the environment
    * config. Factories validate their own options with zod.
