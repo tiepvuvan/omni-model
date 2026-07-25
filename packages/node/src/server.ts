@@ -3,6 +3,7 @@ import { type ServerType, serve } from "@hono/node-server";
 import { getConnInfo } from "@hono/node-server/conninfo";
 import {
   type BundleHolder,
+  CachedWriteKeyStore,
   ConfigError,
   type ConfigStore,
   createConsoleLogger,
@@ -19,9 +20,11 @@ import {
   type Logger,
   type LogLevel,
   MemoryConfigStore,
+  MemoryWriteKeyStore,
   type RuntimeContext,
   type SecretStore,
   type StorageAdapter,
+  type WriteKeyStore,
 } from "@omni-model/core";
 import { createPostgresBackend, postgresStorageFactory } from "@omni-model/postgres";
 
@@ -134,6 +137,8 @@ export interface StartOptions {
   storage?: StorageAdapter;
   /** Inject a secret store (tests); otherwise built from OMNI_ENCRYPTION_KEY. */
   secretStore?: SecretStore;
+  /** Inject a write key store (tests); otherwise derived from the backend. */
+  writeKeyStore?: WriteKeyStore;
 }
 
 /** Handle to a running omni-model HTTP server. */
@@ -148,6 +153,8 @@ export interface RunningServer {
   configStore: ConfigStore;
   /** Encrypted credential storage, or null when no master key is configured. */
   secretStore: SecretStore | null;
+  /** Per-client API keys. Minting one returns its plaintext exactly once. */
+  writeKeyStore: WriteKeyStore;
   /** Stop accepting connections, stop watching for config changes, close storage. */
   close(): Promise<void>;
 }
@@ -172,6 +179,7 @@ interface Backend {
   configStore: ConfigStore;
   /** Null when OMNI_ENCRYPTION_KEY is unset, or with memory storage. */
   secretStore: SecretStore | null;
+  writeKeyStore: WriteKeyStore;
   close(): Promise<void>;
 }
 
@@ -195,6 +203,7 @@ async function createBackend(
       configStore,
       secretStore:
         options.secretStore ?? (keyring === null ? null : createMemorySecretStore(keyring)),
+      writeKeyStore: options.writeKeyStore ?? new MemoryWriteKeyStore(),
       close: async () => {
         await configStore.close?.();
         await storage.close?.();
@@ -220,6 +229,9 @@ async function createBackend(
       storage: backend.storage,
       configStore: options.configStore ?? backend.configStore,
       secretStore: options.secretStore ?? backend.secretStore,
+      // Cached: every /v1 request presents a key, so an uncached store would
+      // mean a query per request.
+      writeKeyStore: options.writeKeyStore ?? new CachedWriteKeyStore(backend.writeKeyStore),
       close: () => backend.close(),
     };
   }
@@ -250,6 +262,7 @@ async function createBackend(
     configStore,
     secretStore:
       options.secretStore ?? (keyring === null ? null : createMemorySecretStore(keyring)),
+    writeKeyStore: options.writeKeyStore ?? new MemoryWriteKeyStore(),
     close: async () => {
       await configStore.close?.();
       await storage.close?.();
@@ -307,6 +320,7 @@ export async function startServer(options: StartOptions): Promise<RunningServer>
       env,
       storage: backend.storage,
       ...(backend.secretStore === null ? {} : { secrets: backend.secretStore }),
+      writeKeys: backend.writeKeyStore,
       logger: options.logger,
       fetch: fetchImpl,
       consumeFirebaseAppCheckToken: appCheck,
@@ -346,6 +360,7 @@ export async function startServer(options: StartOptions): Promise<RunningServer>
       holder,
       configStore: backend.configStore,
       secretStore: backend.secretStore,
+      writeKeyStore: backend.writeKeyStore,
       close: async (): Promise<void> => {
         try {
           unwatch?.();

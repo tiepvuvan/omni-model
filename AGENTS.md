@@ -18,6 +18,7 @@ packages/core              Runtime-agnostic engine. No Node APIs, no platform AP
                            builds and atomically swaps it
   src/secrets/             AES-256-GCM envelope encryption, keyring, and the
                            {"$secret": id} resolver
+  src/writekeys/           Per-client API keys: format, store, TTL cache
   src/openai/              OpenAI wire types (permissive; unknown fields pass through)
   src/auth/                AuthVerifier contract + built-in verifiers (jwt family, apple/)
   src/providers/           ChatProvider contract + openai / anthropic / google adapters
@@ -32,6 +33,7 @@ packages/postgres          PostgreSQL backend: owns the schema
   src/storage.ts           StorageAdapter over omni_kv (atomic counters)
   src/config-store.ts      ConfigStore over omni_config_revisions (poll + LISTEN)
   src/secret-store.ts      SecretRowStore over omni_secrets (opaque bytes only)
+  src/write-key-store.ts   WriteKeyStore over omni_write_keys (hashes only)
   src/backend.ts           Storage + config + secret stores over one pool
 packages/node              Node server + CLI — the container entry point
 swift/OmniModelFoundation   Apple Foundation Models LanguageModel package (SPM)
@@ -101,7 +103,10 @@ docs/                      Mintlify docs site (docs.json + MDX): installation,
     the server renders `{ "error": { message, type, param, code } }`.
 12. **Fail-open rate limiting.** A storage outage must not take the proxy down; violations of
     this policy are bugs.
-13. **Never log or echo a credential.** Config errors name *paths*, never values — there are tests
+13. **`x-omni-key` is the write key header, never `Authorization`.** The jwt/firebase-auth/supabase
+    verifiers own `Authorization` for the end user's token, and a client sends both at once. Write
+    keys answer "which app"; verifiers answer "which user" — keep the two axes separate.
+14. **Never log or echo a credential.** Config errors name *paths*, never values — there are tests
     asserting no plaintext reaches an error message or a log field. Keep it that way.
 
 ## Toolchain

@@ -10,3 +10,4 @@ export * from "./migrations/sql.js";
 export * from "./pool.js";
 export * from "./secret-store.js";
 export * from "./storage.js";
+export * from "./write-key-store.js";

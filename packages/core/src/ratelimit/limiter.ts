@@ -18,7 +18,7 @@ interface CompiledWindow {
 }
 
 type CompiledKey =
-  | { kind: "user" | "device" | "ip" | "global" }
+  | { kind: "user" | "device" | "client" | "ip" | "global" }
   | { kind: "expression"; expression: CompiledExpression };
 
 interface CompiledRule {
@@ -38,8 +38,8 @@ function errorMessage(error: unknown): string {
 
 /** Variables exposed to `when` and `keyExpression` evaluation. */
 function varsFrom(facts: RequestFacts): Record<string, unknown> {
-  const { request, user, device, http, now } = facts;
-  return { request, user, device, http, now };
+  const { request, user, device, client, http, now } = facts;
+  return { request, user, device, client, http, now };
 }
 
 function windowStartFor(nowMs: number, windowMs: number): number {
@@ -189,6 +189,10 @@ export function createRateLimiter(
         return facts.user.id ?? facts.device.id ?? facts.http.ip ?? "anonymous";
       case "device":
         return facts.device.id ?? facts.http.ip ?? "anonymous";
+      case "client":
+        // A per-application budget. Falls back to the IP so a rule still means
+        // something when write keys are not required.
+        return facts.client.id ?? facts.http.ip ?? "anonymous";
       case "ip":
         return facts.http.ip ?? "unknown";
       case "global":

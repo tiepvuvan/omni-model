@@ -390,7 +390,7 @@ OMNI__ROUTING__ROUTES__1__MODEL=llama-3.3-70b-versatile
 
 All `when`, `match`, and rate-limit `when` expressions use CEL. Guard optional claims with
 `has(user.claims.tier)` before reading them. See [Model routing](/model-routing/routing) for the
-available request, user, device, HTTP, and time facts.
+available request, user, device, [client](/reference/write-keys), HTTP, and time facts.
 
 ## Rate limits
 
@@ -414,8 +414,12 @@ OMNI_RATE_LIMITS_JSON='[
 ]'
 ```
 
-`key` can be `user`, `device`, `ip`, `global`, or `expression`. Use `keyExpression` when the key
-is `expression`. Durations are `500ms`, `30s`, `5m`, `1h`, or `1d`.
+`key` can be `user`, `device`, `client`, `ip`, `global`, or `expression`. Use `keyExpression` when
+the key is `expression`; `client` keys per [write key](/reference/write-keys). Durations are `500ms`,
+`30s`, `5m`, `1h`, or `1d`.
+
+Give every rule a stable `id`. Counters are namespaced by `id` (falling back to `name`), so a rule
+identified only by its display name silently resets its counters the first time it is renamed.
 
 ## Environment schema explorer
 
@@ -457,9 +461,10 @@ its own options at startup, so unsupported fields fail before the service accept
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
-| `name` | string | yes | Stable rule name, shown in rate-limit headers/logs. |
+| `id` | string | no | Stable counter keyspace. Defaults to `name` — set it explicitly for any rule that can be renamed. |
+| `name` | string | yes | Display name, shown in rate-limit headers/logs. |
 | `when` | CEL string | no | Applies only when it evaluates to `true`. |
-| `key` | `user` \| `device` \| `ip` \| `global` \| `expression` | no | Defaults to `user`. |
+| `key` | `user` \| `device` \| `client` \| `ip` \| `global` \| `expression` | no | Defaults to `user`. |
 | `keyExpression` | CEL string | when `key=expression` | Produces the rate-limit key. |
 | `requests` | `{ limit: positive integer, window: duration }` | one of requests/tokens | Request-window limit. |
 | `tokens` | `{ limit: positive integer, window: duration }` | one of requests/tokens | Prompt + completion token budget. |

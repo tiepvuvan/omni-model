@@ -44,7 +44,7 @@
       },
       {
         "group": "Reference",
-        "pages": ["reference/configuration"]
+        "pages": ["reference/configuration", "reference/write-keys"]
       }
     ]
   },

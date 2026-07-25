@@ -58,6 +58,16 @@ export const securityConfigSchema = z.strictObject({
   /** Paths (exact or trailing-`*` prefix) that bypass authentication. */
   publicPaths: z.array(z.string()).default([]),
   /**
+   * Require every `/v1/*` request to present a write key (`x-omni-key`).
+   *
+   * Defaults to **false** so enabling it is a deliberate act: turning it on
+   * locks out every client that is not already sending a key. Presented keys are
+   * always validated either way, so attribution and revocation work as soon as
+   * clients start sending them — but revocation only becomes *binding* once this
+   * is true, because otherwise a revoked client can simply omit the header.
+   */
+  requireWriteKey: z.boolean().default(false),
+  /**
    * Verifiers for `/v1/*`. **At least one is required** — see
    * `createOmniApp`, which refuses to start without one. There is no opt-out:
    * a proxy that authenticates nobody is an open relay on your provider
@@ -84,7 +94,7 @@ export const rateLimitRuleSchema = z
     name: z.string().min(1),
     /** CEL expression; the rule applies only when it evaluates to true. */
     when: z.string().optional(),
-    key: z.enum(["user", "device", "ip", "global", "expression"]).default("user"),
+    key: z.enum(["user", "device", "client", "ip", "global", "expression"]).default("user"),
     /** CEL expression producing the limit key when `key: expression`. */
     keyExpression: z.string().optional(),
     requests: z

@@ -17,6 +17,7 @@ import { createChatHandler, type RouteDeps } from "./routes/chat.js";
 import { createEmbeddingsHandler } from "./routes/embeddings.js";
 import { createModelsHandler } from "./routes/models.js";
 import type { AppEnv, OmniAppInit, OmniProxyInit } from "./types.js";
+import { createWriteKeyMiddleware } from "./writekey.js";
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -237,6 +238,17 @@ export async function createOmniProxy(init: OmniProxyInit): Promise<OmniProxy> {
     );
   });
 
+  // Write keys first: "which application" is cheaper to answer than "which
+  // user", so a revoked client is turned away before any token verification.
+  app.use(
+    "/v1/*",
+    createWriteKeyMiddleware({
+      store: init.writeKeys ?? null,
+      required: () => requireBundle().requireWriteKey,
+      publicPaths: () => requireBundle().publicPaths,
+      now,
+    }),
+  );
   app.use("/v1/*", createAuthMiddleware({ requireBundle, contextFor: verifyContextFor }));
 
   const deps: RouteDeps = { requireBundle, runtimeFor, clientIp };

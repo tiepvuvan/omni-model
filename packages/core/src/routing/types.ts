@@ -18,7 +18,9 @@ export interface ExpressionEngine {
  * Variables exposed to routing and rate-limit expressions. Documented in
  * docs/reference/configuration.mdx — keep the two in sync when changing this
  * shape, and remember the fact set is built in three places that must agree:
- * `buildRequestFacts`, the limiter's `varsFrom`, and the router's `vars`.
+ * `buildRequestFacts`, the limiter's `varsFrom`, and the router's `vars`. Adding
+ * a namespace to only some of them makes CEL throw on a missing key at
+ * evaluation time, which surfaces as a rule that silently never matches.
  */
 export interface RequestFacts {
   request: {
@@ -37,6 +39,17 @@ export interface RequestFacts {
     claims: Record<string, unknown>;
   };
   device: { id: string | null };
+  /**
+   * The calling application, identified by its write key — a different question
+   * from `user`, which is who is using that application.
+   */
+  client: {
+    /** Write key id, or null when no key was presented. */
+    id: string | null;
+    /** Write key name, for readable expressions: `client.name == "ios-app"`. */
+    name: string | null;
+    authenticated: boolean;
+  };
   http: {
     method: string;
     path: string;

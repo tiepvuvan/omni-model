@@ -1,6 +1,7 @@
 import type { Identity } from "../auth/types.js";
 import type { ChatCompletionRequest } from "../openai/types.js";
 import type { RequestFacts } from "../routing/types.js";
+import type { WriteKey } from "../writekeys/types.js";
 
 /**
  * Header names that must never reach CEL expressions (or logs) verbatim, in
@@ -68,6 +69,8 @@ export interface RequestFactsInput {
   /** Parsed request body; embeddings requests only need `model`. */
   body: ChatCompletionRequest | { model?: string } | null;
   identity: Identity | null;
+  /** The calling application's write key, when one was presented. */
+  writeKey: WriteKey | null;
   /** Epoch milliseconds. */
   now: number;
 }
@@ -108,6 +111,11 @@ export function buildRequestFacts(input: RequestFactsInput): RequestFacts {
       claims: input.identity?.claims ?? {},
     },
     device: { id: input.identity?.deviceId ?? null },
+    client: {
+      id: input.writeKey?.id ?? null,
+      name: input.writeKey?.name ?? null,
+      authenticated: input.writeKey !== null,
+    },
     http: { method: input.method, path: input.path, ip: input.ip, headers },
     now: input.now,
   };

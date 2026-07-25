@@ -38,6 +38,7 @@ const facts = {
   },
   user: { id: null, authenticated: false, provider: null, claims: {} as Record<string, unknown> },
   device: { id: null },
+  client: { id: null, name: null, authenticated: false },
   http: {
     method: "POST",
     path: "/v1/chat/completions",

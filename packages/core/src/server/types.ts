@@ -6,6 +6,7 @@ import type { ExpressionEngine, RequestFacts } from "../routing/types.js";
 import type { SecretStore } from "../secrets/types.js";
 import type { StorageAdapter } from "../storage/types.js";
 import type { FirebaseAppCheckTokenConsumer, Logger } from "../types.js";
+import type { WriteKey, WriteKeyStore } from "../writekeys/types.js";
 
 /**
  * Everything except the configuration itself. Shared by `createOmniProxy`
@@ -25,6 +26,11 @@ export interface OmniRuntimeInit {
    * configuration containing one is rejected with an actionable message.
    */
   secrets?: SecretStore;
+  /**
+   * Resolves the `x-omni-key` header to a calling application. Without it write
+   * keys cannot be checked, so `security.requireWriteKey` has nothing to enforce.
+   */
+  writeKeys?: WriteKeyStore;
   /** Expression engine for routing/rate-limit conditions; defaults to CEL. */
   engine?: ExpressionEngine;
   /** Outbound fetch; defaults to a bound `globalThis.fetch`. */
@@ -83,6 +89,8 @@ export interface OmniAppInit extends OmniRuntimeInit {
 export interface AppEnv {
   Variables: {
     identity: Identity | null;
+    /** Calling application, set by the write key middleware. */
+    writeKey: WriteKey | null;
     facts: RequestFacts | undefined;
   };
 }

@@ -5,12 +5,14 @@ import {
   type Logger,
   type SecretStore,
   type StorageAdapter,
+  type WriteKeyStore,
 } from "@omni-model/core";
 import { PostgresConfigStore } from "./config-store.js";
 import { runMigrations } from "./migrations/run.js";
 import { createPgPool, type PgPoolLike } from "./pool.js";
 import { PostgresSecretRowStore } from "./secret-store.js";
 import { PostgresStorageAdapter } from "./storage.js";
+import { PostgresWriteKeyStore } from "./write-key-store.js";
 
 export interface PostgresBackendOptions {
   url: string;
@@ -41,6 +43,8 @@ export interface PostgresBackend {
   configStore: ConfigStore;
   /** Null when no keyring was supplied. */
   secretStore: SecretStore | null;
+  /** Uncached: wrap with `CachedWriteKeyStore` before serving traffic. */
+  writeKeyStore: WriteKeyStore;
   /** Closes the config store's watcher and then the pool. */
   close(): Promise<void>;
 }
@@ -67,6 +71,7 @@ export async function createPostgresBackend(
       pool,
       storage: new PostgresStorageAdapter(pool),
       configStore,
+      writeKeyStore: new PostgresWriteKeyStore(pool),
       secretStore:
         options.keyring === undefined
           ? null

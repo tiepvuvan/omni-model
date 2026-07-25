@@ -4,6 +4,7 @@ import type { ChatCompletionRequest } from "../../openai/types.js";
 import type { RequestFacts } from "../../routing/types.js";
 import type { RuntimeBundle } from "../../runtime/bundle.js";
 import type { RuntimeContext } from "../../types.js";
+import { writeKeyAllowsModel } from "../../writekeys/types.js";
 import { buildRequestFacts } from "../facts.js";
 import { executeChat } from "../pipeline.js";
 import {
@@ -132,10 +133,31 @@ export function factsFor(
     ip,
     body,
     identity: c.get("identity") ?? null,
+    writeKey: c.get("writeKey") ?? null,
     now,
   });
   c.set("facts", facts);
   return facts;
+}
+
+/**
+ * Enforce a write key's own model allowlist.
+ *
+ * Reported as `model_not_found` rather than a permission error, matching
+ * `routing.allowedModels`: a client should not be able to discover which models
+ * exist by probing for the difference between "forbidden" and "absent".
+ */
+export function assertModelAllowedForClient(c: Context<AppEnv>, model: string): void {
+  const writeKey = c.get("writeKey") ?? null;
+  if (writeKey === null || writeKeyAllowsModel(writeKey, model)) return;
+  throw new OmniError(
+    404,
+    `The model \`${model}\` does not exist or you do not have access to it.`,
+    {
+      code: "model_not_found",
+      param: "model",
+    },
+  );
 }
 
 const STREAM_RESPONSE_HEADERS = {
@@ -166,6 +188,7 @@ export function createChatHandler(deps: RouteDeps): (c: Context<AppEnv>) => Prom
       });
     }
     const request = body as ChatCompletionRequest;
+    assertModelAllowedForClient(c, request.model);
 
     const runtime = deps.runtimeFor(c);
     const facts = factsFor(c, request, runtime.now(), deps.clientIp(c, bundle.trustProxyHeaders));

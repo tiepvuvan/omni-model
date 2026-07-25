@@ -1,6 +1,7 @@
 import type { Context } from "hono";
 import type { ModelInfo, ModelList } from "../../openai/types.js";
 import type { RuntimeContext } from "../../types.js";
+import { writeKeyAllowsModel } from "../../writekeys/types.js";
 import { redactModelInfo } from "../response.js";
 import type { AppEnv } from "../types.js";
 import type { RouteDeps } from "./chat.js";
@@ -18,10 +19,16 @@ export function createModelsHandler(deps: RouteDeps): (c: Context<AppEnv>) => Pr
     // *and* inside the router, and the two must never disagree about what
     // exists.
     const bundle = deps.requireBundle();
+    // A write key's own allowlist narrows the listing as well as the gate, so a
+    // client is never told about a model that would 404 for it.
+    const writeKey = c.get("writeKey") ?? null;
+    const visible = (models: readonly string[]): string[] =>
+      models.filter((id) => writeKey === null || writeKeyAllowsModel(writeKey, id));
+
     if (bundle.allowedModels.length > 0) {
       const body: ModelList = {
         object: "list",
-        data: bundle.allowedModels.map((id) => ({
+        data: visible(bundle.allowedModels).map((id) => ({
           id,
           object: "model",
           created: 0,
@@ -54,7 +61,10 @@ export function createModelsHandler(deps: RouteDeps): (c: Context<AppEnv>) => Pr
       }
     });
 
-    const body: ModelList = { object: "list", data: [...byId.values()] };
+    const body: ModelList = {
+      object: "list",
+      data: visible([...byId.keys()]).map((id) => byId.get(id) as ModelInfo),
+    };
     return c.json(body);
   };
 }

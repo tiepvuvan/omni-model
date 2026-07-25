@@ -50,6 +50,8 @@ export interface RuntimeBundle {
   readonly verifiers: readonly AuthVerifier[];
   readonly securityMode: "any" | "all";
   readonly publicPaths: readonly string[];
+  /** Whether `/v1/*` demands a write key. */
+  readonly requireWriteKey: boolean;
   /** Verifier-contributed routes, keyed `"<METHOD> <path>"`. */
   readonly authRoutes: ReadonlyMap<string, AuthRoute>;
 
@@ -151,6 +153,7 @@ export function buildBundle(input: BuildBundleInput): RuntimeBundle {
     verifiers,
     securityMode: config.security.mode,
     publicPaths: config.security.publicPaths,
+    requireWriteKey: config.security.requireWriteKey,
     authRoutes: collectAuthRoutes(verifiers),
     maxBodyBytes: config.server.maxBodyBytes,
     allowedModels: config.routing.allowedModels,

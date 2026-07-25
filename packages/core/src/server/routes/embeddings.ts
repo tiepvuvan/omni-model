@@ -4,7 +4,7 @@ import type { EmbeddingsRequest } from "../../openai/types.js";
 import { embeddingsUsage, executeEmbeddings } from "../pipeline.js";
 import { redactEmbeddingsResponse, redactProviderError } from "../response.js";
 import type { AppEnv } from "../types.js";
-import { factsFor, type RouteDeps, readJsonObject } from "./chat.js";
+import { assertModelAllowedForClient, factsFor, type RouteDeps, readJsonObject } from "./chat.js";
 
 /**
  * POST /v1/embeddings — same pipeline as chat (validate, rate-limit, route)
@@ -24,6 +24,7 @@ export function createEmbeddingsHandler(
       throw badRequest("'input' is a required property", { param: "input" });
     }
     const request = body as EmbeddingsRequest;
+    assertModelAllowedForClient(c, request.model);
 
     const runtime = deps.runtimeFor(c);
     const facts = factsFor(c, request, runtime.now(), deps.clientIp(c, bundle.trustProxyHeaders));
