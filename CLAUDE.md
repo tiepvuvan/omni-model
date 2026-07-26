@@ -18,6 +18,7 @@ packages/core              Runtime-agnostic engine. No Node APIs, no platform AP
                            builds and atomically swaps it
   src/secrets/             JWE (dir + A256GCM) sealing via jose, keyring, and the
                            {"$secret": id} resolver
+  src/cache/               PromptCache contract, key derivation, memory impl
   src/writekeys/           Per-client API keys: format, store, TTL cache
   src/logs/                Request log sink: fail-open buffering, content capping
   src/openai/              OpenAI wire types (permissive; unknown fields pass through)
@@ -25,7 +26,8 @@ packages/core              Runtime-agnostic engine. No Node APIs, no platform AP
                            each declares its `layer`: "user" (one, required) or "app"
   src/providers/           ChatProvider contract + openai / anthropic / google adapters
   src/routing/             CEL expression engine + router
-  src/ratelimit/           Request windows + token budgets over StorageAdapter
+  src/ratelimit/           Per-user token budgets + the in-flight bound, over
+                           StorageAdapter
   src/server/              Hono app factory + pipeline.ts (transport-agnostic
                            executeChat/executeEmbeddings) + lifecycle.ts (drain)
   src/storage/             StorageAdapter contract + memory backend
@@ -39,12 +41,13 @@ packages/postgres          PostgreSQL backend: owns the schema
   src/secret-store.ts      SecretRowStore over omni_secrets (one opaque JWE)
   src/write-key-store.ts   WriteKeyStore over omni_write_keys (hashes only)
   src/request-log-store.ts Batched log writes, queries, advisory-locked sweep
+  src/prompt-cache.ts      Response cache: expiry on read, advisory-locked eviction
   src/backend.ts           Storage + config + secret stores over one pool
 packages/admin             Operator API. Authorization + HTTP over existing stores
   src/auth.ts              Better Auth instance, its migrator, first-operator helpers
   src/session.ts           requireAdmin: 401 unauthenticated vs 403 not-an-operator
   src/app.ts               Hono sub-app; the first-run sign-up gate lives here
-  src/routes/              config · writekeys · secrets · logs · meta
+  src/routes/              config · writekeys · secrets · logs · meta · cache
 packages/node              Node server + CLI — the container entry point
   src/dashboard.ts         Serves the built dashboard at /admin, SPA history fallback
 packages/dashboard         Operator console. TanStack Start SPA over the admin API
@@ -55,7 +58,7 @@ packages/dashboard         Operator console. TanStack Start SPA over the admin A
   src/components/          schema-form (forms from /meta) · ui/primitives (Base UI)
                            routing/ (Monaco + the CEL language) · ratelimit/
   src/routes/              _app guard · sign-in · setup · routing · authentication
-                           rate-limit
+                           rate-limit · settings
 swift/OmniModelFoundation   Apple Foundation Models LanguageModel package (SPM)
 swift/OmniModelClientKit    MacPaw/OpenAI client + OmniAuthMiddleware (SPM)
 examples/                  Example configs + iOS client (examples/ios, ios-app)
@@ -183,7 +186,16 @@ docs/                      Mintlify docs site (docs.json + MDX): installation,
     layer and the first exhausted rejects; a rule with no `when` is a baseline, not a fallback.
     `check` is read-only and `recordUsage` charges afterwards, so one request can overshoot its
     budget — what a completion costs is not knowable until it exists.
-24. **The dashboard renders forms from the API, and colour from the token export.**
+24. **A cache hit must be indistinguishable from a fresh call, except for what it did not do.**
+    What is stored is the *upstream's* answer, before redaction, so serving it runs the same
+    redaction path and a replay carries the replaying request's identifiers rather than the
+    identifiers of whoever populated the entry. A hit costs no upstream tokens, so it is not charged
+    to a budget, and it is marked `cached` in the log row — a zero-token row with no explanation
+    reads as a request that failed to account for itself. Errors are never cached, `get` must read a
+    backend failure as a miss, and the key covers the resolved upstream, the resolved model, the
+    stream flag and the whole body (unknown fields included: they reach the upstream, so they change
+    the answer).
+25. **The dashboard renders forms from the API, and colour from the token export.**
     A component's form comes from the JSON Schema `GET /admin/api/meta` publishes, so a provider
     added to the registry gets a working form with no dashboard change and a form cannot accept what
     a factory rejects. Colour comes from `design/*.tokens.json` via a generator, and a test fails the

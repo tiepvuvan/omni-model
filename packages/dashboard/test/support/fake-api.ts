@@ -34,6 +34,8 @@ export interface FakeState {
   simulate: unknown;
   /** Warnings the next save should answer with. */
   warnings: string[];
+  /** Entries the response cache reports, and whether it exists at all. */
+  cache: { available: boolean; entries: number; oldestAt: number | null; bytes: number | null };
   /** What `POST /providers/models` should answer for a candidate target. */
   upstreamModels: {
     ok: boolean | null;
@@ -176,6 +178,7 @@ export function createFakeApi(initial: Partial<FakeState> = {}) {
     simulate: { matched: false, reason: "no rule matches", rules: [], warnings: [] },
     warnings: [],
     upstreamModels: { ok: true, models: ["gpt-4o", "gpt-4o-mini", "o3"] },
+    cache: { available: true, entries: 0, oldestAt: null, bytes: null },
     ...initial,
   };
 
@@ -271,7 +274,9 @@ export function createFakeApi(initial: Partial<FakeState> = {}) {
           logsAvailable: true,
         });
 
-      case path === "/config":
+      // Method-qualified: an unqualified `/config` case would swallow the PATCH
+      // below and answer a save with a config payload.
+      case path === "/config" && method === "GET":
         return json({
           config: clone(state.config),
           revision: state.revision,
@@ -291,6 +296,30 @@ export function createFakeApi(initial: Partial<FakeState> = {}) {
       case path === "/security" && method === "PUT": {
         const value = isRecord(body) && isRecord(body.value) ? body.value : {};
         return save({ ...state.config, security: value });
+      }
+
+      case path === "/config" && method === "PATCH": {
+        // The real endpoint reads the stored document and replaces only the blocks
+        // it was given, so the fake has to as well — otherwise a test could not
+        // catch a screen that clobbers a block it does not own.
+        const value = isRecord(body) && isRecord(body.value) ? body.value : {};
+        return save({ ...state.config, ...value });
+      }
+
+      case path === "/cache" && method === "GET": {
+        const cacheBlock = isRecord(state.config.cache) ? state.config.cache : {};
+        return json({
+          ...state.cache,
+          enabled: cacheBlock.enabled === true,
+          ttl: typeof cacheBlock.ttl === "string" ? cacheBlock.ttl : null,
+          maxEntries: typeof cacheBlock.maxEntries === "number" ? cacheBlock.maxEntries : null,
+        });
+      }
+
+      case path === "/cache" && method === "DELETE": {
+        const purged = state.cache.entries;
+        state.cache = { ...state.cache, entries: 0, bytes: 0, oldestAt: null };
+        return json({ purged });
       }
 
       case path === "/rate-limits" && method === "PUT": {

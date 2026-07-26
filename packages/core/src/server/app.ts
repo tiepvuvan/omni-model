@@ -140,6 +140,7 @@ export async function createOmniProxy(init: OmniProxyInit): Promise<OmniProxy> {
     runtime: startupRuntime,
     ...(init.logger === undefined ? {} : { logger: init.logger }),
     ...(init.secrets === undefined ? {} : { secrets: init.secrets }),
+    ...(init.promptCache === undefined ? {} : { promptCache: init.promptCache }),
     log: bootLog,
   });
 

@@ -15,6 +15,7 @@ import {
   signUpUserId,
 } from "./auth.js";
 import type { AdminDeps } from "./deps.js";
+import { createCacheRoutes } from "./routes/cache.js";
 import { createConfigRoutes } from "./routes/config.js";
 import { createLogRoutes } from "./routes/logs.js";
 import { createMetaRoutes } from "./routes/meta.js";
@@ -196,6 +197,7 @@ export function createAdminApp(options: AdminAppOptions): AdminApp {
   api.route("/", createSecretRoutes(deps));
   api.route("/", createLogRoutes(deps));
   api.route("/", createMetaRoutes(deps));
+  api.route("/", createCacheRoutes(deps));
   app.route("/admin/api", api);
 
   return {

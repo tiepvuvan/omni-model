@@ -113,6 +113,34 @@ so opening the screen never rewrites a window nobody touched.
 An absent `rateLimits` block is *not* an absence of limits: the schema fills it in and the proxy
 enforces it, so the screen shows those defaults rather than an empty list.
 
+### Concurrent requests
+
+Under the budgets, because it is the other half of the same subject: a budget is
+charged after a response exists, so it cannot see a burst that has not finished
+yet. Twenty simultaneous requests are all admitted against the same counter. This
+is the number that stops that, and it defaults to 3 rather than off.
+
+Zero removes the bound. A request past it gets a 429 telling the client to wait for
+its own requests rather than for a window.
+
+## Settings
+
+One card so far: the **response cache**. Turn it on, choose how long an answer stays
+servable and how many entries to keep, and purge everything when you need a clean
+slate. The card next to it says what is actually in the cache, so "is this doing
+anything" is answerable without leaving the screen.
+
+A hit is only ever a request that would have produced the same answer — same
+upstream, same resolved model, same body — and it costs no upstream tokens, so it is
+not charged to a rate limit. See [caching](/reference/configuration#cache-object)
+for what goes into the key, including the privacy note about OpenAI's `user` field.
+
+<Note>
+This screen is not from the design file yet: the sidebar has the entry, the file has
+no screen for it. It is built from the same primitives as the drawn screens and is
+the first thing to redraw when a design lands.
+</Note>
+
 ## Typing a credential
 
 You can type an API key straight into a rule. The admin API **seals it into encrypted storage before

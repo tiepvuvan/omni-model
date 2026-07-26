@@ -1,6 +1,9 @@
 export * from "./auth/apple/index.js";
 export * from "./auth/types.js";
 export * from "./auth/verifiers/index.js";
+export * from "./cache/key.js";
+export * from "./cache/memory.js";
+export * from "./cache/types.js";
 export * from "./config/env.js";
 export * from "./config/load.js";
 export * from "./config/schema.js";
@@ -17,6 +20,7 @@ export * from "./providers/google.js";
 export * from "./providers/openai.js";
 export * from "./providers/shared.js";
 export * from "./providers/types.js";
+export * from "./ratelimit/concurrency.js";
 export * from "./ratelimit/limiter.js";
 export * from "./ratelimit/types.js";
 export * from "./registry.js";

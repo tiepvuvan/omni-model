@@ -71,6 +71,7 @@ describe.skipIf(!url)("postgres integration", () => {
       "omni_config_revisions",
       "omni_kv",
       "omni_migrations",
+      "omni_prompt_cache",
       "omni_request_contents",
       "omni_request_logs",
       "omni_secrets",

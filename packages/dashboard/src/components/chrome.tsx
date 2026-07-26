@@ -15,15 +15,15 @@ import { Badge, Button, cx } from "./ui/primitives";
  * The chrome from the design: a 60px header bar over a 300px sidebar and the
  * content pane.
  *
- * Navigation lists what the deployment has, in the design's order. `Logs`, `Users`
- * and `Settings` appear in the file and have no screen yet, so they render
- * disabled rather than being dropped — the sidebar is the map of the product, and
- * silently shortening it makes the built screens look like the whole of it.
+ * Navigation lists what the deployment has, in the design's order. `Logs` and
+ * `Users` appear in the file and have no screen yet, so they render disabled rather
+ * than being dropped — the sidebar is the map of the product, and silently
+ * shortening it makes the built screens look like the whole of it.
  */
 const NAV: readonly {
   label: string;
   icon: string;
-  to?: "/routing" | "/authentication" | "/rate-limit";
+  to?: "/routing" | "/authentication" | "/rate-limit" | "/settings";
 }[] = [
   { label: "Authentication", icon: navAuthentication, to: "/authentication" },
   { label: "Routing", icon: navRouting, to: "/routing" },
@@ -31,9 +31,9 @@ const NAV: readonly {
   { label: "Logs", icon: navLogs },
 ];
 
-const ADMIN_NAV: readonly { label: string; icon: string }[] = [
+const ADMIN_NAV: readonly { label: string; icon: string; to?: "/settings" }[] = [
   { label: "Users", icon: navUsers },
-  { label: "Settings", icon: navSettings },
+  { label: "Settings", icon: navSettings, to: "/settings" },
 ];
 
 /** The stored theme choice; read pre-paint by an inline script in `__root`. */
@@ -107,17 +107,29 @@ function Sidebar() {
         <span className="type-strong-13 text-foreground-secondary">Admin</span>
       </div>
 
-      {ADMIN_NAV.map((item) => (
-        <span
-          key={item.label}
-          aria-disabled
-          title="Not built yet"
-          className={cx(NAV_ITEM, "cursor-default text-foreground-secondary opacity-50")}
-        >
-          <NavIcon src={item.icon} />
-          {item.label}
-        </span>
-      ))}
+      {ADMIN_NAV.map((item) =>
+        item.to === undefined ? (
+          <span
+            key={item.label}
+            aria-disabled
+            title="Not built yet"
+            className={cx(NAV_ITEM, "cursor-default text-foreground-secondary opacity-50")}
+          >
+            <NavIcon src={item.icon} />
+            {item.label}
+          </span>
+        ) : (
+          <Link
+            key={item.label}
+            to={item.to}
+            className={cx(NAV_ITEM, "text-foreground-primary")}
+            activeProps={{ className: cx(NAV_ITEM, "bg-item-selection text-foreground-primary") }}
+          >
+            <NavIcon src={item.icon} />
+            {item.label}
+          </Link>
+        ),
+      )}
     </nav>
   );
 }

@@ -30,3 +30,9 @@ export interface RateLimiter {
    */
   recordUsage(facts: RequestFacts, usage: Usage): Promise<void>;
 }
+
+export type {
+  ConcurrencyDecision,
+  ConcurrencyLimiter,
+  ConcurrencySlot,
+} from "./concurrency.js";

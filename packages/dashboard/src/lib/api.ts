@@ -113,6 +113,8 @@ export interface StoredConfig {
   security?: Partial<SecurityBlock>;
   /** Absent is not "none": the schema supplies defaults the proxy then enforces. */
   rateLimits?: RateLimitRule[];
+  concurrency?: Partial<ConcurrencyBlock>;
+  cache?: Partial<CacheBlock>;
   [block: string]: unknown;
 }
 
@@ -132,6 +134,31 @@ export interface SaveResponse {
   revision: number;
   config: StoredConfig;
   warnings?: string[];
+}
+
+/** The response cache's configuration and contents, as one answer. */
+export interface CacheState {
+  /** False when the deployment has nowhere to cache (no database). */
+  available: boolean;
+  enabled: boolean;
+  /** Duration string, e.g. `"1h"`. Null when nothing is applied. */
+  ttl: string | null;
+  maxEntries: number | null;
+  entries: number;
+  oldestAt: number | null;
+  bytes: number | null;
+}
+
+/** How many requests one user may have in flight. `0` disables the bound. */
+export interface ConcurrencyBlock {
+  perUser: number;
+}
+
+/** Response-cache settings, as stored. */
+export interface CacheBlock {
+  enabled: boolean;
+  ttl: string;
+  maxEntries: number;
 }
 
 /** Which authentication question a verifier answers. */
@@ -282,7 +309,7 @@ function messageFrom(
 }
 
 interface RequestOptions {
-  method?: "GET" | "POST" | "PUT" | "DELETE";
+  method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   body?: unknown;
 }
 
@@ -365,6 +392,21 @@ export const api = {
   /** Replace the whole `rateLimits` list. Order is the order rules are reported in. */
   putRateLimits: (value: RateLimitRule[], note?: string) =>
     request<SaveResponse>("/rate-limits", { method: "PUT", body: { value, note } }),
+
+  /**
+   * Replace several top-level blocks in one revision.
+   *
+   * What a screen editing more than one block uses: two PUTs would be two
+   * revisions for one Save, and would leave the first applied if the second failed.
+   */
+  patchConfig: (value: Record<string, unknown>, note?: string) =>
+    request<SaveResponse>("/config", { method: "PATCH", body: { value, note } }),
+
+  /** What is in the response cache, and whether caching is on. */
+  cache: () => request<CacheState>("/cache"),
+
+  /** Empty it. Returns how many entries went. */
+  purgeCache: () => request<{ purged: number }>("/cache", { method: "DELETE" }),
 
   /** Insert or replace one rule, keeping its position if it already exists. */
   putRule: (id: string, value: Omit<RoutingRule, "id">, note?: string) =>

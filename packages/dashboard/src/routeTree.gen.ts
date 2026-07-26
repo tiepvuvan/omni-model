@@ -16,6 +16,7 @@ import { Route as SignInRouteImport } from './routes/sign-in'
 import { Route as AppAuthenticationRouteImport } from './routes/_app/authentication'
 import { Route as AppRateLimitRouteImport } from './routes/_app/rate-limit'
 import { Route as AppRoutingRouteImport } from './routes/_app/routing'
+import { Route as AppSettingsRouteImport } from './routes/_app/settings'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -51,6 +52,11 @@ const AppRoutingRoute = AppRoutingRouteImport.update({
   path: '/routing',
   getParentRoute: () => AppRoute,
 } as any)
+const AppSettingsRoute = AppSettingsRouteImport.update({
+  id: '/settings',
+  path: '/settings',
+  getParentRoute: () => AppRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -59,6 +65,7 @@ export interface FileRoutesByFullPath {
   '/authentication': typeof AppAuthenticationRoute
   '/rate-limit': typeof AppRateLimitRoute
   '/routing': typeof AppRoutingRoute
+  '/settings': typeof AppSettingsRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -67,6 +74,7 @@ export interface FileRoutesByTo {
   '/authentication': typeof AppAuthenticationRoute
   '/rate-limit': typeof AppRateLimitRoute
   '/routing': typeof AppRoutingRoute
+  '/settings': typeof AppSettingsRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -77,14 +85,27 @@ export interface FileRoutesById {
   '/_app/authentication': typeof AppAuthenticationRoute
   '/_app/rate-limit': typeof AppRateLimitRoute
   '/_app/routing': typeof AppRoutingRoute
+  '/_app/settings': typeof AppSettingsRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
-    '/' | '/setup' | '/sign-in' | '/authentication' | '/rate-limit' | '/routing'
+    | '/'
+    | '/setup'
+    | '/sign-in'
+    | '/authentication'
+    | '/rate-limit'
+    | '/routing'
+    | '/settings'
   fileRoutesByTo: FileRoutesByTo
   to:
-    '/' | '/setup' | '/sign-in' | '/authentication' | '/rate-limit' | '/routing'
+    | '/'
+    | '/setup'
+    | '/sign-in'
+    | '/authentication'
+    | '/rate-limit'
+    | '/routing'
+    | '/settings'
   id:
     | '__root__'
     | '/'
@@ -94,6 +115,7 @@ export interface FileRouteTypes {
     | '/_app/authentication'
     | '/_app/rate-limit'
     | '/_app/routing'
+    | '/_app/settings'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -154,6 +176,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppRoutingRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/settings': {
+      id: '/_app/settings'
+      path: '/settings'
+      fullPath: '/settings'
+      preLoaderRoute: typeof AppSettingsRouteImport
+      parentRoute: typeof AppRoute
+    }
   }
 }
 
@@ -161,12 +190,14 @@ interface AppRouteChildren {
   AppAuthenticationRoute: typeof AppAuthenticationRoute
   AppRateLimitRoute: typeof AppRateLimitRoute
   AppRoutingRoute: typeof AppRoutingRoute
+  AppSettingsRoute: typeof AppSettingsRoute
 }
 
 const AppRouteChildren: AppRouteChildren = {
   AppAuthenticationRoute: AppAuthenticationRoute,
   AppRateLimitRoute: AppRateLimitRoute,
   AppRoutingRoute: AppRoutingRoute,
+  AppSettingsRoute: AppSettingsRoute,
 }
 
 const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)

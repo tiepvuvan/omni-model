@@ -55,12 +55,15 @@ export function AmountField({
   value,
   onChange,
   id,
+  allowZero = false,
 }: {
   label: string;
   help: string;
   value: number;
   onChange: (value: number) => void;
   id?: string;
+  /** Zero is a meaningful value for some fields ("no bound"), not an empty box. */
+  allowZero?: boolean;
 }) {
   const [text, setText] = useState(() => groups.format(value));
 
@@ -78,7 +81,7 @@ export function AmountField({
       value={text}
       inputMode="numeric"
       autoComplete="off"
-      error={value <= 0 ? "Enter a number greater than zero." : null}
+      error={value < 0 || (value === 0 && !allowZero) ? "Enter a number greater than zero." : null}
       onChange={(event) => {
         setText(event.target.value);
         onChange(parseAmount(event.target.value));

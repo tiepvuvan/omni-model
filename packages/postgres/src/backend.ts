@@ -3,6 +3,7 @@ import {
   EnvelopeSecretStore,
   type Keyring,
   type Logger,
+  type PromptCache,
   type RequestLogWriter,
   type SecretStore,
   type StorageAdapter,
@@ -11,6 +12,7 @@ import {
 import { PostgresConfigStore } from "./config-store.js";
 import { runMigrations } from "./migrations/run.js";
 import { createPgPool, type PgPoolLike } from "./pool.js";
+import { PostgresPromptCache } from "./prompt-cache.js";
 import { PostgresRequestLogWriter } from "./request-log-store.js";
 import { PostgresSecretRowStore } from "./secret-store.js";
 import { PostgresStorageAdapter } from "./storage.js";
@@ -49,6 +51,8 @@ export interface PostgresBackend {
   writeKeyStore: WriteKeyStore;
   /** Unbuffered: wrap with `BufferedRequestLogSink` before serving traffic. */
   requestLogWriter: RequestLogWriter;
+  /** The response cache. Whether it is *used* is configuration, not availability. */
+  promptCache: PromptCache;
   /** Closes the config store's watcher and then the pool. */
   close(): Promise<void>;
 }
@@ -77,6 +81,10 @@ export async function createPostgresBackend(
       configStore,
       writeKeyStore: new PostgresWriteKeyStore(pool),
       requestLogWriter: new PostgresRequestLogWriter(pool),
+      promptCache: new PostgresPromptCache(
+        pool,
+        ...(options.logger === undefined ? [] : [options.logger]),
+      ),
       secretStore:
         options.keyring === undefined
           ? null

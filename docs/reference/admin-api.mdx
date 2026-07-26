@@ -92,9 +92,12 @@ tell that their login is fine.
 | `GET /admin/api/config/revisions` | History, newest first. |
 | `GET /admin/api/config/revisions/:n` | One revision. |
 | `POST /admin/api/config/revisions/:n/rollback` | Re-apply an old document as a **new** revision. |
-| `PUT /admin/api/security` · `/rate-limits` · `/routing` · `/logging` | Replace one block: `{ "value": {...} }`. |
+| `PATCH /admin/api/config` | Replace several blocks in one revision: `{ "value": { "rateLimits": [...], "concurrency": {...} } }`. Read-modify-write, so it cannot clobber a block it was not given. |
+| `PUT /admin/api/security` · `/rate-limits` · `/routing` · `/logging` · `/cache` · `/concurrency` | Replace one block: `{ "value": {...} }`. |
 | `PUT`/`DELETE /admin/api/routing/rules/:id` | Add, replace or remove one routing rule. |
 | `POST /admin/api/routing/rules/:id/test` | Probe the upstream that rule points at. |
+| `GET /admin/api/cache` | Whether caching is on, and what is actually stored: entries, bytes, oldest. |
+| `DELETE /admin/api/cache` | Empty the response cache. Answers `{ "purged": n }`. |
 
 A save is **validated, then stored, then applied** — in that order. Applying first would leave the
 replica that handled the request running a configuration no other replica has, if the write then

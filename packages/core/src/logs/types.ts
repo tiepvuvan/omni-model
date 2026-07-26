@@ -33,6 +33,8 @@ export interface RequestLogEntry {
   errorCode: string | null;
   /** Set when a rate-limit rule refused the request. */
   rateLimitRule: string | null;
+  /** Served from the response cache, so no upstream was called and nothing was spent. */
+  cached: boolean;
 
   promptTokens: number | null;
   completionTokens: number | null;

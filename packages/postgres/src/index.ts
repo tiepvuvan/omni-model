@@ -9,6 +9,7 @@ export * from "./db.js";
 export * from "./migrations/run.js";
 export * from "./migrations/sql.js";
 export * from "./pool.js";
+export * from "./prompt-cache.js";
 export * from "./request-log-store.js";
 export * from "./schema.js";
 export * from "./secret-store.js";

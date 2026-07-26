@@ -161,6 +161,13 @@ export const requestLogs = pgTable(
     ip: text("ip"),
     userAgent: text("user_agent"),
     rateLimitRule: text("rate_limit_rule"),
+    /**
+     * Served from the response cache.
+     *
+     * Without it a cache hit is a row with zero tokens and no explanation, which
+     * reads as a request that failed to account for itself.
+     */
+    cached: boolean("cached").notNull().default(false),
   },
   (table) => [
     index("omni_request_logs_ts_idx").on(table.ts.desc()),
@@ -184,6 +191,43 @@ export const requestContents = pgTable("omni_request_contents", {
   completion: text("completion"),
   truncated: boolean("truncated").notNull().default(false),
 });
+
+/**
+ * Cached upstream answers, keyed by a hash of the request that produced them.
+ *
+ * The value is what the *upstream* said, before the response boundary redacted it,
+ * so a replay runs the same redaction a live answer does. Two shapes: a completion
+ * object, or the raw SSE text of a streamed answer — kept apart because an answer is
+ * replayed in the shape it was captured in.
+ *
+ * `expires_at` is enforced on read as well as by the sweep: a row past its TTL must
+ * never be served, even in the window before something deletes it.
+ */
+export const promptCache = pgTable(
+  "omni_prompt_cache",
+  {
+    /** SHA-256 of the canonical request. See core's `promptCacheKey`. */
+    key: text("key").primaryKey(),
+    kind: text("kind").notNull(),
+    /** The completion object, for a non-streamed answer. */
+    completion: jsonb("completion"),
+    /** The upstream's SSE text, for a streamed one. */
+    sse: text("sse"),
+    /** What the original call cost, kept for the dashboard rather than for billing. */
+    promptTokens: integer("prompt_tokens"),
+    completionTokens: integer("completion_tokens"),
+    totalTokens: integer("total_tokens"),
+    /** Stored size, so the dashboard can say how big the cache is without reading it. */
+    bytes: integer("bytes").notNull().default(0),
+    createdAt: instant("created_at").notNull().defaultNow(),
+    expiresAt: instant("expires_at").notNull(),
+  },
+  (table) => [
+    // Both the sweep and eviction scan by age, and a read filters on expiry.
+    index("omni_prompt_cache_expires_idx").on(table.expiresAt),
+    index("omni_prompt_cache_created_idx").on(table.createdAt),
+  ],
+);
 
 // `omni_migrations` is deliberately absent. It is the runner's own bookkeeping,
 // created before any migration runs (`migrations/run.ts`), so a schema that

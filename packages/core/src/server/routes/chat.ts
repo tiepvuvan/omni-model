@@ -8,7 +8,12 @@ import type { RuntimeContext } from "../../types.js";
 import { shouldCaptureContent, writeKeyAllowsModel } from "../../writekeys/types.js";
 import { buildRequestFacts } from "../facts.js";
 import { draftOf, type RequestLogDraft } from "../logging.js";
-import { executeChat, type PipelineObserver } from "../pipeline.js";
+import {
+  acquireConcurrencySlot,
+  executeChat,
+  type PipelineObserver,
+  storeCached,
+} from "../pipeline.js";
 import {
   createPublicChatResponseMetadata,
   redactChatCompletion,
@@ -180,7 +185,64 @@ export function observerFor(draft: RequestLogDraft | undefined): PipelineObserve
     rateLimited: (rule) => {
       draft.rateLimitRule = rule;
     },
+    cached: () => {
+      draft.cached = true;
+    },
   };
+}
+
+/**
+ * How much of a streamed answer is worth keeping.
+ *
+ * A cache entry is a convenience, and an unbounded one fed by responses nobody has
+ * measured is how a database fills up. A stream past this is served normally and
+ * simply not stored.
+ */
+const MAX_CACHED_STREAM_BYTES = 256 * 1024;
+
+/**
+ * Tee a stream, returning the branch to serve and a promise of the other branch's
+ * text.
+ *
+ * The captured branch is the *upstream* SSE, before redaction — so a replay goes
+ * through the same redaction a live answer does and carries the replaying request's
+ * own identifiers. Capture stops at the cap and reports null, which also means a
+ * client that hangs up early stores nothing.
+ */
+function teeForCache(sse: ReadableStream<Uint8Array>): {
+  serve: ReadableStream<Uint8Array>;
+  captured: Promise<string | null>;
+} {
+  const [serve, copy] = sse.tee();
+  const captured = (async (): Promise<string | null> => {
+    const reader = copy.getReader();
+    const chunks: Uint8Array[] = [];
+    let size = 0;
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (value === undefined) continue;
+        size += value.byteLength;
+        if (size > MAX_CACHED_STREAM_BYTES) {
+          await reader.cancel();
+          return null;
+        }
+        chunks.push(value);
+      }
+    } catch {
+      // An upstream that broke mid-stream has no complete answer to cache.
+      return null;
+    }
+    const joined = new Uint8Array(size);
+    let at = 0;
+    for (const chunk of chunks) {
+      joined.set(chunk, at);
+      at += chunk.byteLength;
+    }
+    return new TextDecoder().decode(joined);
+  })();
+  return { serve, captured };
 }
 
 /** Assembled assistant text from a non-streamed completion. */
@@ -240,21 +302,52 @@ export function createChatHandler(deps: RouteDeps): (c: Context<AppEnv>) => Prom
     const runtime = deps.runtimeFor(c);
     const facts = factsFor(c, request, runtime.now(), deps.clientIp(c, bundle.trustProxyHeaders));
 
-    const result = await executeChat(
-      bundle,
-      facts,
-      request,
-      runtime,
-      { signal: c.req.raw.signal },
-      observerFor(draft),
-    );
+    /*
+     * The in-flight slot is taken before the upstream call and given back when the
+     * response *body* is finished — which for a stream is long after this handler
+     * returns. Holding it only for the handler would leave the bound measuring
+     * nothing, since a stream spends almost all its life after that point.
+     */
+    const slot = await acquireConcurrencySlot(bundle, facts);
+    let execution: Awaited<ReturnType<typeof executeChat>>;
+    try {
+      execution = await executeChat(
+        bundle,
+        facts,
+        request,
+        runtime,
+        { signal: c.req.raw.signal },
+        observerFor(draft),
+      );
+    } catch (error) {
+      await slot.release();
+      throw error;
+    }
+    const { result, cacheKey, cached } = execution;
     const metadata = createPublicChatResponseMetadata(request.model, runtime.now());
+    if (cached) c.header("x-omni-cache", "hit");
+    else if (cacheKey !== null) c.header("x-omni-cache", "miss");
 
     switch (result.kind) {
       case "completion": {
+        await slot.release();
         const usage = result.completion.usage;
-        if (usage !== undefined) {
+        /*
+         * A cache hit cost no upstream tokens, so it is not charged to a budget.
+         * Charging for it would make the cache invisible to the thing it exists to
+         * protect — and would bill a user for work nobody did.
+         */
+        if (usage !== undefined && !cached) {
           runtime.waitUntil(bundle.limiter.recordUsage(facts, usage));
+        }
+        if (cacheKey !== null && !cached) {
+          runtime.waitUntil(
+            storeCached(bundle, cacheKey, {
+              kind: "completion",
+              completion: result.completion,
+              usage: usage ?? null,
+            }),
+          );
         }
         if (draft !== undefined) {
           draft.usage = usage ?? null;
@@ -268,9 +361,18 @@ export function createChatHandler(deps: RouteDeps): (c: Context<AppEnv>) => Prom
         return c.json(redactChatCompletion(result.completion, metadata));
       }
       case "stream": {
+        // `result.usage` settles on every exit path — done, upstream error, or the
+        // client hanging up — which makes it the only correct moment to give the
+        // slot back and to decide whether there is an answer worth storing.
         runtime.waitUntil(
-          result.usage.then((usage) =>
-            usage === null ? undefined : bundle.limiter.recordUsage(facts, usage),
+          result.usage.then(
+            async (usage) => {
+              await slot.release();
+              if (usage !== null && !cached) await bundle.limiter.recordUsage(facts, usage);
+            },
+            async () => {
+              await slot.release();
+            },
           ),
         );
         const accumulator = capture
@@ -293,13 +395,31 @@ export function createChatHandler(deps: RouteDeps): (c: Context<AppEnv>) => Prom
         }
         const tap =
           accumulator === undefined ? undefined : (delta: string) => accumulator.push(delta);
-        return new Response(redactChatCompletionStream(result.sse, metadata, tap), {
-          headers: STREAM_RESPONSE_HEADERS,
+
+        // Cache the upstream's own bytes, not the redacted ones, and only once the
+        // stream finished cleanly — a half-delivered answer must never be replayed
+        // as a complete one.
+        let sse = result.sse;
+        if (cacheKey !== null && !cached) {
+          const tee = teeForCache(sse);
+          sse = tee.serve;
+          runtime.waitUntil(
+            Promise.all([tee.captured, result.usage.catch(() => null)]).then(([text, usage]) =>
+              text === null
+                ? undefined
+                : storeCached(bundle, cacheKey, { kind: "stream", sse: text, usage }),
+            ),
+          );
+        }
+        return new Response(redactChatCompletionStream(sse, metadata, tap), {
+          headers: { ...STREAM_RESPONSE_HEADERS, ...(cached ? { "x-omni-cache": "hit" } : {}) },
         });
       }
       case "error": {
+        await slot.release();
         // An upstream failure is returned, not thrown, so `app.onError` never
-        // sees it — without this the row would say 502 with no reason.
+        // sees it — without this the row would say 502 with no reason. Nothing is
+        // cached: an error is not an answer.
         const body = redactProviderError(result.body);
         if (draft !== undefined) draft.errorCode = body.error.code ?? null;
         return Response.json(body, { status: result.status });

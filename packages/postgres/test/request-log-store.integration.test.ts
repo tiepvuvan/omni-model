@@ -46,6 +46,7 @@ function entry(overrides: Partial<RequestLogEntry> = {}): RequestLogEntry {
     status: 200,
     errorCode: null,
     rateLimitRule: null,
+    cached: false,
     promptTokens: 10,
     completionTokens: 5,
     totalTokens: 15,

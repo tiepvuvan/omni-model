@@ -244,8 +244,26 @@ export function createConfigRoutes(deps: AdminDeps): Hono<AdminEnv> {
     return save(c, stored.document, `rollback to revision ${revision}`);
   });
 
+  /**
+   * Replace several top-level blocks in one revision.
+   *
+   * A screen that edits two blocks — rate limits and the in-flight bound live in
+   * different ones — would otherwise have to send two requests, which is two
+   * revisions for one Save and leaves the first applied if the second fails.
+   * Read-modify-write on the server, so it cannot clobber a block it was not given.
+   */
+  app.patch("/config", async (c) => {
+    const body = patchSchema.parse(await c.req.json());
+    if (!isRecord(body.value)) throw badRequest("value must be an object of blocks");
+    const document = await storedDocument();
+    for (const [block, value] of Object.entries(body.value)) document[block] = value;
+    return save(c, document, body.note ?? `update ${Object.keys(body.value).join(", ")}`);
+  });
+
   /** Replace one top-level block. */
-  const patchBlock = (block: "security" | "rateLimits" | "routing" | "logging") => {
+  const patchBlock = (
+    block: "security" | "rateLimits" | "routing" | "logging" | "cache" | "concurrency",
+  ) => {
     app.put(`/${block === "rateLimits" ? "rate-limits" : block}`, async (c) => {
       const body = patchSchema.parse(await c.req.json());
       const document = await storedDocument();
@@ -257,6 +275,8 @@ export function createConfigRoutes(deps: AdminDeps): Hono<AdminEnv> {
   patchBlock("rateLimits");
   patchBlock("routing");
   patchBlock("logging");
+  patchBlock("cache");
+  patchBlock("concurrency");
 
   /** The rules array out of the stored document, as raw JSON. */
   const storedRules = async (): Promise<{

@@ -1,5 +1,6 @@
 import type { Context } from "hono";
 import type { Identity } from "../auth/types.js";
+import type { PromptCache } from "../cache/types.js";
 import type { OmniConfig } from "../config/schema.js";
 import type { RequestLogSink } from "../logs/types.js";
 import type { OmniRegistry } from "../registry.js";
@@ -35,6 +36,11 @@ export interface OmniRuntimeInit {
   writeKeys?: WriteKeyStore;
   /** Where request logs go. Defaults to discarding them. */
   requestLogs?: RequestLogSink;
+  /**
+   * Where cached responses go. Without it `cache.enabled` has nothing to enable
+   * — the deployment simply does not cache, and says so at build time.
+   */
+  promptCache?: PromptCache;
   /** Expression engine for routing/rate-limit conditions; defaults to CEL. */
   engine?: ExpressionEngine;
   /** Outbound fetch; defaults to a bound `globalThis.fetch`. */

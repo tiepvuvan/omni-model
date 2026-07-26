@@ -2,7 +2,12 @@ import type { Context } from "hono";
 import { badRequest } from "../../errors.js";
 import type { EmbeddingsRequest } from "../../openai/types.js";
 import { draftOf } from "../logging.js";
-import { embeddingsUsage, executeEmbeddings } from "../pipeline.js";
+import {
+  acquireConcurrencySlot,
+  embeddingsUsage,
+  executeEmbeddings,
+  storeCached,
+} from "../pipeline.js";
 import { redactEmbeddingsResponse, redactProviderError } from "../response.js";
 import type { AppEnv } from "../types.js";
 import {
@@ -42,14 +47,26 @@ export function createEmbeddingsHandler(
     const runtime = deps.runtimeFor(c);
     const facts = factsFor(c, request, runtime.now(), deps.clientIp(c, bundle.trustProxyHeaders));
 
-    const result = await executeEmbeddings(
-      bundle,
-      facts,
-      request,
-      runtime,
-      { signal: c.req.raw.signal },
-      observerFor(draft),
-    );
+    const slot = await acquireConcurrencySlot(bundle, facts);
+    let execution: Awaited<ReturnType<typeof executeEmbeddings>>;
+    try {
+      execution = await executeEmbeddings(
+        bundle,
+        facts,
+        request,
+        runtime,
+        { signal: c.req.raw.signal },
+        observerFor(draft),
+      );
+    } finally {
+      // No streaming here: the answer is complete by the time the call returns, so
+      // the slot is held for exactly the upstream round-trip.
+      await slot.release();
+    }
+    const { result, cacheKey, cached } = execution;
+    if (cached) c.header("x-omni-cache", "hit");
+    else if (cacheKey !== null) c.header("x-omni-cache", "miss");
+
     if (result.kind === "error") {
       const body = redactProviderError(result.body);
       if (draft !== undefined) draft.errorCode = body.error.code ?? null;
@@ -58,8 +75,18 @@ export function createEmbeddingsHandler(
 
     const usage = result.response.usage;
     if (usage !== undefined) {
-      runtime.waitUntil(bundle.limiter.recordUsage(facts, embeddingsUsage(usage)));
+      // A cache hit spent nothing upstream, so it is not charged to a budget.
+      if (!cached) runtime.waitUntil(bundle.limiter.recordUsage(facts, embeddingsUsage(usage)));
       if (draft !== undefined) draft.usage = embeddingsUsage(usage);
+    }
+    if (cacheKey !== null && !cached) {
+      runtime.waitUntil(
+        storeCached(bundle, cacheKey, {
+          kind: "completion",
+          completion: result.response,
+          usage: usage === undefined ? null : embeddingsUsage(usage),
+        }),
+      );
     }
     return c.json(redactEmbeddingsResponse(result.response, request.model));
   };

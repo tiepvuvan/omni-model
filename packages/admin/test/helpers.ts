@@ -6,6 +6,7 @@ import {
   createMemorySecretStore,
   type Logger,
   MemoryConfigStore,
+  MemoryPromptCache,
   MemoryStorageAdapter,
   MemoryWriteKeyStore,
   type RuntimeContext,
@@ -127,6 +128,8 @@ export interface TestAdmin {
   holder: ReturnType<typeof createBundleHolder>;
   configStore: MemoryConfigStore;
   writeKeys: MemoryWriteKeyStore;
+  /** The cache the endpoints operate on. */
+  promptCache: MemoryPromptCache;
   /** Call the admin app as an operator (or nobody, with `session: null`). */
   call(path: string, init?: RequestInit & { session?: string | null }): Promise<Response>;
 }
@@ -143,6 +146,8 @@ export interface CreateTestAdminOptions {
   fetch?: typeof fetch;
   /** Capture what the admin API logs, for audit assertions. */
   logger?: Logger;
+  /** `null` models a deployment with no cache at all; omit for a memory one. */
+  promptCache?: MemoryPromptCache | null;
 }
 
 /**
@@ -179,6 +184,10 @@ export async function createTestAdmin(options: CreateTestAdminOptions = {}): Pro
   });
   const configStore = new MemoryConfigStore();
   const writeKeys = new MemoryWriteKeyStore(() => FIXED_NOW);
+  // `null` is a deployment with nowhere to cache, which the endpoints have to
+  // answer for rather than fail on.
+  const promptCache =
+    options.promptCache === null ? null : (options.promptCache ?? new MemoryPromptCache());
 
   if (options.config !== undefined) {
     const saved = await configStore.save(options.config, { createdBy: "test" });
@@ -201,6 +210,7 @@ export async function createTestAdmin(options: CreateTestAdminOptions = {}): Pro
     secrets,
     registry: createDefaultRegistry(),
     runtime,
+    promptCache,
     logger: options.logger ?? silentLogger,
   });
 
@@ -209,6 +219,9 @@ export async function createTestAdmin(options: CreateTestAdminOptions = {}): Pro
     holder,
     configStore,
     writeKeys,
+    // Non-null for the common case: a test that wants the no-cache deployment
+    // passes `promptCache: null` and does not touch this.
+    promptCache: promptCache ?? new MemoryPromptCache(),
     call: async (path, init = {}) => {
       const { session, ...rest } = init;
       const headers = new Headers(rest.headers);

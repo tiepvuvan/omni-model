@@ -1,3 +1,4 @@
+import type { PromptCache } from "../cache/types.js";
 import type { OmniRegistry } from "../registry.js";
 import type { ExpressionEngine } from "../routing/types.js";
 import { resolveSecretRefs } from "../secrets/resolver.js";
@@ -62,6 +63,8 @@ export interface BundleHolderDeps {
    * is rejected with an actionable message rather than silently misconfigured.
    */
   secrets?: SecretStore;
+  /** Where cached responses live. Absent means the deployment cannot cache. */
+  promptCache?: PromptCache;
 }
 
 function errorMessage(error: unknown): string {
@@ -136,6 +139,7 @@ export function createBundleHolder(deps: BundleHolderDeps): BundleHolder {
       engine: deps.engine,
       runtime: deps.runtime,
       ...(deps.logger === undefined ? {} : { logger: deps.logger }),
+      ...(deps.promptCache === undefined ? {} : { promptCache: deps.promptCache }),
       revision,
     };
 

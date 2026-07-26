@@ -219,9 +219,15 @@ describe("reloading configuration", () => {
   });
 
   it("serves every request while being reconfigured under concurrent load", async () => {
-    // `rateLimits: []` isolates the property under test: without it the schema's
-    // default 30/hour would answer 429 and hide whether reloads dropped anything.
+    /*
+     * Both limits off, to isolate the property under test.
+     *
+     * A default token budget would answer 429 and hide whether a reload dropped
+     * anything, and the default in-flight bound of 3 would refuse 57 of these 60 —
+     * which is the bound working, not a reload failing.
+     */
     const unlimited = `${BASE}rateLimits: []
+concurrency: { perUser: 0 }
 `;
     const proxy = await createTestProxy({ yaml: unlimited });
 
@@ -245,7 +251,10 @@ describe("reloading configuration", () => {
     // Reloading rebuilds the limiter. If a rebuild reset or double-counted its
     // counters, the recorded total would not land exactly on what was spent.
     const storage = new MemoryStorageAdapter(() => FIXED_NOW);
-    const limited = `${BASE}rateLimits:
+    // The in-flight bound is off for the same reason as the test above: 60 at once
+    // is the point, and three of them is not a measurement of anything.
+    const limited = `${BASE}concurrency: { perUser: 0 }
+rateLimits:
   - id: per-user
     name: per-user
     tokens: { limit: 100000, window: 1h }

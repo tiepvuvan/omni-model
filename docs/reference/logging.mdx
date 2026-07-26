@@ -15,7 +15,7 @@ or a revoked client key is usually the row you are looking for.
 | Routing | model requested, model actually sent upstream, provider, matched route |
 | Cost | prompt / completion / total tokens |
 | Timing | total latency, time to first byte |
-| Outcome | status, error code, the rate-limit rule that refused it |
+| Outcome | status, error code, the rate-limit rule that refused it, whether the response came from the cache |
 | Caller | IP (per `trustProxyHeaders`), user agent |
 
 Metadata is on by default. Message content is **not** — see below.
@@ -81,8 +81,18 @@ SELECT k.name, count(*) AS requests, sum(l.total_tokens) AS tokens
 FROM omni_request_logs l
 LEFT JOIN omni_write_keys k ON k.id = l.write_key_id
 WHERE l.ts > now() - interval '1 day'
+  -- A cached row keeps the tokens the answer *would* have cost, so it belongs in a
+  -- savings report and not in a spend one.
+  AND NOT l.cached
 GROUP BY k.name
 ORDER BY tokens DESC NULLS LAST;
+```
+
+```sql
+-- What the response cache saved over the same window
+SELECT count(*) AS hits, sum(total_tokens) AS tokens_avoided
+FROM omni_request_logs
+WHERE ts > now() - interval '1 day' AND cached;
 ```
 
 ## When the database is unavailable

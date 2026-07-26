@@ -3,6 +3,7 @@ import type {
   ConfigStore,
   Logger,
   OmniRegistry,
+  PromptCache,
   RuntimeContext,
   SecretStore,
   WriteKeyStore,
@@ -26,6 +27,14 @@ export interface AdminDeps {
   secrets: SecretStore | null;
   /** For log queries. Null when not running on Postgres. */
   pool: PgPoolLike | null;
+  /**
+   * The response cache, for the stats and purge endpoints.
+   *
+   * Null when the deployment has none. Note this is the *store*, not the bundle's
+   * view of it: an operator has to be able to purge and inspect a cache they have
+   * just switched off, which is exactly when the bundle stops holding one.
+   */
+  promptCache: PromptCache | null;
   /** Registered component types, for the schema endpoint. */
   registry: OmniRegistry;
   /** Passed to provider probes. */

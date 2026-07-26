@@ -159,6 +159,39 @@ function defaultRateLimits() {
  * "which credentials does this rule actually use" stopped being answerable by
  * reading the rule.
  */
+/**
+ * How many requests one user may have in flight at once.
+ *
+ * On by default, because token budgets are post-paid: fifty simultaneous requests
+ * are all admitted against the same empty counter, and the budget is blown fifty
+ * times over before the first response lands. Three is the shape of a real client
+ * — a screen making a couple of calls at once — not a number to tune upward
+ * casually.
+ */
+export const concurrencyConfigSchema = z.strictObject({
+  /** Requests in flight per user. `0` disables the bound entirely. */
+  perUser: z.number().int().nonnegative().default(3),
+});
+
+/**
+ * Exact-match response cache.
+ *
+ * Keyed by the resolved upstream, the resolved model and the whole request body,
+ * so a hit is a request that would have produced the same answer. Off by default:
+ * a cached completion is not a fresh one, and that is a decision about your
+ * clients' expectations rather than a default anyone should inherit silently.
+ */
+export const cacheConfigSchema = z.strictObject({
+  enabled: z.boolean().default(false),
+  /** How long an entry stays servable. */
+  ttl: durationSchema.default("1h"),
+  /**
+   * Entries to keep. Enforced by a periodic sweep, oldest first, so it is a budget
+   * rather than a hard ceiling — a burst can overshoot until the next sweep.
+   */
+  maxEntries: z.number().int().positive().default(10_000),
+});
+
 export const routeTargetSchema = z.looseObject({
   type: z.string().min(1),
   /**
@@ -255,6 +288,8 @@ export const omniConfigSchema = z.strictObject({
   // leave dangling.
   routing: routingConfigSchema.prefault({}),
   logging: loggingConfigSchema.prefault({}),
+  concurrency: concurrencyConfigSchema.prefault({}),
+  cache: cacheConfigSchema.prefault({}),
 });
 
 export type CorsConfig = z.output<typeof corsConfigSchema>;
@@ -267,4 +302,6 @@ export type RouteTargetConfig = z.output<typeof routeTargetSchema>;
 export type RoutingRuleConfig = z.output<typeof routingRuleSchema>;
 export type RoutingConfig = z.output<typeof routingConfigSchema>;
 export type LoggingConfig = z.output<typeof loggingConfigSchema>;
+export type ConcurrencyConfig = z.output<typeof concurrencyConfigSchema>;
+export type CacheConfig = z.output<typeof cacheConfigSchema>;
 export type OmniConfig = z.output<typeof omniConfigSchema>;

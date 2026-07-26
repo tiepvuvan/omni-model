@@ -25,6 +25,7 @@ export interface RequestLogDraft {
   stream: boolean;
   usage: Usage | null;
   rateLimitRule: string | null;
+  cached: boolean;
   /**
    * Set from `app.onError`, not from a catch here: Hono turns a thrown error
    * into a response before an outer middleware's `next()` resolves, so by the
@@ -55,6 +56,7 @@ export function createRequestLogDraft(requestId: string, startedAt: number): Req
     stream: false,
     usage: null,
     rateLimitRule: null,
+    cached: false,
     errorCode: null,
     ttfbMs: null,
     messages: undefined,
@@ -180,6 +182,7 @@ export function createRequestLoggingMiddleware(
       status,
       errorCode: draft.errorCode,
       rateLimitRule: draft.rateLimitRule,
+      cached: draft.cached,
       promptTokens: draft.usage?.prompt_tokens ?? null,
       completionTokens: draft.usage?.completion_tokens ?? null,
       totalTokens: draft.usage?.total_tokens ?? null,

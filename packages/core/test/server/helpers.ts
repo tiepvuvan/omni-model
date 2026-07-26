@@ -103,6 +103,13 @@ export interface FakeProviderBehavior {
   listModelsError?: string;
   /** When set, `embeddings` is defined and returns this result. */
   embeddingsResult?: EmbeddingsResult;
+  /**
+   * Parks `chat` until this settles, so requests genuinely overlap.
+   *
+   * Without it every request completes before the next one starts, and anything
+   * about simultaneity — the in-flight bound — would pass with no bound at all.
+   */
+  chatDelay?: Promise<unknown>;
 }
 
 export interface RecordedChatCall {
@@ -147,6 +154,7 @@ export class FakeProvider implements ChatProvider {
   ): Promise<ChatResult> {
     this.chatCalls.push({ request, signal: options?.signal });
     const behavior = this.behavior;
+    if (behavior.chatDelay !== undefined) await behavior.chatDelay;
     if (behavior.error !== undefined) {
       return { kind: "error", status: behavior.error.status, body: behavior.error.body };
     }

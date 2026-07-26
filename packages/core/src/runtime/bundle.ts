@@ -2,8 +2,10 @@ import type { MiddlewareHandler } from "hono";
 import { cors } from "hono/cors";
 import { z } from "zod";
 import type { AuthRoute, AuthVerifier } from "../auth/types.js";
+import type { PromptCache } from "../cache/types.js";
 import { interpolateDeep } from "../config/load.js";
 import {
+  type CacheConfig,
   type CorsConfig,
   type LoggingConfig,
   type OmniConfig,
@@ -12,8 +14,9 @@ import {
 import { ConfigError } from "../errors.js";
 import { createConsoleLogger } from "../logging.js";
 import type { ChatProvider } from "../providers/types.js";
+import { createConcurrencyLimiter } from "../ratelimit/concurrency.js";
 import { createRateLimiter } from "../ratelimit/limiter.js";
-import type { RateLimiter } from "../ratelimit/types.js";
+import type { ConcurrencyLimiter, RateLimiter } from "../ratelimit/types.js";
 import type { OmniRegistry } from "../registry.js";
 import {
   type CompiledRoutingRule,
@@ -25,6 +28,7 @@ import type { ExpressionEngine, Router } from "../routing/types.js";
 import type { AppEnv } from "../server/types.js";
 import type { StorageAdapter } from "../storage/types.js";
 import type { Logger, RuntimeContext } from "../types.js";
+import { parseDuration } from "../util/duration.js";
 
 /**
  * Everything a request needs, built once from one configuration revision and
@@ -81,6 +85,21 @@ export interface RuntimeBundle {
 
   /** Request/content logging settings. */
   readonly logging: LoggingConfig;
+  /**
+   * The per-user in-flight bound, or null when `concurrency.perUser` is 0.
+   *
+   * Null rather than a limiter with an infinite limit: "no bound" should cost no
+   * storage round-trip per request.
+   */
+  readonly concurrency: ConcurrencyLimiter | null;
+  /**
+   * The response cache, or null when caching is off or no backend was wired.
+   *
+   * The *store* is a dependency (Postgres in the container, memory in tests) while
+   * whether to use it and for how long is configuration — so a reload turns
+   * caching on and off without rebuilding the store.
+   */
+  readonly cache: { store: PromptCache; ttlSeconds: number; config: CacheConfig } | null;
   readonly maxBodyBytes: number;
   readonly allowedModels: readonly string[];
   readonly trustProxyHeaders: boolean;
@@ -99,6 +118,12 @@ export interface BuildBundleInput {
   /** Overrides the per-bundle console logger (tests inject a silent one). */
   logger?: Logger;
   revision?: number | null;
+  /**
+   * Where cached responses live. Absent means no cache is available, and
+   * `cache.enabled` then has nothing to enable — a deployment without a backend
+   * for it is not an error, it just does not cache.
+   */
+  promptCache?: PromptCache | undefined;
 }
 
 /** Paths the proxy itself owns; a verifier route may not shadow them. */
@@ -157,6 +182,23 @@ export function buildBundle(input: BuildBundleInput): RuntimeBundle {
     log,
     now: runtime.now,
   });
+  const concurrency =
+    config.concurrency.perUser === 0
+      ? null
+      : createConcurrencyLimiter(config.concurrency.perUser, { storage: input.storage, log });
+  const cache =
+    config.cache.enabled && input.promptCache !== undefined
+      ? {
+          store: input.promptCache,
+          ttlSeconds: Math.ceil(parseDuration(config.cache.ttl) / 1000),
+          config: config.cache,
+        }
+      : null;
+  if (config.cache.enabled && input.promptCache === undefined) {
+    // Said out loud rather than silently ignored: an operator who turned caching on
+    // and sees no hits deserves to know the deployment has nowhere to put them.
+    log.warn("cache.enabled is true but no cache backend is wired; responses are not cached");
+  }
 
   return {
     config,
@@ -172,6 +214,8 @@ export function buildBundle(input: BuildBundleInput): RuntimeBundle {
     requireWriteKey: config.security.requireWriteKey,
     authRoutes: collectAuthRoutes([userVerifier, ...appVerifiers]),
     logging: config.logging,
+    concurrency,
+    cache,
     maxBodyBytes: config.server.maxBodyBytes,
     allowedModels: config.routing.allowedModels,
     trustProxyHeaders: config.server.trustProxyHeaders,

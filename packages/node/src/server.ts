@@ -22,7 +22,9 @@ import {
   type Logger,
   type LogLevel,
   MemoryConfigStore,
+  MemoryPromptCache,
   MemoryWriteKeyStore,
+  type PromptCache,
   parseDuration,
   type RequestLogSink,
   type RuntimeContext,
@@ -147,6 +149,8 @@ export interface StartOptions {
   secretStore?: SecretStore;
   /** Inject a write key store (tests); otherwise derived from the backend. */
   writeKeyStore?: WriteKeyStore;
+  /** Overrides where cached responses are stored (tests inject a memory one). */
+  promptCache?: PromptCache;
   /**
    * Enable the admin API. Defaults to OMNI_ADMIN_SECRET from the environment;
    * without a secret there is no admin surface at all.
@@ -227,6 +231,10 @@ interface Backend {
   secretStore: SecretStore | null;
   writeKeyStore: WriteKeyStore;
   requestLogs: RequestLogSink;
+  /** Where cached responses live. In-process unless a database is configured. */
+  promptCache: PromptCache;
+  /** Drops expired and overflowing cache rows; null when nothing needs sweeping. */
+  evictCache: ((maxEntries: number) => Promise<void>) | null;
   /** The pool, when running on Postgres: the admin API stores its own tables in it. */
   pool: PgPoolLike | null;
   /** Delete logs past their retention window; null when unsupported. */
@@ -256,6 +264,8 @@ async function createBackend(
         options.secretStore ?? (keyring === null ? null : createMemorySecretStore(keyring)),
       writeKeyStore: options.writeKeyStore ?? new MemoryWriteKeyStore(),
       requestLogs: options.requestLogs ?? createMemoryRequestLogSink(),
+      promptCache: options.promptCache ?? new MemoryPromptCache(),
+      evictCache: null,
       pool: null,
       sweepLogs: null,
       close: async () => {
@@ -288,6 +298,10 @@ async function createBackend(
       writeKeyStore: options.writeKeyStore ?? new CachedWriteKeyStore(backend.writeKeyStore),
       requestLogs:
         options.requestLogs ?? new BufferedRequestLogSink(backend.requestLogWriter, { logger }),
+      promptCache: options.promptCache ?? backend.promptCache,
+      evictCache: async (maxEntries) => {
+        await backend.promptCache.evict(maxEntries);
+      },
       pool: backend.pool,
       sweepLogs: async (retentionMs, contentRetentionMs) => {
         await sweepRequestLogs(backend.pool, { retentionMs, contentRetentionMs, logger });
@@ -324,6 +338,8 @@ async function createBackend(
       options.secretStore ?? (keyring === null ? null : createMemorySecretStore(keyring)),
     writeKeyStore: options.writeKeyStore ?? new MemoryWriteKeyStore(),
     requestLogs: options.requestLogs ?? createMemoryRequestLogSink(),
+    promptCache: options.promptCache ?? new MemoryPromptCache(),
+    evictCache: null,
     pool: null,
     sweepLogs: null,
     close: async () => {
@@ -374,6 +390,7 @@ export async function startServer(options: StartOptions): Promise<RunningServer>
   const backend = await createBackend(resolved, runtime, logger, keyring, options);
   let unwatch: (() => void) | undefined;
   let sweepTimer: ReturnType<typeof setInterval> | undefined;
+  let cacheTimer: ReturnType<typeof setInterval> | undefined;
   /** Set by the first `close()`; every later call awaits the same shutdown. */
   let closing: Promise<void> | undefined;
 
@@ -388,6 +405,7 @@ export async function startServer(options: StartOptions): Promise<RunningServer>
       ...(backend.secretStore === null ? {} : { secrets: backend.secretStore }),
       writeKeys: backend.writeKeyStore,
       requestLogs: backend.requestLogs,
+      promptCache: backend.promptCache,
       logger: options.logger,
       fetch: fetchImpl,
       consumeFirebaseAppCheckToken: appCheck,
@@ -410,6 +428,7 @@ export async function startServer(options: StartOptions): Promise<RunningServer>
       }
       admin = createAdminApp({
         pool: backend.pool,
+        promptCache: backend.promptCache,
         secret: adminSecret,
         ...(env.OMNI_ADMIN_BASE_URL === undefined ? {} : { baseURL: env.OMNI_ADMIN_BASE_URL }),
         ...(env.OMNI_ADMIN_ALLOWED_ORIGINS === undefined
@@ -466,6 +485,21 @@ export async function startServer(options: StartOptions): Promise<RunningServer>
       sweepTimer.unref?.();
     }
 
+    // Cache eviction rides the same clock: one timer, two chores, and the cache's
+    // own advisory lock keeps replicas from doing the work twice.
+    if (backend.evictCache !== null) {
+      cacheTimer = setInterval(() => {
+        const cache = holder.current()?.config.cache;
+        if (cache === undefined || !cache.enabled) return;
+        void backend.evictCache?.(cache.maxEntries).catch((error: unknown) => {
+          logger.warn("evicting cached responses failed; will retry", {
+            error: describeError(error),
+          });
+        });
+      }, SWEEP_INTERVAL_MS);
+      cacheTimer.unref?.();
+    }
+
     const port = options.port ?? parsePort(env.PORT) ?? 8787;
     const hostname = options.hostname ?? "0.0.0.0";
 
@@ -506,6 +540,8 @@ export async function startServer(options: StartOptions): Promise<RunningServer>
       try {
         unwatch?.();
         if (sweepTimer !== undefined) clearInterval(sweepTimer);
+        if (cacheTimer !== undefined) clearInterval(cacheTimer);
+        if (cacheTimer !== undefined) clearInterval(cacheTimer);
 
         // Refuse new work, but keep listening. Closing the socket first would
         // make `/readyz` unreachable during the drain, and an unreachable
