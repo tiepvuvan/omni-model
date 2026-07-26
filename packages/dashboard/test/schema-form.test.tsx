@@ -26,15 +26,17 @@ describe("generated labels", () => {
         values={{}}
         onChange={() => undefined}
         idPrefix="t"
+        componentType="openai-compatible"
         omit={["type"]}
       />,
     );
 
     // Title Case with acronyms uppercased, exactly as the Figma file labels
     // them. "Api key" / "Base url" is the drift this asserts against.
+    // `baseUrl` is the one required field in this schema, so it is unmarked.
     expect(screen.getByLabelText("Base URL")).toBeInTheDocument();
-    expect(screen.getByLabelText("API Key")).toBeInTheDocument();
-    expect(screen.getByLabelText("Max Tokens Default")).toBeInTheDocument();
+    expect(screen.getByLabelText("API Key (optional)")).toBeInTheDocument();
+    expect(screen.getByLabelText("Max Tokens Default (optional)")).toBeInTheDocument();
   });
 
   it("picks a control per schema type", () => {
@@ -44,16 +46,22 @@ describe("generated labels", () => {
         values={{}}
         onChange={() => undefined}
         idPrefix="t"
+        componentType="openai-compatible"
         omit={["type"]}
       />,
     );
 
-    expect(screen.getByLabelText("API Key")).toHaveAttribute("type", "password");
-    expect(screen.getByLabelText("Max Tokens Default")).toHaveAttribute("type", "number");
+    expect(screen.getByLabelText("API Key (optional)")).toHaveAttribute("type", "password");
+    expect(screen.getByLabelText("Max Tokens Default (optional)")).toHaveAttribute(
+      "type",
+      "number",
+    );
     // A list is a chip box: an <input> that commits one value at a time.
-    expect(screen.getByLabelText("Models").tagName).toBe("INPUT");
-    expect(screen.getByLabelText("Headers").tagName).toBe("TEXTAREA");
-    expect(screen.getByRole("switch", { name: "Include Stream Usage" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Models (optional)").tagName).toBe("INPUT");
+    expect(screen.getByLabelText("Headers (optional)").tagName).toBe("TEXTAREA");
+    expect(
+      screen.getByRole("switch", { name: "Include Stream Usage (optional)" }),
+    ).toBeInTheDocument();
     expect(screen.getByRole("combobox", { name: /scheme/i })).toBeInTheDocument();
   });
 
@@ -64,15 +72,24 @@ describe("generated labels", () => {
         values={{}}
         onChange={() => undefined}
         idPrefix="t"
+        componentType="openai-compatible"
         omit={["type", "apiKey"]}
       />,
     );
 
-    expect(screen.queryByLabelText("API Key")).toBeNull();
+    expect(screen.queryByLabelText("API Key (optional)")).toBeNull();
   });
 
   it("says so when a component publishes no schema", () => {
-    render(<SchemaForm schema={null} values={{}} onChange={() => undefined} idPrefix="t" />);
+    render(
+      <SchemaForm
+        schema={null}
+        values={{}}
+        onChange={() => undefined}
+        idPrefix="t"
+        componentType="openai-compatible"
+      />,
+    );
 
     expect(screen.getByText(/publishes no options schema/)).toBeInTheDocument();
   });

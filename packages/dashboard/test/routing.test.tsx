@@ -4,6 +4,17 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { createFakeApi, type FakeApi } from "./support/fake-api";
 import { renderAt, selectOption, setMultiline } from "./support/render";
 
+/**
+ * Open a rule's action menu.
+ *
+ * The design gives a match-rule header one icon button, so reorder, probe and
+ * remove live behind it — a menu is how the header stays as drawn without losing
+ * actions a rule needs.
+ */
+async function openMenu(user: ReturnType<typeof userEvent.setup>, ruleId: string) {
+  await user.click(screen.getByRole("button", { name: `Actions for ${ruleId}` }));
+}
+
 let fake: FakeApi;
 
 /** Two rules, the catch-all last — the shape a healthy deployment has. */
@@ -103,7 +114,7 @@ describe("the rule rows", () => {
 
     // The green tick is a claim. A regex cannot validate CEL, so it only reports
     // what it can actually tell — the server is the authority, via simulate.
-    expect(within(row("pro-users")).getByText("Incomplete expression")).toBeInTheDocument();
+    expect(within(row("pro-users")).getByText(/Unbalanced brackets/)).toBeInTheDocument();
   });
 
   it("flags a rule an earlier catch-all makes unreachable", async () => {
@@ -231,17 +242,22 @@ describe("editing", () => {
     const user = userEvent.setup();
     await renderAt("/routing");
 
-    await user.click(screen.getByRole("button", { name: "Move everyone-else up" }));
+    await openMenu(user, "everyone-else");
+    await user.click(await screen.findByRole("menuitem", { name: "Move up" }));
     await save(user);
 
     expect(lastRouting().rules.map((rule) => rule.id)).toEqual(["everyone-else", "pro-users"]);
   });
 
   it("cannot move the first rule up or the last one down", async () => {
+    const user = userEvent.setup();
     await renderAt("/routing");
 
-    expect(screen.getByRole("button", { name: "Move pro-users up" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Move everyone-else down" })).toBeDisabled();
+    await openMenu(user, "pro-users");
+    expect(await screen.findByRole("menuitem", { name: "Move up" })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
   });
 
   it("clears the unreachable warning once the rule is moved above the catch-all", async () => {
@@ -262,7 +278,8 @@ describe("editing", () => {
 
     expect(row("premium")).toHaveTextContent("can never fire");
 
-    await user.click(screen.getByRole("button", { name: "Move premium up" }));
+    await openMenu(user, "premium");
+    await user.click(await screen.findByRole("menuitem", { name: "Move up" }));
 
     await waitFor(() => {
       expect(row("premium")).not.toHaveTextContent("can never fire");
@@ -295,7 +312,8 @@ describe("editing", () => {
     const user = userEvent.setup();
     await renderAt("/routing");
 
-    await user.click(screen.getByRole("button", { name: "Remove pro-users" }));
+    await openMenu(user, "pro-users");
+    await user.click(await screen.findByRole("menuitem", { name: "Remove rule" }));
     await save(user);
 
     expect(lastRouting().rules.map((rule) => rule.id)).toEqual(["everyone-else"]);
@@ -349,7 +367,8 @@ describe("probing a rule's upstream", () => {
     const user = userEvent.setup();
     await renderAt("/routing");
 
-    await user.click(within(row("pro-users")).getByRole("button", { name: "Test" }));
+    await openMenu(user, "pro-users");
+    await user.click(await screen.findByRole("menuitem", { name: "Test upstream" }));
 
     expect(await screen.findByText(/The upstream answered in 12ms/)).toBeInTheDocument();
   });
@@ -361,7 +380,8 @@ describe("probing a rule's upstream", () => {
     const user = userEvent.setup();
     await renderAt("/routing");
 
-    await user.click(within(row("pro-users")).getByRole("button", { name: "Test" }));
+    await openMenu(user, "pro-users");
+    await user.click(await screen.findByRole("menuitem", { name: "Test upstream" }));
 
     expect(await screen.findByText(/The upstream refused: HTTP 401/)).toBeInTheDocument();
   });
@@ -371,7 +391,8 @@ describe("probing a rule's upstream", () => {
     const user = userEvent.setup();
     await renderAt("/routing");
 
-    await user.click(within(row("pro-users")).getByRole("button", { name: "Test" }));
+    await openMenu(user, "pro-users");
+    await user.click(await screen.findByRole("menuitem", { name: "Test upstream" }));
 
     expect(await screen.findByText("this provider type cannot be probed")).toBeInTheDocument();
     expect(screen.queryByText(/refused/)).toBeNull();

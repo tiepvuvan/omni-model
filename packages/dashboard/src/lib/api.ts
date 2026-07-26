@@ -300,6 +300,20 @@ export const api = {
 
   config: () => request<ConfigResponse>("/config"),
 
+  /**
+   * Would this document work? Applies and stores nothing.
+   *
+   * The only authority on whether a CEL expression compiles: it builds a real
+   * bundle from the candidate and throws it away, so its message is exactly the
+   * one a save would have produced. 200 either way — "would this work" is a
+   * successful question to ask.
+   */
+  validate: (config: unknown) =>
+    request<{ valid: boolean; error?: string }>("/config/validate", {
+      method: "POST",
+      body: { config },
+    }),
+
   /** Replace `security` wholesale. */
   putSecurity: (value: SecurityBlock, note?: string) =>
     request<SaveResponse>("/security", { method: "PUT", body: { value, note } }),

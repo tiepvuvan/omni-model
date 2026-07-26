@@ -46,7 +46,8 @@ describe("the session guard", () => {
     const { router } = await renderAt("/routing");
 
     expect(currentPath(router)).toBe("/routing");
-    expect(await screen.findByRole("heading", { name: "Model Routing" })).toBeInTheDocument();
+    // The design gives this screen no title, so its own control is the anchor.
+    expect(await screen.findByRole("button", { name: "Matching Rule" })).toBeInTheDocument();
   });
 });
 
@@ -63,7 +64,8 @@ describe("sign in", () => {
     await user.type(screen.getByLabelText("Password"), "correct horse battery staple");
     await user.click(screen.getByRole("button", { name: "Sign In" }));
 
-    expect(await screen.findByRole("heading", { name: "Model Routing" })).toBeInTheDocument();
+    // The design gives this screen no title, so its own control is the anchor.
+    expect(await screen.findByRole("button", { name: "Matching Rule" })).toBeInTheDocument();
     expect(currentPath(router)).toBe("/routing");
   });
 
@@ -107,7 +109,8 @@ describe("first-run setup", () => {
     await user.type(screen.getByLabelText("Re-enter Password"), "a long test passphrase");
     await user.click(screen.getByRole("button", { name: "Save" }));
 
-    expect(await screen.findByRole("heading", { name: "Model Routing" })).toBeInTheDocument();
+    // The design gives this screen no title, so its own control is the anchor.
+    expect(await screen.findByRole("button", { name: "Matching Rule" })).toBeInTheDocument();
     expect(currentPath(router)).toBe("/routing");
     // Sign-up establishes the session, so there must be no sign-in round trip.
     expect(fake.callsTo("POST", "/auth/sign-in/email")).toHaveLength(0);

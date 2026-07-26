@@ -1,20 +1,20 @@
 import { createFileRoute, useRouter } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import connectorImage from "../../assets/connector.svg";
 import editIcon from "../../assets/edit.svg";
 import plusIcon from "../../assets/plus.svg";
 import plusTargetIcon from "../../assets/plus-target.svg";
-import validIcon from "../../assets/valid.svg";
 import vendorOpenAi from "../../assets/vendor-openai.svg";
 import vendorOpenAiCompatible from "../../assets/vendor-openai-compatible.svg";
-import { ActionBar, PaneTitle, WidePane } from "../../components/chrome";
+import { ActionBar, WidePane } from "../../components/chrome";
+import { CelEditor } from "../../components/routing/cel-editor";
+import { RuleMenu } from "../../components/routing/rule-menu";
 import { SimulatePanel } from "../../components/routing/simulate-panel";
 import { mergeCredentials, SchemaForm } from "../../components/schema-form";
 import {
   Button,
   Callout,
   Card,
-  cx,
   IconButton,
   SelectField,
   TextAreaField,
@@ -88,26 +88,6 @@ function catchAllIndex(rules: readonly RoutingRule[]): number {
   return rules.findIndex((rule) => rule.when.trim() === CATCH_ALL);
 }
 
-/**
- * Whether an expression is well-formed enough to say so.
- *
- * Deliberately shallow — balanced delimiters and a non-empty body. The authority
- * on a CEL expression is the server, which is what the simulate panel below
- * asks; claiming more from a regex would be a lie with a green tick on it.
- */
-function expressionLooksValid(source: string): boolean {
-  const trimmed = source.trim();
-  if (trimmed === "") return false;
-  let depth = 0;
-  for (const character of trimmed) {
-    if (character === "(") depth += 1;
-    if (character === ")") depth -= 1;
-    if (depth < 0) return false;
-  }
-  if (depth !== 0) return false;
-  return (trimmed.match(/"/g) ?? []).length % 2 === 0;
-}
-
 function RoutingScreen() {
   const { config, meta } = Route.useLoaderData();
   const router = useRouter();
@@ -122,6 +102,50 @@ function RoutingScreen() {
 
   const dirty = JSON.stringify(draft) !== JSON.stringify(stored);
   const catchAll = catchAllIndex(draft.rules);
+
+  /*
+   * The server is the only thing that actually compiles CEL.
+   *
+   * `POST /config/validate` builds the candidate document and throws it away, so
+   * asking it is free of consequence and its message is exactly the one a save
+   * would produce. Debounced, because it runs on every keystroke; the editor's own
+   * lexical checks cover the gap in between.
+   *
+   * The error names a path (`routing.rules[2] when: …`), which is how it gets
+   * attributed back to the rule that caused it rather than shown screen-wide.
+   */
+  const [compileError, setCompileError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!dirty) {
+      setCompileError(null);
+      return;
+    }
+    const timer = setTimeout(() => {
+      void api
+        .validate({ ...(config.config ?? {}), routing: draft })
+        .then((result) => setCompileError(result.valid ? null : (result.error ?? null)))
+        // A failed validate call is not a validation failure; leaving the previous
+        // verdict up would be a lie either way, so it clears.
+        .catch(() => setCompileError(null));
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [draft, dirty, config.config]);
+
+  /**
+   * The compile error for one rule, if it is about that rule.
+   *
+   * Validation reports one error for the whole document, and showing a message
+   * about `rules[2]` under every rule would be worse than showing it nowhere.
+   */
+  const compileErrorFor = (ruleId: string): string | null => {
+    if (compileError === null) return null;
+    const index = draft.rules.findIndex((rule, at) => idOf(rule, at) === ruleId);
+    if (index === -1) return null;
+    const mentioned =
+      compileError.includes(`rules[${index}]`) || compileError.includes(`"${ruleId}"`);
+    return mentioned ? compileError.replace(/^.*?when:\s*/, "") : null;
+  };
 
   const updateRule = (index: number, patch: Partial<RoutingRule>) => {
     setDraft((now) => ({
@@ -222,8 +246,6 @@ function RoutingScreen() {
       />
 
       <WidePane>
-        <PaneTitle>Model Routing</PaneTitle>
-
         {error !== null ? (
           <Callout tone="danger" title="The change was rejected" role="alert">
             <p className="mt-[4px]">{error}</p>
@@ -247,7 +269,6 @@ function RoutingScreen() {
         {draft.rules.map((rule, index) => {
           const id = idOf(rule, index);
           const unreachable = catchAll !== -1 && index > catchAll;
-          const valid = expressionLooksValid(rule.when);
           const probeResult = probes[id];
           const schema =
             meta.providers.find((entry) => entry.type === rule.target.type)?.optionsSchema ?? null;
@@ -259,79 +280,26 @@ function RoutingScreen() {
                 className="min-w-0 flex-1"
                 title="Match rule"
                 actions={
-                  <div className="flex items-center gap-[4px]">
-                    <Button
-                      size="medium"
-                      disabled={index === 0}
-                      aria-label={`Move ${id} up`}
-                      onClick={() => move(index, -1)}
-                    >
-                      ↑
-                    </Button>
-                    <Button
-                      size="medium"
-                      disabled={index === draft.rules.length - 1}
-                      aria-label={`Move ${id} down`}
-                      onClick={() => move(index, 1)}
-                    >
-                      ↓
-                    </Button>
-                    <Button
-                      size="medium"
-                      disabled={probeResult === "running"}
-                      onClick={() => void probe(id)}
-                    >
-                      {probeResult === "running" ? "Testing…" : "Test"}
-                    </Button>
-                    <Button
-                      size="medium"
-                      variant="destructive"
-                      aria-label={`Remove ${id}`}
-                      onClick={() => removeRule(index)}
-                    >
-                      Remove
-                    </Button>
-                  </div>
+                  <RuleMenu
+                    ruleId={id}
+                    canMoveUp={index > 0}
+                    canMoveDown={index < draft.rules.length - 1}
+                    probing={probeResult === "running"}
+                    onMoveUp={() => move(index, -1)}
+                    onMoveDown={() => move(index, 1)}
+                    onTest={() => void probe(id)}
+                    onRemove={() => removeRule(index)}
+                  />
                 }
                 bodyClassName="gap-[12px]"
               >
-                <div className="flex w-full flex-col overflow-clip rounded-[var(--radius-card)] border border-solid border-border bg-background-grouped-container">
-                  <label className="sr-only" htmlFor={`when-${id}`}>
-                    Condition for {id}
-                  </label>
-                  <textarea
-                    id={`when-${id}`}
-                    value={rule.when}
-                    rows={4}
-                    spellCheck={false}
-                    placeholder={'request.model == "smart" && has(user.claims.tier)'}
-                    className="w-full resize-none bg-transparent p-[16px] type-mono-12 text-foreground-primary outline-none"
-                    onChange={(event) => updateRule(index, { when: event.target.value })}
-                  />
-                  <div className="flex w-full items-center justify-between p-[12px]">
-                    <span className="type-mono-12 text-foreground-secondary">{id}</span>
-                    <span className="flex items-start gap-[4px]">
-                      <img
-                        src={validIcon}
-                        alt=""
-                        aria-hidden
-                        className={cx("size-[16px]", !valid && "opacity-30")}
-                      />
-                      <span
-                        className={cx(
-                          "type-strong-12",
-                          valid ? "text-success" : "text-foreground-secondary",
-                        )}
-                      >
-                        {rule.when.trim() === CATCH_ALL
-                          ? "Catch-all — matches everything"
-                          : valid
-                            ? "Valid expression"
-                            : "Incomplete expression"}
-                      </span>
-                    </span>
-                  </div>
-                </div>
+                <CelEditor
+                  id={`when-${id}`}
+                  ruleLabel={id}
+                  value={rule.when}
+                  onChange={(when) => updateRule(index, { when })}
+                  serverError={compileErrorFor(id)}
+                />
 
                 {unreachable ? (
                   <p className="type-label-12 text-destructive">
@@ -393,6 +361,7 @@ function RoutingScreen() {
                   values={rule.target}
                   only={TARGET_FIELDS[rule.target.type] ?? ["apiKey"]}
                   omit={["type", "model"]}
+                  componentType={rule.target.type}
                   idPrefix={`target-${id}`}
                   onChange={(options) =>
                     setTarget(index, {

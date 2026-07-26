@@ -430,32 +430,40 @@ export function Checkbox({
 /** A 30×19 switch. The thumb is a 15px circle inset 2px. */
 export function Switch({
   label,
+  help,
   checked,
   onCheckedChange,
 }: {
   label: string;
+  /** Rendered under the row — never folded into the label, which names the control. */
+  help?: ReactNode;
   checked: boolean;
   onCheckedChange: (checked: boolean) => void;
 }) {
   return (
-    <span className="flex items-center gap-[8px] type-copy-14 text-foreground-primary">
-      <BaseSwitch.Root
-        checked={checked}
-        onCheckedChange={onCheckedChange}
-        aria-label={label}
-        className={cx(
-          "relative h-[19px] w-[30px] shrink-0 rounded-[48px] border border-solid transition-colors",
-          checked ? "border-white/30 bg-accent-primary" : "border-border bg-item-selection",
-        )}
-      >
-        <BaseSwitch.Thumb
+    <span className="flex w-full flex-col gap-[8px]">
+      <span className="flex items-center gap-[8px] type-copy-14 text-foreground-primary">
+        <BaseSwitch.Root
+          checked={checked}
+          onCheckedChange={onCheckedChange}
+          aria-label={label}
           className={cx(
-            "absolute top-[1px] block size-[15px] rounded-full bg-background-l3 shadow transition-[left]",
-            checked ? "left-[13px]" : "left-[1px]",
+            "relative h-[19px] w-[30px] shrink-0 rounded-[48px] border border-solid transition-colors",
+            checked ? "border-white/30 bg-accent-primary" : "border-border bg-item-selection",
           )}
-        />
-      </BaseSwitch.Root>
-      {label}
+        >
+          <BaseSwitch.Thumb
+            className={cx(
+              "absolute top-[1px] block size-[15px] rounded-full bg-background-l3 shadow transition-[left]",
+              checked ? "left-[13px]" : "left-[1px]",
+            )}
+          />
+        </BaseSwitch.Root>
+        {label}
+      </span>
+      {help !== undefined ? (
+        <span className="type-label-12 text-foreground-secondary">{help}</span>
+      ) : null}
     </span>
   );
 }

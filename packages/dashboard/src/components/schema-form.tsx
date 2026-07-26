@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { JsonSchema } from "../lib/api";
+import { helpFor } from "../lib/help";
 import { SelectField, Switch, TextAreaField, TextField, TokensField } from "./ui/primitives";
 
 /**
@@ -112,6 +113,14 @@ export interface SchemaFormProps {
   only?: readonly string[];
   /** Prefix for generated input ids, so two forms on one page do not collide. */
   idPrefix: string;
+  /**
+   * The component type, e.g. `jwt` — the key for operator-facing help text.
+   *
+   * Without it a field falls back to the schema's own description, which is
+   * written for a contributor reading the source rather than for someone
+   * deciding what to type.
+   */
+  componentType: string;
 }
 
 export function SchemaForm({
@@ -121,6 +130,7 @@ export function SchemaForm({
   omit = [],
   only,
   idPrefix,
+  componentType,
 }: SchemaFormProps) {
   const properties = schema?.properties;
   if (properties === undefined) {
@@ -179,6 +189,7 @@ export function SchemaForm({
           schema={property}
           value={values[name]}
           required={required.has(name)}
+          componentType={componentType}
           id={`${idPrefix}-${name}`}
           onChange={(value) => set(name, value)}
         />
@@ -192,6 +203,7 @@ function SchemaField({
   schema,
   value,
   required,
+  componentType,
   id,
   onChange,
 }: {
@@ -199,11 +211,20 @@ function SchemaField({
   schema: JsonSchema;
   value: unknown;
   required: boolean;
+  componentType: string;
   id: string;
   onChange: (value: unknown) => void;
 }) {
-  const label = labelFor(name);
-  const help = schema.description;
+  /*
+   * Optional is marked, required is not.
+   *
+   * Marking the optional ones is the useful direction: on these screens most
+   * fields are optional, so badging the minority that are required would leave
+   * an operator unsure whether the rest are needed. "(optional)" answers the
+   * question they actually have — can I leave this alone?
+   */
+  const label = required ? labelFor(name) : `${labelFor(name)} (optional)`;
+  const help = helpFor(componentType, name, schema.description);
 
   if (isCredentialField(name)) {
     return <CredentialField label={label} help={help} value={value} id={id} onChange={onChange} />;
@@ -229,7 +250,8 @@ function SchemaField({
   if (type === "boolean") {
     return (
       <Switch
-        label={help ?? label}
+        label={label}
+        {...(help === undefined ? {} : { help })}
         checked={value === true || (value === undefined && schema.default === true)}
         onCheckedChange={onChange}
       />

@@ -75,7 +75,9 @@ describe("the vendor cards", () => {
     );
 
     // The fields come from the verifier's own published schema.
-    expect(await within(card("Supabase Auth")).findByLabelText("JWKS URL")).toBeInTheDocument();
+    expect(
+      await within(card("Supabase Auth")).findByLabelText("JWKS URL (optional)"),
+    ).toBeInTheDocument();
   });
 
   it("never renders a sealed credential's id", async () => {
@@ -113,7 +115,9 @@ describe("the Firebase card", () => {
 
     // App Check is a second verifier, not a Firebase Auth option — so enabling it
     // has to add an entry rather than set a flag.
-    expect(await within(card("Firebase")).findByLabelText("Project Number")).toBeInTheDocument();
+    expect(
+      await within(card("Firebase")).findByLabelText("Project Number (optional)"),
+    ).toBeInTheDocument();
     await save(user);
     const providers = lastSecurity().providers as { type: string }[];
     expect(providers.map((provider) => provider.type)).toContain("firebase-auth");
@@ -166,13 +170,16 @@ describe("editing", () => {
     const user = userEvent.setup();
     await renderAt("/authentication");
 
-    const secret = within(card("Custom JWT")).getByLabelText("Secret");
+    const secret = within(card("Custom JWT")).getByLabelText("Secret (optional)");
     // There is no endpoint that returns plaintext, so the box is empty and the
     // placeholder carries the meaning.
     expect(secret).toHaveValue("");
     expect(secret).toHaveAttribute("placeholder", expect.stringContaining("leave blank to keep"));
 
-    await user.type(within(card("Custom JWT")).getByLabelText("Issuer"), "https://issuer.test");
+    await user.type(
+      within(card("Custom JWT")).getByLabelText("Issuer (optional)"),
+      "https://issuer.test",
+    );
     await save(user);
 
     const providers = lastSecurity().providers as Record<string, unknown>[];
@@ -186,7 +193,10 @@ describe("editing", () => {
     const user = userEvent.setup();
     await renderAt("/authentication");
 
-    await user.type(within(card("Custom JWT")).getByLabelText("Secret"), "a-rotated-secret");
+    await user.type(
+      within(card("Custom JWT")).getByLabelText("Secret (optional)"),
+      "a-rotated-secret",
+    );
     await save(user);
 
     const providers = lastSecurity().providers as Record<string, unknown>[];
@@ -197,7 +207,7 @@ describe("editing", () => {
     const user = userEvent.setup();
     await renderAt("/authentication");
 
-    const algorithms = within(card("Custom JWT")).getByLabelText("Algorithms");
+    const algorithms = within(card("Custom JWT")).getByLabelText("Algorithms (optional)");
     // The stored value renders as a chip, and a new one commits on Enter.
     expect(within(card("Custom JWT")).getByText("HS256")).toBeInTheDocument();
     await user.type(algorithms, "HS384{Enter}");
@@ -223,7 +233,7 @@ describe("editing", () => {
     const user = userEvent.setup();
     await renderAt("/authentication");
 
-    await user.type(within(card("Custom JWT")).getByLabelText("Issuer"), "x");
+    await user.type(within(card("Custom JWT")).getByLabelText("Issuer (optional)"), "x");
     await user.click(screen.getByRole("button", { name: "Save Changes" }));
 
     expect(await screen.findByText(/requires either secret or jwksUrl/)).toBeInTheDocument();
@@ -276,7 +286,7 @@ describe("public paths", () => {
     };
     await renderAt("/authentication");
 
-    await user.type(within(card("Custom JWT")).getByLabelText("Issuer"), "x");
+    await user.type(within(card("Custom JWT")).getByLabelText("Issuer (optional)"), "x");
     await save(user);
 
     expect(lastSecurity().publicPaths).toEqual(["/keep"]);

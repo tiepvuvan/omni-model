@@ -240,6 +240,7 @@ function AuthenticationScreen() {
                     values={optionsFor(draft.providers, card.type) ?? {}}
                     only={card.fields}
                     omit={["type", "name"]}
+                    componentType={card.type}
                     idPrefix={`verifier-${card.type}`}
                     onChange={(options) => setOptions(card.type, options)}
                   />
@@ -257,6 +258,7 @@ function AuthenticationScreen() {
                           values={optionsFor(draft.providers, card.extra.type) ?? {}}
                           only={card.extra.fields}
                           omit={["type", "name"]}
+                          componentType={card.extra.type}
                           idPrefix={`verifier-${card.extra.type}`}
                           onChange={(options) => setOptions(card.extra?.type ?? "", options)}
                         />
