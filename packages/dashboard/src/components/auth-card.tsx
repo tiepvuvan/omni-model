@@ -1,44 +1,36 @@
 import type { FormEventHandler, ReactNode } from "react";
 
 /**
- * The centred card the two unauthenticated screens share.
+ * The unauthenticated screens: a centred 420px column on `Background L2`.
  *
- * Sign-in and first-run setup are the same object with different copy, and
- * keeping them one component is what stops the pair from drifting apart the
- * first time either is touched.
+ * No card and no wordmark — the design puts the heading and the fields straight
+ * on the background. The 27px gap between the heading block and the field group,
+ * and the 16px gap between fields, are both from the file.
  */
 export function AuthCard({
   title,
-  subtitle,
   onSubmit,
   children,
   footer,
 }: {
   title: string;
-  subtitle?: ReactNode;
   onSubmit: FormEventHandler<HTMLFormElement>;
   children: ReactNode;
   footer?: ReactNode;
 }) {
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background-l1 px-4 py-12">
-      <div className="w-full max-w-sm">
-        <div className="mb-6 flex flex-col gap-1.5 text-center">
-          <span className="text-sm font-semibold tracking-tight text-foreground-primary">
-            omni-model
-          </span>
-          <h1 className="text-xl font-semibold tracking-tight text-foreground-primary">{title}</h1>
-          {subtitle !== undefined ? (
-            <p className="text-sm text-foreground-secondary">{subtitle}</p>
-          ) : null}
+    <div className="flex min-h-dvh items-center justify-center bg-background-l2 px-[16px]">
+      <div className="flex w-[420px] max-w-full flex-col gap-[27px]">
+        <div className="flex w-full flex-col items-center">
+          <h1 className="type-heading-20 w-full text-center text-foreground-primary">{title}</h1>
         </div>
 
-        <form onSubmit={onSubmit} className="panel flex flex-col gap-4 px-5 py-5">
+        <form onSubmit={onSubmit} noValidate className="flex w-full flex-col gap-[16px]">
           {children}
         </form>
 
         {footer !== undefined ? (
-          <div className="mt-4 text-center text-xs text-foreground-secondary">{footer}</div>
+          <p className="type-label-12 text-center text-foreground-secondary">{footer}</p>
         ) : null}
       </div>
     </div>

@@ -1,0 +1,56 @@
+# A local omni-model with the dashboard, for looking at it.
+#
+# The two secrets are read from a `.env` file next to this one; generate it with
+#
+#   printf 'OMNI_ENCRYPTION_KEY=%s\nOMNI_ADMIN_SECRET=%s\n' \
+#     "$(openssl rand -base64 32)" "$(openssl rand -base64 32)" > .env
+#
+# Keep them stable. `OMNI_ADMIN_SECRET` signs operator sessions, so changing it
+# signs everyone out; `OMNI_ENCRYPTION_KEY` is what sealed credentials are
+# encrypted with, so losing it means the stored configuration can no longer be
+# decrypted and the proxy will refuse to build a bundle from it.
+#
+#   docker compose -f examples/docker-compose.dashboard.yml up -d
+#   open http://localhost:8787/admin
+#
+# The database is a named volume, so the operator account and configuration
+# survive `down` — use `down -v` when you actually want a clean slate and the
+# first-run sign-up screen back.
+name: omni-model-local
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: omni
+      POSTGRES_PASSWORD: local-development-only
+      POSTGRES_DB: omni
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U omni -d omni"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  omni:
+    # Built locally: `docker build -t omni-model:local .`
+    image: omni-model:local
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8787:8787"
+    environment:
+      OMNI_STORAGE_TYPE: postgres
+      OMNI_STORAGE_POSTGRES_URL: postgres://omni:local-development-only@postgres:5432/omni
+      # Present and non-empty is what turns the admin API — and with it the
+      # dashboard at /admin — on at all.
+      OMNI_ADMIN_SECRET: ${OMNI_ADMIN_SECRET:?set it in .env, at least 32 characters}
+      # Without a keyring the API refuses to accept a new plaintext credential,
+      # since there would be nowhere to seal it.
+      OMNI_ENCRYPTION_KEY: ${OMNI_ENCRYPTION_KEY:?set it in .env, 32 random bytes base64}
+      OMNI_LOG_LEVEL: info
+
+volumes:
+  pgdata:

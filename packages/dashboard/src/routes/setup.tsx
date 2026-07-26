@@ -8,7 +8,7 @@ import { ApiError, api } from "../lib/api";
 const MIN_PASSWORD = 8;
 
 /**
- * First-run: create the operator account.
+ * First-run: create the operator account. `/setup` in the design.
  *
  * Reachable only while the deployment has zero accounts. That window is the only
  * thing between an open port and a configuration API, so the loader closes the
@@ -25,7 +25,6 @@ export const Route = createFileRoute("/setup")({
 
 function Setup() {
   const navigate = useNavigate();
-  const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
@@ -41,7 +40,10 @@ function Setup() {
     setError(null);
     setBusy(true);
     try {
-      await api.signUp(email, password, name);
+      // The design has no name field, so the address is the display name. Better
+      // Auth requires one, and inventing a separate field the design does not
+      // have would be worse than reusing what the operator already typed.
+      await api.signUp(email, password, email);
       // Sign-up establishes the session, so there is nothing to sign in to.
       await navigate({ to: "/routing" });
     } catch (caught) {
@@ -55,8 +57,7 @@ function Setup() {
 
   return (
     <AuthCard
-      title="Create the first operator"
-      subtitle="This deployment has no accounts yet. The account you create here is granted the operator role."
+      title="Admin Setup"
       onSubmit={submit}
       footer="Sign-up closes permanently once this account exists. Use the create-admin command to add operators after that."
     >
@@ -67,19 +68,12 @@ function Setup() {
       ) : null}
 
       <TextField
-        label="Name"
-        name="name"
-        autoComplete="name"
-        required
-        value={name}
-        onChange={(event) => setName(event.target.value)}
-      />
-      <TextField
         label="Email"
         type="email"
         name="email"
         autoComplete="username"
         required
+        placeholder="jane@company.com"
         value={email}
         onChange={(event) => setEmail(event.target.value)}
       />
@@ -89,17 +83,18 @@ function Setup() {
         name="new-password"
         autoComplete="new-password"
         required
+        placeholder="Your password"
         value={password}
         onChange={(event) => setPassword(event.target.value)}
         error={tooShort ? `Use at least ${MIN_PASSWORD} characters.` : null}
-        hint="A passphrase is easier to remember and harder to guess than a short password."
       />
       <TextField
-        label="Confirm password"
+        label="Re-enter Password"
         type="password"
         name="confirm-password"
         autoComplete="new-password"
         required
+        placeholder="Your password"
         value={confirm}
         onChange={(event) => setConfirm(event.target.value)}
         error={mismatch ? "The two passwords do not match." : null}
@@ -109,9 +104,9 @@ function Setup() {
         type="submit"
         variant="primary"
         disabled={busy || mismatch || tooShort}
-        className="mt-1 w-full"
+        className="w-full"
       >
-        {busy ? "Creating…" : "Create operator"}
+        {busy ? "Saving…" : "Save"}
       </Button>
     </AuthCard>
   );

@@ -2,7 +2,7 @@ import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it } from "vitest";
 import { createFakeApi, type FakeApi } from "./support/fake-api";
-import { dialog, renderAt, selectOption, setMultiline } from "./support/render";
+import { renderAt, selectOption, setMultiline } from "./support/render";
 
 let fake: FakeApi;
 
@@ -35,57 +35,80 @@ beforeEach(() => {
   fake.install();
 });
 
-/** The `<li>` for one rule, found by the id or name shown in its header. */
-function ruleRow(label: string): HTMLElement {
-  const heading = screen.getByText(label);
-  const row = heading.closest("li");
-  if (row === null) throw new Error(`no rule row for ${label}`);
-  return row;
+/** The paired match-rule / target row for one rule. */
+function row(id: string): HTMLElement {
+  const element = document.querySelector(`[data-rule="${id}"]`);
+  if (element === null) throw new Error(`no row for ${id}`);
+  return element as HTMLElement;
 }
 
-describe("the rule list", () => {
-  it("shows rules in evaluation order with their target", async () => {
+/** The `routing` block the last save sent. */
+function lastRouting(): { allowedModels: string[]; rules: Record<string, unknown>[] } {
+  const calls = fake.callsTo("PUT", "/routing");
+  const body = calls[calls.length - 1]?.body as
+    | { value: { allowedModels: string[]; rules: Record<string, unknown>[] } }
+    | undefined;
+  if (body === undefined) throw new Error("nothing was saved to /routing");
+  return body.value;
+}
+
+const save = async (user: ReturnType<typeof userEvent.setup>) => {
+  await user.click(screen.getByRole("button", { name: "Save Changes" }));
+  await waitFor(() => {
+    expect(fake.callsTo("PUT", "/routing").length).toBeGreaterThan(0);
+  });
+};
+
+describe("the rule rows", () => {
+  it("pairs each condition with where it goes, in evaluation order", async () => {
     await renderAt("/routing");
 
-    const rows = await screen.findAllByRole("listitem");
+    const rows = document.querySelectorAll("[data-rule]");
     // Order is meaning: the first matching rule wins, so the list must render in
-    // the order the router evaluates rather than sorted or grouped.
-    expect(rows[0]).toHaveTextContent("pro-users");
-    expect(rows[0]).toHaveTextContent("anthropic");
-    expect(rows[0]).toHaveTextContent("claude-sonnet-5");
-    expect(rows[1]).toHaveTextContent("everyone-else");
-    expect(rows[1]).toHaveTextContent("openai-compatible");
+    // the order the router evaluates.
+    expect([...rows].map((element) => element.getAttribute("data-rule"))).toEqual([
+      "pro-users",
+      "everyone-else",
+    ]);
+    // Each row carries the condition on the left and the target on the right.
+    expect(row("pro-users")).toHaveTextContent("Match rule");
+    expect(row("pro-users")).toHaveTextContent("Anthropic");
+    expect(row("everyone-else")).toHaveTextContent("Open AI Compatible");
   });
 
-  it("marks the catch-all", async () => {
+  it("shows the condition as editable mono text", async () => {
     await renderAt("/routing");
 
-    expect(within(ruleRow("everyone-else")).getByText("catch-all")).toBeInTheDocument();
-    expect(within(ruleRow("pro-users")).queryByText("catch-all")).toBeNull();
+    expect(within(row("pro-users")).getByLabelText("Condition for pro-users")).toHaveValue(
+      'has(user.claims.tier) && user.claims.tier == "pro"',
+    );
   });
 
-  it("says a credential is sealed without ever showing one", async () => {
+  it("calls a literal true a catch-all rather than just valid", async () => {
     await renderAt("/routing");
 
-    expect(within(ruleRow("pro-users")).getByText("sealed credential")).toBeInTheDocument();
-    // A `${VAR}` reference is safe to display: it names an environment variable
-    // rather than carrying a value.
-    expect(within(ruleRow("everyone-else")).getByText("${OPENAI_API_KEY}")).toBeInTheDocument();
-    expect(document.body.textContent).not.toContain("sec-1");
+    expect(
+      within(row("everyone-else")).getByText("Catch-all — matches everything"),
+    ).toBeInTheDocument();
+    expect(within(row("pro-users")).getByText("Valid expression")).toBeInTheDocument();
   });
 
-  it("says nothing is served when there are no rules", async () => {
-    fake.state.config = { routing: { allowedModels: [], rules: [] } };
-
+  it("says an unbalanced expression is incomplete instead of calling it valid", async () => {
+    const user = userEvent.setup();
     await renderAt("/routing");
 
-    expect(await screen.findByText(/every request to/)).toHaveTextContent("is a 404");
+    const condition = within(row("pro-users")).getByLabelText("Condition for pro-users");
+    await user.clear(condition);
+    await user.type(condition, "has(user.claims.tier");
+
+    // The green tick is a claim. A regex cannot validate CEL, so it only reports
+    // what it can actually tell — the server is the authority, via simulate.
+    expect(within(row("pro-users")).getByText("Incomplete expression")).toBeInTheDocument();
   });
 
   it("flags a rule an earlier catch-all makes unreachable", async () => {
-    // The defect this exists to catch: appending to a list that already ends in a
-    // catch-all puts the new rule where it can never fire, and the proxy keeps
-    // answering normally from the earlier rule.
+    // The defect this exists to catch: a rule below a catch-all is dead on
+    // arrival, and the proxy keeps answering normally from the earlier rule.
     fake.state.config = {
       routing: {
         rules: [
@@ -101,32 +124,117 @@ describe("the rule list", () => {
 
     await renderAt("/routing");
 
-    const row = ruleRow("premium");
-    expect(within(row).getByText("unreachable")).toBeInTheDocument();
-    expect(row).toHaveTextContent("can never fire");
-    expect(within(ruleRow("everyone")).queryByText("unreachable")).toBeNull();
+    expect(row("premium")).toHaveTextContent("can never fire");
+    expect(row("everyone")).not.toHaveTextContent("can never fire");
+  });
+
+  it("says nothing is served when there are no rules", async () => {
+    fake.state.config = { routing: { allowedModels: [], rules: [] } };
+
+    await renderAt("/routing");
+
+    expect(await screen.findByText(/every request to/)).toHaveTextContent("is a 404");
   });
 });
 
-describe("reordering", () => {
-  it("moves a rule up by rewriting the whole list", async () => {
+describe("credentials", () => {
+  it("shows a sealed credential as stored, without revealing it", async () => {
+    await renderAt("/routing");
+
+    const apiKey = within(row("pro-users")).getByLabelText("API Key");
+    expect(apiKey).toHaveValue("");
+    expect(apiKey).toHaveAttribute("placeholder", expect.stringContaining("leave blank to keep"));
+    expect(document.body.textContent).not.toContain("sec-1");
+  });
+
+  it("names the environment variable a ${VAR} reference points at", async () => {
+    await renderAt("/routing");
+
+    // Safe to display: it names a variable rather than carrying a value.
+    expect(row("everyone-else")).toHaveTextContent("${OPENAI_API_KEY}");
+  });
+
+  it("keeps every untouched credential when something else is edited", async () => {
+    const user = userEvent.setup();
+    await renderAt("/routing");
+
+    const model = within(row("pro-users")).getByLabelText("Model");
+    await user.clear(model);
+    await user.type(model, "claude-opus-4");
+    await save(user);
+
+    const targets = lastRouting().rules.map((rule) => rule.target as Record<string, unknown>);
+    // Dropping the key would delete the credential; sending "" would fail the
+    // factory's own validation. Sending the reference back is the only correct move.
+    expect(targets[0]?.apiKey).toEqual({ $secret: "sec-1" });
+    expect(targets[0]?.model).toBe("claude-opus-4");
+    expect(targets[1]?.apiKey).toBe("${OPENAI_API_KEY}");
+  });
+
+  it("replaces a credential when a new one is typed", async () => {
+    const user = userEvent.setup();
+    await renderAt("/routing");
+
+    await user.type(within(row("pro-users")).getByLabelText("API Key"), "sk-ant-rotated");
+    await save(user);
+
+    // Plaintext on the wire is correct: the API seals it before the revision is
+    // written, which is the only way an operator can type a key at all.
+    const target = lastRouting().rules[0]?.target as Record<string, unknown>;
+    expect(target.apiKey).toBe("sk-ant-rotated");
+  });
+
+  it("drops a blank model so the client's model passes through", async () => {
+    const user = userEvent.setup();
+    await renderAt("/routing");
+
+    await user.clear(within(row("pro-users")).getByLabelText("Model"));
+    await save(user);
+
+    // Absent means "forward whatever the client asked for"; `""` is not a model.
+    const first = lastRouting().rules[0]?.target as Record<string, unknown>;
+    expect("model" in first).toBe(false);
+  });
+});
+
+describe("editing", () => {
+  it("commits nothing until Save Changes", async () => {
+    const user = userEvent.setup();
+    await renderAt("/routing");
+
+    await user.type(within(row("pro-users")).getByLabelText("Model"), "-x");
+
+    expect(fake.callsTo("PUT", "/routing")).toHaveLength(0);
+    expect(screen.getByRole("button", { name: "Save Changes" })).toBeEnabled();
+  });
+
+  it("leaves the action bar inert until something changes", async () => {
+    await renderAt("/routing");
+
+    expect(screen.getByRole("button", { name: "Save Changes" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Discard" })).toBeDisabled();
+  });
+
+  it("discards back to what is stored", async () => {
+    const user = userEvent.setup();
+    await renderAt("/routing");
+
+    const model = within(row("pro-users")).getByLabelText("Model");
+    await user.clear(model);
+    await user.type(model, "something-else");
+    await user.click(screen.getByRole("button", { name: "Discard" }));
+
+    expect(within(row("pro-users")).getByLabelText("Model")).toHaveValue("claude-sonnet-5");
+  });
+
+  it("reorders with the whole list", async () => {
     const user = userEvent.setup();
     await renderAt("/routing");
 
     await user.click(screen.getByRole("button", { name: "Move everyone-else up" }));
+    await save(user);
 
-    await waitFor(() => {
-      expect(fake.callsTo("PUT", "/routing")).toHaveLength(1);
-    });
-    // A per-rule write deliberately keeps a rule's position, so a whole-list PUT
-    // is the only request that can express a new order.
-    const body = fake.callsTo("PUT", "/routing")[0]?.body as {
-      value: { rules: { id: string }[] };
-    };
-    expect(body.value.rules.map((rule) => rule.id)).toEqual(["everyone-else", "pro-users"]);
-
-    const rows = await screen.findAllByRole("listitem");
-    expect(rows[0]).toHaveTextContent("everyone-else");
+    expect(lastRouting().rules.map((rule) => rule.id)).toEqual(["everyone-else", "pro-users"]);
   });
 
   it("cannot move the first rule up or the last one down", async () => {
@@ -152,253 +260,87 @@ describe("reordering", () => {
     const user = userEvent.setup();
     await renderAt("/routing");
 
-    expect(within(ruleRow("premium")).getByText("unreachable")).toBeInTheDocument();
+    expect(row("premium")).toHaveTextContent("can never fire");
 
     await user.click(screen.getByRole("button", { name: "Move premium up" }));
 
     await waitFor(() => {
-      expect(within(ruleRow("premium")).queryByText("unreachable")).toBeNull();
-    });
-  });
-});
-
-describe("adding a rule", () => {
-  it("sends the id, condition and target together", async () => {
-    const user = userEvent.setup();
-    await renderAt("/routing");
-
-    await user.click(screen.getByRole("button", { name: "Add rule" }));
-    await user.type(dialog().getByLabelText("Rule id"), "cheap-tier");
-    await user.type(dialog().getByLabelText("Condition"), "!has(user.claims.tier)");
-    await user.type(dialog().getByLabelText("Model"), "llama-3.3-70b");
-    // The form opens on `openai-compatible` — the preferred default, not whatever
-    // sorts first — so its schema is what drives the fields here.
-    await user.type(dialog().getByLabelText("Base url"), "https://api.groq.com/openai/v1");
-    await user.type(dialog().getByLabelText("Api key"), "sk-typed-in-the-form");
-    await user.click(screen.getByRole("button", { name: "Add rule" }));
-
-    await waitFor(() => {
-      expect(fake.callsTo("PUT", "/routing/rules/cheap-tier")).toHaveLength(1);
-    });
-    const body = fake.callsTo("PUT", "/routing/rules/cheap-tier")[0]?.body as {
-      value: { when: string; target: Record<string, unknown> };
-    };
-    expect(body.value.when).toBe("!has(user.claims.tier)");
-    expect(body.value.target).toMatchObject({
-      type: "openai-compatible",
-      model: "llama-3.3-70b",
-      baseUrl: "https://api.groq.com/openai/v1",
-      apiKey: "sk-typed-in-the-form",
+      expect(row("premium")).not.toHaveTextContent("can never fire");
     });
   });
 
-  it("opens on the preferred provider rather than the first alphabetically", async () => {
+  it("adds a rule from the dashed target row", async () => {
     const user = userEvent.setup();
     await renderAt("/routing");
 
-    await user.click(screen.getByRole("button", { name: "Add rule" }));
+    await user.click(screen.getByRole("button", { name: "Model" }));
+    await save(user);
 
-    // The fake registry lists `anthropic` first, matching how `GET /meta` sorts.
-    expect(dialog().getByRole("combobox", { name: /provider/i })).toHaveTextContent(
-      "openai-compatible",
+    const rules = lastRouting().rules;
+    expect(rules).toHaveLength(3);
+    expect(rules[2]?.id).toBe("rule-3");
+  });
+
+  it("adds a rule from the Matching Rule button", async () => {
+    const user = userEvent.setup();
+    await renderAt("/routing");
+
+    await user.click(screen.getByRole("button", { name: "Matching Rule" }));
+    await save(user);
+
+    expect(lastRouting().rules).toHaveLength(3);
+  });
+
+  it("removes a rule", async () => {
+    const user = userEvent.setup();
+    await renderAt("/routing");
+
+    await user.click(screen.getByRole("button", { name: "Remove pro-users" }));
+    await save(user);
+
+    expect(lastRouting().rules.map((rule) => rule.id)).toEqual(["everyone-else"]);
+  });
+
+  it("clears the options when a target's provider changes", async () => {
+    const user = userEvent.setup();
+    await renderAt("/routing");
+
+    await user.click(
+      within(row("everyone-else")).getByRole("button", {
+        name: "Change the provider for everyone-else",
+      }),
     );
-  });
+    await selectOption(user, /provider/i, "Anthropic");
 
-  it("refuses an id that another rule already uses", async () => {
-    const user = userEvent.setup();
-    await renderAt("/routing");
-
-    await user.click(screen.getByRole("button", { name: "Add rule" }));
-    await user.type(dialog().getByLabelText("Rule id"), "pro-users");
-    await user.type(dialog().getByLabelText("Condition"), "true");
-    await user.click(screen.getByRole("button", { name: "Add rule" }));
-
-    expect(await screen.findByText("Another rule already uses this id.")).toBeInTheDocument();
-    expect(fake.callsTo("PUT", "/routing/rules/pro-users")).toHaveLength(0);
-  });
-
-  it("requires a condition, naming the catch-all as the way to match everything", async () => {
-    const user = userEvent.setup();
-    await renderAt("/routing");
-
-    await user.click(screen.getByRole("button", { name: "Add rule" }));
-    await user.type(dialog().getByLabelText("Rule id"), "no-condition");
-    await user.click(screen.getByRole("button", { name: "Add rule" }));
-
-    expect(
-      await screen.findByText("A condition is required — use true for a catch-all."),
-    ).toBeInTheDocument();
-  });
-
-  it("warns while typing that a catch-all shadows everything after it", async () => {
-    const user = userEvent.setup();
-    await renderAt("/routing");
-
-    await user.click(screen.getByRole("button", { name: "Add rule" }));
-    await user.type(dialog().getByLabelText("Condition"), "true");
-
-    expect(await screen.findByText(/Keep this rule last/)).toBeInTheDocument();
+    // Anthropic's card does not draw a base URL, so the field goes — and the
+    // value goes with it. Carrying a value across a type change is how an
+    // endpoint belonging to the old provider silently follows the rule to the new
+    // one, which the factories' `strictObject` would then reject on save.
+    await waitFor(() => {
+      expect(within(row("everyone-else")).queryByLabelText("Base URL")).toBeNull();
+    });
   });
 
   it("surfaces the warnings a save comes back with", async () => {
-    // The server is the authority on this: it computes the same shadowing check
-    // against what it actually stored.
-    fake.state.warnings = [
-      'rule "premium" can never match: "everyone-else" earlier in the list matches everything',
-    ];
+    fake.state.warnings = ['rule "premium" can never match: an earlier rule matches everything'];
     const user = userEvent.setup();
     await renderAt("/routing");
 
-    await user.click(screen.getByRole("button", { name: "Add rule" }));
-    await user.type(dialog().getByLabelText("Rule id"), "premium");
-    await user.type(dialog().getByLabelText("Condition"), 'request.model == "smart"');
-    await user.type(dialog().getByLabelText("Api key"), "sk-ant-x");
-    await user.click(screen.getByRole("button", { name: "Add rule" }));
+    await user.type(within(row("pro-users")).getByLabelText("Model"), "-x");
+    await save(user);
 
     expect(await screen.findByText(/can never match/)).toBeInTheDocument();
-    expect(screen.getByText("Saved, but read this")).toBeInTheDocument();
   });
 
   it("shows why a rejected configuration was rejected", async () => {
-    fake.state.rejectSave = 'routing.rules[2].target: unknown provider type "nope"';
+    fake.state.rejectSave = 'routing.rules[0].target: unknown provider type "nope"';
     const user = userEvent.setup();
     await renderAt("/routing");
 
-    await user.click(screen.getByRole("button", { name: "Add rule" }));
-    await user.type(dialog().getByLabelText("Rule id"), "broken");
-    await user.type(dialog().getByLabelText("Condition"), "true");
-    await user.type(dialog().getByLabelText("Api key"), "sk-ant-x");
-    await user.click(screen.getByRole("button", { name: "Add rule" }));
+    await user.type(within(row("pro-users")).getByLabelText("Model"), "-x");
+    await user.click(screen.getByRole("button", { name: "Save Changes" }));
 
     expect(await screen.findByText(/unknown provider type/)).toBeInTheDocument();
-  });
-});
-
-describe("editing a rule", () => {
-  it("keeps a sealed credential when the field is left blank", async () => {
-    const user = userEvent.setup();
-    await renderAt("/routing");
-
-    await user.click(within(ruleRow("pro-users")).getByRole("button", { name: "Edit" }));
-
-    const apiKey = dialog().getByLabelText("Api key");
-    // There is no endpoint that returns plaintext — `reveal` is unreachable from
-    // the admin API — so the box is empty and the placeholder carries the meaning.
-    expect(apiKey).toHaveValue("");
-    expect(apiKey).toHaveAttribute("placeholder", expect.stringContaining("leave blank to keep"));
-
-    await user.clear(dialog().getByLabelText("Model"));
-    await user.type(dialog().getByLabelText("Model"), "claude-opus-4");
-    await user.click(screen.getByRole("button", { name: "Save rule" }));
-
-    await waitFor(() => {
-      expect(fake.callsTo("PUT", "/routing/rules/pro-users")).toHaveLength(1);
-    });
-    const body = fake.callsTo("PUT", "/routing/rules/pro-users")[0]?.body as {
-      value: { target: Record<string, unknown> };
-    };
-    // Dropping the key would delete the credential; sending "" would fail the
-    // factory's own validation. Sending the reference back is the only correct move.
-    expect(body.value.target.apiKey).toEqual({ $secret: "sec-1" });
-    expect(body.value.target.model).toBe("claude-opus-4");
-  });
-
-  it("keeps an environment reference when the field is left blank", async () => {
-    const user = userEvent.setup();
-    await renderAt("/routing");
-
-    await user.click(within(ruleRow("everyone-else")).getByRole("button", { name: "Edit" }));
-    await user.click(screen.getByRole("button", { name: "Save rule" }));
-
-    await waitFor(() => {
-      expect(fake.callsTo("PUT", "/routing/rules/everyone-else")).toHaveLength(1);
-    });
-    const body = fake.callsTo("PUT", "/routing/rules/everyone-else")[0]?.body as {
-      value: { target: Record<string, unknown> };
-    };
-    expect(body.value.target.apiKey).toBe("${OPENAI_API_KEY}");
-  });
-
-  it("replaces the credential when a new one is typed", async () => {
-    const user = userEvent.setup();
-    await renderAt("/routing");
-
-    await user.click(within(ruleRow("pro-users")).getByRole("button", { name: "Edit" }));
-    await user.type(dialog().getByLabelText("Api key"), "sk-ant-rotated");
-    await user.click(screen.getByRole("button", { name: "Save rule" }));
-
-    await waitFor(() => {
-      expect(fake.callsTo("PUT", "/routing/rules/pro-users")).toHaveLength(1);
-    });
-    const body = fake.callsTo("PUT", "/routing/rules/pro-users")[0]?.body as {
-      value: { target: Record<string, unknown> };
-    };
-    // Plaintext on the wire is correct here: the API seals it before the revision
-    // is written, which is the only way an operator can type a key at all.
-    expect(body.value.target.apiKey).toBe("sk-ant-rotated");
-  });
-
-  it("does not let the id change, because logs already reference it", async () => {
-    const user = userEvent.setup();
-    await renderAt("/routing");
-
-    await user.click(within(ruleRow("pro-users")).getByRole("button", { name: "Edit" }));
-
-    expect(dialog().getByLabelText("Rule id")).toBeDisabled();
-  });
-
-  it("drops a blank model so the client's model passes through", async () => {
-    const user = userEvent.setup();
-    await renderAt("/routing");
-
-    await user.click(within(ruleRow("pro-users")).getByRole("button", { name: "Edit" }));
-    await user.clear(dialog().getByLabelText("Model"));
-    await user.click(screen.getByRole("button", { name: "Save rule" }));
-
-    await waitFor(() => {
-      expect(fake.callsTo("PUT", "/routing/rules/pro-users")).toHaveLength(1);
-    });
-    const body = fake.callsTo("PUT", "/routing/rules/pro-users")[0]?.body as {
-      value: { target: Record<string, unknown> };
-    };
-    // Absent means "forward whatever the client asked for"; `""` is not a model.
-    expect("model" in body.value.target).toBe(false);
-  });
-
-  it("clears options when the provider type changes", async () => {
-    const user = userEvent.setup();
-    await renderAt("/routing");
-
-    await user.click(within(ruleRow("everyone-else")).getByRole("button", { name: "Edit" }));
-    expect(dialog().getByLabelText("Base url")).toHaveValue("https://api.example.test/v1");
-
-    await selectOption(user, /provider/i, "anthropic");
-
-    // The value is cleared, not the field: both provider types happen to accept a
-    // `baseUrl`, but carrying one *value* across a type change is how a key or an
-    // endpoint belonging to the old provider silently follows the rule to the new
-    // one. The factories validate with `strictObject`, so an option the new type
-    // does not accept would be rejected on save.
-    await waitFor(() => {
-      expect(dialog().getByLabelText("Base url")).toHaveValue("");
-    });
-    expect(dialog().queryByLabelText("Include stream usage")).toBeNull();
-  });
-});
-
-describe("removing a rule", () => {
-  it("deletes by id", async () => {
-    const user = userEvent.setup();
-    await renderAt("/routing");
-
-    await user.click(within(ruleRow("pro-users")).getByRole("button", { name: "Remove" }));
-
-    await waitFor(() => {
-      expect(fake.callsTo("DELETE", "/routing/rules/pro-users")).toHaveLength(1);
-    });
-    await waitFor(() => {
-      expect(screen.queryByText("pro-users")).toBeNull();
-    });
   });
 });
 
@@ -407,7 +349,7 @@ describe("probing a rule's upstream", () => {
     const user = userEvent.setup();
     await renderAt("/routing");
 
-    await user.click(within(ruleRow("pro-users")).getByRole("button", { name: "Test upstream" }));
+    await user.click(within(row("pro-users")).getByRole("button", { name: "Test" }));
 
     expect(await screen.findByText(/The upstream answered in 12ms/)).toBeInTheDocument();
   });
@@ -419,7 +361,7 @@ describe("probing a rule's upstream", () => {
     const user = userEvent.setup();
     await renderAt("/routing");
 
-    await user.click(within(ruleRow("pro-users")).getByRole("button", { name: "Test upstream" }));
+    await user.click(within(row("pro-users")).getByRole("button", { name: "Test" }));
 
     expect(await screen.findByText(/The upstream refused: HTTP 401/)).toBeInTheDocument();
   });
@@ -429,10 +371,9 @@ describe("probing a rule's upstream", () => {
     const user = userEvent.setup();
     await renderAt("/routing");
 
-    await user.click(within(ruleRow("pro-users")).getByRole("button", { name: "Test upstream" }));
+    await user.click(within(row("pro-users")).getByRole("button", { name: "Test" }));
 
-    const result = await screen.findByText("this provider type cannot be probed");
-    expect(result).toBeInTheDocument();
+    expect(await screen.findByText("this provider type cannot be probed")).toBeInTheDocument();
     expect(screen.queryByText(/refused/)).toBeNull();
   });
 });
@@ -443,18 +384,12 @@ describe("the client-facing model list", () => {
     await renderAt("/routing");
 
     setMultiline(screen.getByLabelText("Allowed models"), "smart\nfast\nnano");
-    await user.click(screen.getByRole("button", { name: "Save" }));
+    await save(user);
 
-    await waitFor(() => {
-      expect(fake.callsTo("PUT", "/routing")).toHaveLength(1);
-    });
-    const body = fake.callsTo("PUT", "/routing")[0]?.body as {
-      value: { allowedModels: string[]; rules: unknown[] };
-    };
-    expect(body.value.allowedModels).toEqual(["smart", "fast", "nano"]);
+    expect(lastRouting().allowedModels).toEqual(["smart", "fast", "nano"]);
     // A whole-block write must carry the rules through, or saving the model list
     // would delete every rule.
-    expect(body.value.rules).toHaveLength(2);
+    expect(lastRouting().rules).toHaveLength(2);
   });
 });
 
@@ -474,7 +409,6 @@ describe("simulating a request", () => {
     await user.click(screen.getByRole("button", { name: "Simulate" }));
 
     expect(await screen.findByText(/Served by/)).toHaveTextContent("pro-users");
-    expect(screen.getByText("match")).toBeInTheDocument();
   });
 
   it("explains a rule that throws rather than reporting no match", async () => {
@@ -515,27 +449,9 @@ describe("simulating a request", () => {
     const user = userEvent.setup();
     await renderAt("/routing");
 
-    // No modal here, so scope to the panel that owns the simulate form.
-    const panel = within(screen.getByLabelText("Token claims").closest("section") as HTMLElement);
-    const model = panel.getByLabelText("Model");
-    await user.clear(model);
-    await user.type(model, "nope");
     await user.click(screen.getByRole("button", { name: "Simulate" }));
 
     expect(await screen.findByText(/would be a 404/)).toBeInTheDocument();
     expect(screen.queryByRole("alert")).toBeNull();
-  });
-
-  it("refuses claims that are not a JSON object", async () => {
-    const user = userEvent.setup();
-    await renderAt("/routing");
-
-    const claims = screen.getByLabelText("Token claims");
-    await user.clear(claims);
-    await user.type(claims, "not json");
-    await user.click(screen.getByRole("button", { name: "Simulate" }));
-
-    expect(await screen.findByRole("alert")).toHaveTextContent("Claims must be a JSON object");
-    expect(fake.callsTo("POST", "/routing/simulate")).toHaveLength(0);
   });
 });

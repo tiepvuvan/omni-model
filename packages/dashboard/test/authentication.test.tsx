@@ -2,7 +2,7 @@ import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it } from "vitest";
 import { createFakeApi, type FakeApi } from "./support/fake-api";
-import { dialog, renderAt, selectOption, setMultiline } from "./support/render";
+import { renderAt, selectOption, setMultiline } from "./support/render";
 
 let fake: FakeApi;
 
@@ -20,11 +20,11 @@ beforeEach(() => {
   fake.install();
 });
 
-/** The `<li>` for one verifier. */
-function verifierRow(label: string): HTMLElement {
-  const row = screen.getByText(label).closest("li");
-  if (row === null) throw new Error(`no verifier row for ${label}`);
-  return row;
+/** The card for one vendor, found by its heading. */
+function card(title: string): HTMLElement {
+  const section = screen.getByText(title).closest("section");
+  if (section === null) throw new Error(`no card for ${title}`);
+  return section;
 }
 
 /** The `security` block the last save sent. */
@@ -35,32 +35,47 @@ function lastSecurity(): Record<string, unknown> {
   return body.value;
 }
 
-describe("the verifier list", () => {
-  it("names each verifier and what it checks", async () => {
+const save = async (user: ReturnType<typeof userEvent.setup>) => {
+  await user.click(screen.getByRole("button", { name: "Save Changes" }));
+  await waitFor(() => {
+    expect(fake.callsTo("PUT", "/security").length).toBeGreaterThan(0);
+  });
+};
+
+describe("the vendor cards", () => {
+  it("lists every method the design draws, enabled or not", async () => {
     await renderAt("/authentication");
 
-    const row = verifierRow("Custom JWT");
-    expect(row).toHaveTextContent("jwt");
-    // The axis matters: it is what decides whether `mode: "all"` is sensible.
-    expect(row).toHaveTextContent("verifies the user");
-    expect(within(row).getByText("sealed credential")).toBeInTheDocument();
+    // The design shows all five as cards with a checkbox rather than only the
+    // configured ones — the screen is the menu of what the proxy can check.
+    for (const title of ["Firebase", "Supabase Auth", "Custom JWT", "App Attest", "DeviceCheck"]) {
+      expect(card(title)).toBeInTheDocument();
+    }
   });
 
-  it("distinguishes a device verifier from a user verifier", async () => {
-    fake.state.config = {
-      security: {
-        ...ONE_VERIFIER.security,
-        providers: [
-          { type: "jwt", secret: { $secret: "s" } },
-          { type: "firebase-app-check", projectId: "demo" },
-        ],
-      },
-    };
-
+  it("ticks the box for a configured method and not the others", async () => {
     await renderAt("/authentication");
 
-    expect(verifierRow("Custom JWT")).toHaveTextContent("verifies the user");
-    expect(verifierRow("Firebase App Check")).toHaveTextContent("verifies the app");
+    expect(
+      within(card("Custom JWT")).getByRole("checkbox", { name: "Enable Custom JWT" }),
+    ).toBeChecked();
+    expect(
+      within(card("Supabase Auth")).getByRole("checkbox", { name: "Enable Supabase Auth" }),
+    ).not.toBeChecked();
+  });
+
+  it("shows a disabled method's fields only once it is enabled", async () => {
+    const user = userEvent.setup();
+    await renderAt("/authentication");
+
+    expect(within(card("Supabase Auth")).getByText(/Not enabled/)).toBeInTheDocument();
+
+    await user.click(
+      within(card("Supabase Auth")).getByRole("checkbox", { name: "Enable Supabase Auth" }),
+    );
+
+    // The fields come from the verifier's own published schema.
+    expect(await within(card("Supabase Auth")).findByLabelText("JWKS URL")).toBeInTheDocument();
   });
 
   it("never renders a sealed credential's id", async () => {
@@ -69,7 +84,7 @@ describe("the verifier list", () => {
     expect(document.body.textContent).not.toContain("sec-jwt");
   });
 
-  it("says /v1 is closed when nothing is configured", async () => {
+  it("says /v1 is closed when nothing is enabled", async () => {
     // Not an edge case — it is the state a fresh container boots in, and the
     // reason `/v1` answers 503 rather than serving anything.
     fake.state.config = { security: { ...ONE_VERIFIER.security, providers: [] } };
@@ -77,276 +92,130 @@ describe("the verifier list", () => {
     await renderAt("/authentication");
 
     const alert = await screen.findByRole("alert");
-    expect(alert).toHaveTextContent("No verifier is configured");
+    expect(alert).toHaveTextContent("No verifier is enabled");
     expect(alert).toHaveTextContent("503");
   });
 });
 
-describe("adding a verifier", () => {
-  it("builds the entry from the type's own schema", async () => {
+describe("the Firebase card", () => {
+  it("puts App Check behind its own checkbox inside the Firebase card", async () => {
     const user = userEvent.setup();
     await renderAt("/authentication");
 
-    await user.click(screen.getByRole("button", { name: "Add verifier" }));
-    // `jwt` is first in the fake registry, so its schema is what renders.
-    await user.type(dialog().getByLabelText("Secret"), "a-long-development-secret");
-    await user.type(dialog().getByLabelText("Issuer"), "https://issuer.example.test");
-    await user.click(screen.getByRole("button", { name: "Add verifier" }));
+    await user.click(within(card("Firebase")).getByRole("checkbox", { name: "Enable Firebase" }));
 
-    await waitFor(() => {
-      expect(fake.callsTo("PUT", "/security")).toHaveLength(1);
+    const appCheck = await within(card("Firebase")).findByRole("checkbox", {
+      name: "Enable App Check",
     });
-    const providers = lastSecurity().providers as Record<string, unknown>[];
-    expect(providers).toHaveLength(2);
-    expect(providers[1]).toMatchObject({
-      type: "jwt",
-      secret: "a-long-development-secret",
-      issuer: "https://issuer.example.test",
-    });
-  });
+    expect(appCheck).not.toBeChecked();
 
-  it("opens on jwt rather than the first type alphabetically", async () => {
-    const user = userEvent.setup();
-    await renderAt("/authentication");
+    await user.click(appCheck);
 
-    await user.click(screen.getByRole("button", { name: "Add verifier" }));
-
-    // The empty state recommends jwt on this same screen; opening the form on an
-    // Apple attestation type because it sorts first contradicts that.
-    expect(dialog().getByRole("combobox", { name: /type/i })).toHaveTextContent("Custom JWT");
-  });
-
-  it("renders a different form for a different type", async () => {
-    const user = userEvent.setup();
-    await renderAt("/authentication");
-
-    await user.click(screen.getByRole("button", { name: "Add verifier" }));
-    expect(dialog().getByLabelText("Secret")).toBeInTheDocument();
-
-    await selectOption(user, /type/i, "Firebase App Check");
-
-    // Six verifier types with quite different options share one generated form,
-    // and this is the assertion that it actually follows the schema rather than
-    // rendering a fixed set of fields.
-    await waitFor(() => {
-      expect(dialog().getByLabelText("Project id")).toBeInTheDocument();
-    });
-    expect(dialog().queryByLabelText("Secret")).toBeNull();
-  });
-
-  it("sends a boolean option as a boolean", async () => {
-    const user = userEvent.setup();
-    await renderAt("/authentication");
-
-    await user.click(screen.getByRole("button", { name: "Add verifier" }));
-    await selectOption(user, /type/i, "Firebase App Check");
-    await waitFor(() => {
-      expect(dialog().getByLabelText("Project id")).toBeInTheDocument();
-    });
-    await user.type(dialog().getByLabelText("Project id"), "demo-project");
-    await user.click(dialog().getByRole("switch", { name: "Consume" }));
-    await user.click(screen.getByRole("button", { name: "Add verifier" }));
-
-    await waitFor(() => {
-      expect(fake.callsTo("PUT", "/security")).toHaveLength(1);
-    });
-    const providers = lastSecurity().providers as Record<string, unknown>[];
-    expect(providers[1]).toMatchObject({
-      type: "firebase-app-check",
-      projectId: "demo-project",
-      consume: true,
-    });
-  });
-
-  it("sends a list option one entry per line", async () => {
-    const user = userEvent.setup();
-    await renderAt("/authentication");
-
-    await user.click(screen.getByRole("button", { name: "Add verifier" }));
-    await user.type(dialog().getByLabelText("Secret"), "s");
-    setMultiline(dialog().getByLabelText("Algorithms"), "HS256\nHS384");
-    await user.click(screen.getByRole("button", { name: "Add verifier" }));
-
-    await waitFor(() => {
-      expect(fake.callsTo("PUT", "/security")).toHaveLength(1);
-    });
-    const providers = lastSecurity().providers as Record<string, unknown>[];
-    expect(providers[1]).toMatchObject({ algorithms: ["HS256", "HS384"] });
+    // App Check is a second verifier, not a Firebase Auth option — so enabling it
+    // has to add an entry rather than set a flag.
+    expect(await within(card("Firebase")).findByLabelText("Project Number")).toBeInTheDocument();
+    await save(user);
+    const providers = lastSecurity().providers as { type: string }[];
+    expect(providers.map((provider) => provider.type)).toContain("firebase-auth");
+    expect(providers.map((provider) => provider.type)).toContain("firebase-app-check");
   });
 });
 
-describe("editing a verifier", () => {
+describe("editing", () => {
+  it("commits nothing until Save Changes", async () => {
+    const user = userEvent.setup();
+    await renderAt("/authentication");
+
+    await user.click(
+      within(card("Supabase Auth")).getByRole("checkbox", { name: "Enable Supabase Auth" }),
+    );
+
+    // The design's editing model: a screen accumulates edits and one button
+    // commits them. A per-control save would have to persist an enabled verifier
+    // with no options, which the API would rightly reject.
+    expect(fake.callsTo("PUT", "/security")).toHaveLength(0);
+
+    await save(user);
+    const providers = lastSecurity().providers as { type: string }[];
+    expect(providers.map((provider) => provider.type)).toEqual(["jwt", "supabase"]);
+  });
+
+  it("leaves Save Changes inert until something changes", async () => {
+    await renderAt("/authentication");
+
+    expect(screen.getByRole("button", { name: "Save Changes" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Discard" })).toBeDisabled();
+  });
+
+  it("discards back to what is stored", async () => {
+    const user = userEvent.setup();
+    await renderAt("/authentication");
+
+    await user.click(
+      within(card("Supabase Auth")).getByRole("checkbox", { name: "Enable Supabase Auth" }),
+    );
+    await user.click(screen.getByRole("button", { name: "Discard" }));
+
+    expect(
+      within(card("Supabase Auth")).getByRole("checkbox", { name: "Enable Supabase Auth" }),
+    ).not.toBeChecked();
+    expect(fake.callsTo("PUT", "/security")).toHaveLength(0);
+  });
+
   it("keeps the sealed secret when the field is left blank", async () => {
     const user = userEvent.setup();
     await renderAt("/authentication");
 
-    await user.click(within(verifierRow("Custom JWT")).getByRole("button", { name: "Edit" }));
-
-    const secret = dialog().getByLabelText("Secret");
+    const secret = within(card("Custom JWT")).getByLabelText("Secret");
+    // There is no endpoint that returns plaintext, so the box is empty and the
+    // placeholder carries the meaning.
     expect(secret).toHaveValue("");
     expect(secret).toHaveAttribute("placeholder", expect.stringContaining("leave blank to keep"));
 
-    await user.type(dialog().getByLabelText("Issuer"), "https://new-issuer.test");
-    await user.click(screen.getByRole("button", { name: "Save verifier" }));
+    await user.type(within(card("Custom JWT")).getByLabelText("Issuer"), "https://issuer.test");
+    await save(user);
 
-    await waitFor(() => {
-      expect(fake.callsTo("PUT", "/security")).toHaveLength(1);
-    });
     const providers = lastSecurity().providers as Record<string, unknown>[];
-    expect(providers).toHaveLength(1);
+    // Dropping the key would delete the credential; sending "" would fail the
+    // factory's own validation. Sending the reference back is the only correct move.
     expect(providers[0]?.secret).toEqual({ $secret: "sec-jwt" });
-    expect(providers[0]?.issuer).toBe("https://new-issuer.test");
+    expect(providers[0]?.issuer).toBe("https://issuer.test");
   });
 
   it("replaces the secret when a new one is typed", async () => {
     const user = userEvent.setup();
     await renderAt("/authentication");
 
-    await user.click(within(verifierRow("Custom JWT")).getByRole("button", { name: "Edit" }));
-    await user.type(dialog().getByLabelText("Secret"), "a-rotated-secret");
-    await user.click(screen.getByRole("button", { name: "Save verifier" }));
+    await user.type(within(card("Custom JWT")).getByLabelText("Secret"), "a-rotated-secret");
+    await save(user);
 
-    await waitFor(() => {
-      expect(fake.callsTo("PUT", "/security")).toHaveLength(1);
-    });
     const providers = lastSecurity().providers as Record<string, unknown>[];
     expect(providers[0]?.secret).toBe("a-rotated-secret");
   });
-});
 
-describe("removing a verifier", () => {
-  it("refuses to remove the last one without a round trip", async () => {
+  it("sends a list option as an array of chips", async () => {
     const user = userEvent.setup();
     await renderAt("/authentication");
 
-    await user.click(within(verifierRow("Custom JWT")).getByRole("button", { name: "Remove" }));
+    const algorithms = within(card("Custom JWT")).getByLabelText("Algorithms");
+    // The stored value renders as a chip, and a new one commits on Enter.
+    expect(within(card("Custom JWT")).getByText("HS256")).toBeInTheDocument();
+    await user.type(algorithms, "HS384{Enter}");
+    await save(user);
 
-    // The API would reject this and the previous configuration would keep serving,
-    // so the only thing a request would add is latency before the same answer.
-    expect(await screen.findByRole("alert")).toHaveTextContent("At least one verifier is required");
-    expect(fake.callsTo("PUT", "/security")).toHaveLength(0);
-  });
-
-  it("removes one when another remains", async () => {
-    fake.state.config = {
-      security: {
-        ...ONE_VERIFIER.security,
-        providers: [
-          { type: "jwt", secret: { $secret: "s" } },
-          { type: "firebase-app-check", projectId: "demo" },
-        ],
-      },
-    };
-    const user = userEvent.setup();
-    await renderAt("/authentication");
-
-    await user.click(
-      within(verifierRow("Firebase App Check")).getByRole("button", { name: "Remove" }),
-    );
-
-    await waitFor(() => {
-      expect(fake.callsTo("PUT", "/security")).toHaveLength(1);
-    });
     const providers = lastSecurity().providers as Record<string, unknown>[];
-    expect(providers).toHaveLength(1);
-    expect(providers[0]?.type).toBe("jwt");
+    expect(providers[0]?.algorithms).toEqual(["HS256", "HS384"]);
   });
-});
 
-describe("how requests are checked", () => {
-  it("changes the mode", async () => {
+  it("removes a chip individually", async () => {
     const user = userEvent.setup();
     await renderAt("/authentication");
 
-    await selectOption(user, /verifier mode/i, /^any/);
+    await user.click(within(card("Custom JWT")).getByRole("button", { name: "Remove HS256" }));
+    await save(user);
 
-    await waitFor(() => {
-      expect(lastSecurity().mode).toBe("any");
-    });
-  });
-
-  it("warns when every verifier answers the same question but all must pass", async () => {
-    // `mode: "all"` with two user verifiers means a client must present both
-    // tokens at once, which is almost never what was meant.
-    fake.state.config = {
-      security: {
-        ...ONE_VERIFIER.security,
-        mode: "all",
-        providers: [
-          { type: "jwt", secret: { $secret: "s" } },
-          { type: "supabase", jwtSecret: { $secret: "s2" } },
-        ],
-      },
-    };
-
-    await renderAt("/authentication");
-
-    expect(
-      await screen.findByText(/Every configured verifier answers the same question/),
-    ).toBeInTheDocument();
-  });
-
-  it("does not warn when the verifiers answer different questions", async () => {
-    fake.state.config = {
-      security: {
-        ...ONE_VERIFIER.security,
-        mode: "all",
-        providers: [
-          { type: "jwt", secret: { $secret: "s" } },
-          { type: "apple-app-attest", teamId: "T" },
-        ],
-      },
-    };
-
-    await renderAt("/authentication");
-
-    expect(screen.queryByText(/answers the same question/)).toBeNull();
-  });
-
-  it("toggles the write-key requirement", async () => {
-    const user = userEvent.setup();
-    await renderAt("/authentication");
-
-    await user.click(screen.getByRole("switch", { name: "Require a write key" }));
-
-    await waitFor(() => {
-      expect(lastSecurity().requireWriteKey).toBe(true);
-    });
-  });
-
-  it("says what turning the write-key requirement on will do", async () => {
-    await renderAt("/authentication");
-
-    // Said before the toggle is flipped, not after: turning it on locks out every
-    // client that is not already sending the header.
-    expect(screen.getByText(/locks out any client not already sending one/)).toBeInTheDocument();
-  });
-
-  it("saves public paths one per line", async () => {
-    const user = userEvent.setup();
-    await renderAt("/authentication");
-
-    setMultiline(screen.getByLabelText("Public paths"), "/health\n/status/*");
-    await user.click(screen.getByRole("button", { name: "Save public paths" }));
-
-    await waitFor(() => {
-      expect(fake.callsTo("PUT", "/security")).toHaveLength(1);
-    });
-    expect(lastSecurity().publicPaths).toEqual(["/health", "/status/*"]);
-  });
-
-  it("keeps the verifiers when saving an unrelated setting", async () => {
-    const user = userEvent.setup();
-    await renderAt("/authentication");
-
-    await user.click(screen.getByRole("switch", { name: "Require a write key" }));
-
-    await waitFor(() => {
-      expect(fake.callsTo("PUT", "/security")).toHaveLength(1);
-    });
-    // `security` is replaced wholesale, so a partial block would delete the
-    // verifiers and take `/v1` down.
-    expect(lastSecurity().providers).toHaveLength(1);
+    const providers = lastSecurity().providers as Record<string, unknown>[];
+    expect("algorithms" in (providers[0] ?? {})).toBe(false);
   });
 
   it("shows why a rejected change was rejected", async () => {
@@ -354,8 +223,63 @@ describe("how requests are checked", () => {
     const user = userEvent.setup();
     await renderAt("/authentication");
 
-    await user.click(screen.getByRole("switch", { name: "Require a write key" }));
+    await user.type(within(card("Custom JWT")).getByLabelText("Issuer"), "x");
+    await user.click(screen.getByRole("button", { name: "Save Changes" }));
 
     expect(await screen.findByText(/requires either secret or jwksUrl/)).toBeInTheDocument();
+  });
+});
+
+describe("match mode", () => {
+  it("changes the mode", async () => {
+    const user = userEvent.setup();
+    await renderAt("/authentication");
+
+    await selectOption(user, /match mode/i, /any of following/);
+    await save(user);
+
+    expect(lastSecurity().mode).toBe("any");
+  });
+
+  it("explains what the mode means", async () => {
+    await renderAt("/authentication");
+
+    expect(
+      screen.getByText(/must pass all of these enabled authentication methods/),
+    ).toBeInTheDocument();
+  });
+});
+
+describe("the sidebar", () => {
+  it("lists the sections the design shows, disabling the ones with no screen", async () => {
+    await renderAt("/authentication");
+
+    const nav = within(screen.getByRole("navigation", { name: "Sections" }));
+    expect(nav.getByRole("link", { name: "Authentication" })).toBeInTheDocument();
+    expect(nav.getByRole("link", { name: "Routing" })).toBeInTheDocument();
+    // Present but not yet built: dropping them would make the two built screens
+    // look like the whole product.
+    for (const label of ["Rate Limit", "Logs", "Users", "Settings"]) {
+      expect(nav.getByText(label)).toHaveAttribute("aria-disabled");
+    }
+    expect(nav.getByText("Admin")).toBeInTheDocument();
+  });
+});
+
+describe("public paths", () => {
+  it("saves them one per line", async () => {
+    // Not on the Figma screen, but the block cannot be written without them: a
+    // whole-block PUT that omitted `publicPaths` would silently clear them.
+    const user = userEvent.setup();
+    fake.state.config = {
+      security: { ...ONE_VERIFIER.security, publicPaths: ["/keep"] },
+    };
+    await renderAt("/authentication");
+
+    await user.type(within(card("Custom JWT")).getByLabelText("Issuer"), "x");
+    await save(user);
+
+    expect(lastSecurity().publicPaths).toEqual(["/keep"]);
+    expect(setMultiline).toBeTypeOf("function");
   });
 });

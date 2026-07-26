@@ -5,7 +5,7 @@ import { Button, Callout, TextField } from "../components/ui/primitives";
 import { ApiError, api } from "../lib/api";
 
 /**
- * Sign in.
+ * Sign in — `/auth` in the design.
  *
  * The loader redirects to `/setup` when the deployment has no accounts yet: a
  * password form is useless before an account exists, and the first-run path is
@@ -51,11 +51,7 @@ function SignIn() {
   };
 
   return (
-    <AuthCard
-      title="Sign in"
-      subtitle="Operator access to this omni-model deployment."
-      onSubmit={submit}
-    >
+    <AuthCard title="Welcome back" onSubmit={submit}>
       {error !== null ? (
         <Callout tone="danger" role="alert">
           {error}
@@ -68,6 +64,7 @@ function SignIn() {
         name="email"
         autoComplete="username"
         required
+        placeholder="jane@company.com"
         value={email}
         onChange={(event) => setEmail(event.target.value)}
       />
@@ -77,12 +74,13 @@ function SignIn() {
         name="password"
         autoComplete="current-password"
         required
+        placeholder="Your password"
         value={password}
         onChange={(event) => setPassword(event.target.value)}
       />
 
-      <Button type="submit" variant="primary" disabled={busy} className="mt-1 w-full">
-        {busy ? "Signing in…" : "Sign in"}
+      <Button type="submit" variant="primary" disabled={busy} className="w-full">
+        {busy ? "Signing in…" : "Sign In"}
       </Button>
     </AuthCard>
   );

@@ -26,18 +26,100 @@
 @theme {
   --font-sans: "Geist", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "Geist Mono", ui-monospace, "SF Mono", monospace;
-  --radius-field: 0.5rem;
-  --radius-panel: 0.75rem;
+
+  /*
+   * Radii, straight from the design. Named for what they are on so a value
+   * cannot be borrowed for the wrong control — an input is 10, a card is 16, and
+   * a button is a pill at 23 regardless of its height.
+   */
+  --radius-field: 10px;
+  --radius-card: 16px;
+  --radius-pill: 23px;
+  --radius-chip: 4px;
+  --radius-nav: 8px;
+  --radius-check: 4px;
+}
+
+/*
+ * The type scale, one utility per named Figma text style.
+ *
+ * Written as utilities rather than as loose `text-[13px] leading-[16px]` at each
+ * use site because the design names these — `Strong/Label 13` is a decision, and
+ * a size and a line height that travel separately drift apart. The names match
+ * Figma so a spec can be checked against the markup by reading it.
+ */
+@utility type-heading-20 {
+  font-family: var(--font-sans);
+  font-size: 20px;
+  line-height: 26px;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+@utility type-heading-14 {
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+/** `Normal/Copy 14` and `Normal/Label 14` are the same face. */
+@utility type-copy-14 {
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 400;
+  letter-spacing: 0;
+}
+
+@utility type-strong-14 {
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 500;
+  letter-spacing: 0;
+}
+
+@utility type-strong-13 {
+  font-family: var(--font-sans);
+  font-size: 13px;
+  line-height: 16px;
+  font-weight: 500;
+  letter-spacing: 0;
+}
+
+@utility type-label-12 {
+  font-family: var(--font-sans);
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 400;
+  letter-spacing: 0;
+}
+
+@utility type-strong-12 {
+  font-family: var(--font-sans);
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 500;
+  letter-spacing: 0;
+}
+
+@utility type-mono-12 {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 400;
+  letter-spacing: 0;
 }
 
 @layer base {
-  html {
-    /* The chrome is fixed; only panels scroll, so the page itself must not. */
+  html,
+  body {
     height: 100%;
   }
 
   body {
-    height: 100%;
     background-color: var(--color-background-l1);
     color: var(--color-foreground-primary);
     font-family: var(--font-sans);
@@ -54,13 +136,13 @@
     outline-offset: 2px;
   }
 
+  /*
+   * The design draws a placeholder as the same text at 30% opacity, not as a
+   * separate grey — so the placeholder colour follows the text colour and stays
+   * right in both themes.
+   */
   ::placeholder {
-    color: var(--color-foreground-secondary);
+    color: var(--color-foreground-primary);
+    opacity: 0.3;
   }
-}
-
-@utility panel {
-  background-color: var(--color-background-l3);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-panel);
 }

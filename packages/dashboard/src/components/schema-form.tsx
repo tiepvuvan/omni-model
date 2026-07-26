@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { JsonSchema } from "../lib/api";
-import { SelectField, TextAreaField, TextField, ToggleField } from "./ui/primitives";
+import { SelectField, Switch, TextAreaField, TextField, TokensField } from "./ui/primitives";
 
 /**
  * A form rendered from a component's own options schema.
@@ -12,9 +12,9 @@ import { SelectField, TextAreaField, TextField, ToggleField } from "./ui/primiti
  * form with no dashboard change, and a renamed option stops appearing here the
  * moment the factory stops accepting it.
  *
- * Unrecognised keywords degrade to a text input rather than failing: a
- * third-party factory may publish something this does not model, and the save
- * path validates with the real schema anyway.
+ * Controls are chosen to match the design's inventory: a string list is a
+ * `Tokens` input with chips, a boolean is a switch, a free-form map is the one
+ * place raw JSON is honest.
  */
 
 /**
@@ -51,21 +51,43 @@ export function isEnvRef(value: unknown): boolean {
 }
 
 /**
- * Turn `baseUrl` into "Base url" for a schema that publishes no title.
+ * Turn `baseUrl` into "Base URL" the way the design labels it.
  *
- * Sentence case, not title case: the design system labels fields that way, and
- * a generated label that capitalises differently from a hand-written one is
- * exactly the kind of inconsistency a generated form is supposed to avoid.
+ * The file uses real product casing — "API Key", "Base URL", "Project ID",
+ * "JWKS URL", "Team ID" — not a mechanical de-camelCasing, so acronyms are
+ * spelled out rather than sentence-cased into "Api key".
  */
+const ACRONYMS = new Set([
+  "api",
+  "url",
+  "urls",
+  "id",
+  "ids",
+  "jwt",
+  "jwks",
+  "ttl",
+  "pem",
+  "ip",
+  "ca",
+]);
+
 function labelFor(name: string): string {
-  const words = name
+  return name
     .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
     .replace(/[_-]+/g, " ")
     .split(" ")
     .filter(Boolean)
-    .map((word) => word.toLowerCase());
-  const first = words[0] ?? name.toLowerCase();
-  return [first.charAt(0).toUpperCase() + first.slice(1), ...words.slice(1)].join(" ");
+    .map((word) => {
+      const lower = word.toLowerCase();
+      // Title Case every word, uppercasing the acronyms — "API Key", "Base URL",
+      // "Project ID", "Team ID". That is how the design writes them, and a
+      // generated label that capitalises differently from a designed one is the
+      // inconsistency a generated form is supposed to avoid.
+      return ACRONYMS.has(lower)
+        ? lower.toUpperCase()
+        : lower.charAt(0).toUpperCase() + lower.slice(1);
+    })
+    .join(" ");
 }
 
 /** The schema's declared type, tolerating `["string","null"]` unions. */
@@ -84,26 +106,59 @@ export interface SchemaFormProps {
   schema: JsonSchema | null;
   values: OptionValues;
   onChange: (values: OptionValues) => void;
-  /** Properties the surrounding UI owns; `type` and `model` are the usual ones. */
+  /** Properties the surrounding UI owns; `type` and `name` are the usual ones. */
   omit?: readonly string[];
+  /** Only render these properties, in this order. */
+  only?: readonly string[];
   /** Prefix for generated input ids, so two forms on one page do not collide. */
   idPrefix: string;
 }
 
-export function SchemaForm({ schema, values, onChange, omit = [], idPrefix }: SchemaFormProps) {
+export function SchemaForm({
+  schema,
+  values,
+  onChange,
+  omit = [],
+  only,
+  idPrefix,
+}: SchemaFormProps) {
   const properties = schema?.properties;
   if (properties === undefined) {
     return (
-      <p className="text-xs text-foreground-secondary">
+      <p className="type-label-12 text-foreground-secondary">
         This component publishes no options schema, so there is nothing to configure here.
       </p>
     );
   }
 
   const required = new Set(schema?.required ?? []);
-  const entries = Object.entries(properties).filter(([name]) => !omit.includes(name));
+  const entries = (
+    only === undefined
+      ? Object.entries(properties)
+      : [
+          ...only.flatMap((name) => {
+            const property = properties[name];
+            return property === undefined ? [] : [[name, property] as [string, JsonSchema]];
+          }),
+          /*
+           * A required option is never hidden, even when the curated list omits it.
+           *
+           * The design chooses which fields a card shows, and following that is
+           * what makes the screen match. But a required field left off the screen
+           * is a configuration nobody can complete — the save would fail with a
+           * message about a field that is not on the page. So the curated order
+           * wins, and anything required that it missed is appended.
+           */
+          ...Object.entries(properties).filter(
+            ([name]) => required.has(name) && !only.includes(name),
+          ),
+        ]
+  ).filter(([name]) => !omit.includes(name));
+
   if (entries.length === 0) {
-    return <p className="text-xs text-foreground-secondary">This component takes no options.</p>;
+    return (
+      <p className="type-label-12 text-foreground-secondary">This component takes no options.</p>
+    );
   }
 
   const set = (name: string, value: unknown) => {
@@ -116,7 +171,7 @@ export function SchemaForm({ schema, values, onChange, omit = [], idPrefix }: Sc
   };
 
   return (
-    <div className="flex flex-col gap-4">
+    <>
       {entries.map(([name, property]) => (
         <SchemaField
           key={name}
@@ -128,7 +183,7 @@ export function SchemaForm({ schema, values, onChange, omit = [], idPrefix }: Sc
           onChange={(value) => set(name, value)}
         />
       ))}
-    </div>
+    </>
   );
 }
 
@@ -148,10 +203,10 @@ function SchemaField({
   onChange: (value: unknown) => void;
 }) {
   const label = labelFor(name);
-  const hint = schema.description;
+  const help = schema.description;
 
   if (isCredentialField(name)) {
-    return <CredentialField label={label} hint={hint} value={value} id={id} onChange={onChange} />;
+    return <CredentialField label={label} help={help} value={value} id={id} onChange={onChange} />;
   }
 
   if (Array.isArray(schema.enum) && schema.enum.length > 0) {
@@ -164,7 +219,7 @@ function SchemaField({
         items={items}
         value={current}
         onValueChange={onChange}
-        {...(hint === undefined ? {} : { hint })}
+        {...(help === undefined ? {} : { help })}
       />
     );
   }
@@ -173,9 +228,8 @@ function SchemaField({
 
   if (type === "boolean") {
     return (
-      <ToggleField
-        label={label}
-        {...(hint === undefined ? {} : { description: hint })}
+      <Switch
+        label={help ?? label}
         checked={value === true || (value === undefined && schema.default === true)}
         onCheckedChange={onChange}
       />
@@ -183,24 +237,14 @@ function SchemaField({
   }
 
   if (type === "array") {
-    // One per line: these are model names, algorithms, audiences and issuers —
-    // values that can legitimately contain a comma.
-    const lines = Array.isArray(value) ? value.map(String).join("\n") : "";
+    const values = Array.isArray(value) ? value.map(String) : [];
     return (
-      <TextAreaField
+      <TokensField
         id={id}
         label={label}
-        mono
-        rows={3}
-        value={lines}
-        hint={hint ?? "One per line."}
-        onChange={(event) => {
-          const parsed = event.target.value
-            .split("\n")
-            .map((line) => line.trim())
-            .filter((line) => line !== "");
-          onChange(parsed.length === 0 ? undefined : parsed);
-        }}
+        values={values}
+        {...(help === undefined ? {} : { help })}
+        onChange={(next) => onChange(next.length === 0 ? undefined : next)}
       />
     );
   }
@@ -208,7 +252,7 @@ function SchemaField({
   if (type === "object") {
     // A free-form map — `headers`, chiefly. There is no property list to render
     // fields from, so this is the one place raw JSON is the honest control.
-    return <JsonField id={id} label={label} hint={hint} value={value} onChange={onChange} />;
+    return <JsonField id={id} label={label} help={help} value={value} onChange={onChange} />;
   }
 
   if (type === "number" || type === "integer") {
@@ -219,7 +263,7 @@ function SchemaField({
         type="number"
         required={required}
         value={typeof value === "number" ? String(value) : ""}
-        {...(hint === undefined ? {} : { hint })}
+        {...(help === undefined ? {} : { help })}
         {...(schema.minimum === undefined ? {} : { min: schema.minimum })}
         onChange={(event) => {
           const raw = event.target.value;
@@ -238,7 +282,7 @@ function SchemaField({
       required={required}
       mono={name.endsWith("Url") || name === "model"}
       value={typeof value === "string" ? value : ""}
-      {...(hint === undefined ? {} : { hint })}
+      {...(help === undefined ? {} : { help })}
       onChange={(event) => onChange(event.target.value)}
     />
   );
@@ -254,13 +298,13 @@ function SchemaField({
 function JsonField({
   id,
   label,
-  hint,
+  help,
   value,
   onChange,
 }: {
   id: string;
   label: string;
-  hint: string | undefined;
+  help: string | undefined;
   value: unknown;
   onChange: (value: unknown) => void;
 }) {
@@ -283,10 +327,10 @@ function JsonField({
       mono
       rows={4}
       value={text}
-      hint={
+      help={
         invalid
           ? "This is not valid JSON yet, so it has not been applied."
-          : (hint ?? "JSON object.")
+          : (help ?? "JSON object.")
       }
       onChange={(event) => {
         const next = event.target.value;
@@ -319,13 +363,13 @@ function JsonField({
  */
 function CredentialField({
   label,
-  hint,
+  help,
   value,
   id,
   onChange,
 }: {
   label: string;
-  hint: string | undefined;
+  help: string | undefined;
   value: unknown;
   id: string;
   onChange: (value: unknown) => void;
@@ -335,35 +379,25 @@ function CredentialField({
   const stored = sealed || fromEnv;
 
   return (
-    <div className="flex flex-col gap-1.5">
-      <TextField
-        id={id}
-        label={label}
-        type="password"
-        autoComplete="off"
-        // A stored credential is unreadable by design, so there is nothing to
-        // prefill. The placeholder is what tells the operator that blank is safe.
-        placeholder={stored ? "•••••••• stored — leave blank to keep" : ""}
-        value={typeof value === "string" && !fromEnv ? value : ""}
-        hint={
-          hint ??
-          (stored
-            ? undefined
-            : "Typed in plaintext and sealed into encrypted storage before the revision is written.")
-        }
-        onChange={(event) => onChange(event.target.value === "" ? undefined : event.target.value)}
-      />
-      {sealed ? (
-        <p className="text-xs text-foreground-secondary">
-          Sealed in encrypted storage. It is not readable from here or from the API.
-        </p>
-      ) : null}
-      {fromEnv ? (
-        <p className="font-mono text-xs text-foreground-secondary">
-          Resolved from the environment: {String(value)}
-        </p>
-      ) : null}
-    </div>
+    <TextField
+      id={id}
+      label={label}
+      type="password"
+      autoComplete="off"
+      // A stored credential is unreadable by design, so there is nothing to
+      // prefill. The placeholder is what tells the operator that blank is safe.
+      placeholder={stored ? "•••••••• stored — leave blank to keep" : "sk_"}
+      value={typeof value === "string" && !fromEnv ? value : ""}
+      help={
+        sealed
+          ? "Sealed in encrypted storage. It is not readable from here or from the API."
+          : fromEnv
+            ? `Resolved from the environment: ${String(value)}`
+            : (help ??
+              "Typed in plaintext and sealed into encrypted storage before the revision is written.")
+      }
+      onChange={(event) => onChange(event.target.value === "" ? undefined : event.target.value)}
+    />
   );
 }
 

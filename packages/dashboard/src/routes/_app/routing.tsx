@@ -1,10 +1,24 @@
 import { createFileRoute, useRouter } from "@tanstack/react-router";
 import { useState } from "react";
-import { CATCH_ALL, RuleEditor } from "../../components/routing/rule-editor";
+import connectorImage from "../../assets/connector.svg";
+import editIcon from "../../assets/edit.svg";
+import plusIcon from "../../assets/plus.svg";
+import plusTargetIcon from "../../assets/plus-target.svg";
+import validIcon from "../../assets/valid.svg";
+import vendorOpenAi from "../../assets/vendor-openai.svg";
+import vendorOpenAiCompatible from "../../assets/vendor-openai-compatible.svg";
+import { ActionBar, PaneTitle, WidePane } from "../../components/chrome";
 import { SimulatePanel } from "../../components/routing/simulate-panel";
-import { isEnvRef, isSecretRef } from "../../components/schema-form";
-import { PageBody, PageHeader } from "../../components/shell";
-import { Badge, Button, Callout, Panel, TextAreaField } from "../../components/ui/primitives";
+import { mergeCredentials, SchemaForm } from "../../components/schema-form";
+import {
+  Button,
+  Callout,
+  Card,
+  cx,
+  IconButton,
+  SelectField,
+  TextAreaField,
+} from "../../components/ui/primitives";
 import {
   api,
   type ConfigResponse,
@@ -22,13 +36,42 @@ export const Route = createFileRoute("/_app/routing")({
   component: RoutingScreen,
 });
 
-/** The stored routing block, defaulted for a deployment that has none yet. */
+/** `when: "true"` — the only expression the router treats as a catch-all. */
+const CATCH_ALL = "true";
+
+/** Vendor glyphs for the provider types the design draws. */
+const VENDOR_ICONS: Record<string, string> = {
+  openai: vendorOpenAi,
+  "openai-compatible": vendorOpenAiCompatible,
+};
+
+/**
+ * The target fields the design draws, per provider type.
+ *
+ * `Open AI` shows an API key and a model; `Open AI Compatible` adds a base URL.
+ * The factories accept more than that, and showing all of it turns a two-field
+ * card into a form — so this is the curated list, and `SchemaForm` appends
+ * anything *required* the list misses so a save can never need a hidden field.
+ * `model` is not here because the card renders it itself, last, as the design does.
+ */
+const TARGET_FIELDS: Record<string, readonly string[]> = {
+  openai: ["apiKey"],
+  "openai-compatible": ["baseUrl", "apiKey"],
+  anthropic: ["apiKey"],
+  google: ["apiKey"],
+};
+
+/** The design's title for each provider type. */
+const VENDOR_TITLES: Record<string, string> = {
+  openai: "Open AI",
+  "openai-compatible": "Open AI Compatible",
+  anthropic: "Anthropic",
+  google: "Google Gemini",
+};
+
 function routingOf(config: ConfigResponse): RoutingBlock {
   const routing = config.config?.routing;
-  return {
-    allowedModels: routing?.allowedModels ?? [],
-    rules: routing?.rules ?? [],
-  };
+  return { allowedModels: routing?.allowedModels ?? [], rules: routing?.rules ?? [] };
 }
 
 const idOf = (rule: RoutingRule, index: number): string => rule.id ?? `rules[${index}]`;
@@ -36,83 +79,124 @@ const idOf = (rule: RoutingRule, index: number): string => rule.id ?? `rules[${i
 /**
  * Rules an earlier catch-all makes unreachable.
  *
- * The same rule as the server's `unreachableRules`, computed again here so the
- * list can mark a dead rule *before* a save rather than only reporting it after.
- * Only a literal `true` counts: a condition that happens to be true for every
- * real request is not statically detectable, and guessing would flag rules that
- * are working.
+ * The same rule as the server's `unreachableRules`, computed again here so a dead
+ * rule is marked *before* a save rather than only reported after. Only a literal
+ * `true` counts: a condition that happens to be true for every real request is
+ * not statically detectable, and guessing would flag rules that are working.
  */
-function shadowedFrom(rules: readonly RoutingRule[]): number {
+function catchAllIndex(rules: readonly RoutingRule[]): number {
   return rules.findIndex((rule) => rule.when.trim() === CATCH_ALL);
+}
+
+/**
+ * Whether an expression is well-formed enough to say so.
+ *
+ * Deliberately shallow — balanced delimiters and a non-empty body. The authority
+ * on a CEL expression is the server, which is what the simulate panel below
+ * asks; claiming more from a regex would be a lie with a green tick on it.
+ */
+function expressionLooksValid(source: string): boolean {
+  const trimmed = source.trim();
+  if (trimmed === "") return false;
+  let depth = 0;
+  for (const character of trimmed) {
+    if (character === "(") depth += 1;
+    if (character === ")") depth -= 1;
+    if (depth < 0) return false;
+  }
+  if (depth !== 0) return false;
+  return (trimmed.match(/"/g) ?? []).length % 2 === 0;
 }
 
 function RoutingScreen() {
   const { config, meta } = Route.useLoaderData();
   const router = useRouter();
+  const stored = routingOf(config);
 
-  const routing = routingOf(config);
-  const [editing, setEditing] = useState<{ rule: RoutingRule; index: number } | null>(null);
-  const [editorOpen, setEditorOpen] = useState(false);
-  const [warnings, setWarnings] = useState<string[]>([]);
+  const [draft, setDraft] = useState<RoutingBlock>(stored);
   const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState<string | null>(null);
+  const [warnings, setWarnings] = useState<string[]>([]);
+  const [busy, setBusy] = useState(false);
   const [probes, setProbes] = useState<Record<string, ProbeResponse | "running">>({});
+  const [editingTarget, setEditingTarget] = useState<number | null>(null);
 
-  /**
-   * Every mutation funnels through here.
-   *
-   * A save is the server's chance to say the configuration is valid but
-   * self-defeating, so the returned warnings are surfaced rather than dropped —
-   * a rule appended after a catch-all is the case that matters, because nothing
-   * about a request would ever reveal it.
-   */
-  const mutate = async (
-    label: string,
-    action: () => Promise<{ warnings?: string[] }>,
-    // The rule editor stays open on failure so the rule can be fixed, and shows
-    // the reason itself. Reporting it here too would print the same sentence
-    // twice on one screen.
-    options: { surfaceError?: boolean } = {},
-  ) => {
-    setBusy(label);
+  const dirty = JSON.stringify(draft) !== JSON.stringify(stored);
+  const catchAll = catchAllIndex(draft.rules);
+
+  const updateRule = (index: number, patch: Partial<RoutingRule>) => {
+    setDraft((now) => ({
+      ...now,
+      rules: now.rules.map((rule, at) => (at === index ? { ...rule, ...patch } : rule)),
+    }));
+  };
+
+  const setTarget = (index: number, target: RoutingRule["target"]) => {
+    updateRule(index, { target });
+  };
+
+  const addRule = () => {
+    // A new rule needs an id that is stable and unique, since logs reference it.
+    const taken = new Set(draft.rules.map((rule, index) => idOf(rule, index)));
+    let n = draft.rules.length + 1;
+    while (taken.has(`rule-${n}`)) n += 1;
+    setDraft((now) => ({
+      ...now,
+      rules: [
+        ...now.rules,
+        {
+          id: `rule-${n}`,
+          when: "",
+          target: { type: meta.providers[0]?.type ?? "openai-compatible" },
+        },
+      ],
+    }));
+  };
+
+  const removeRule = (index: number) => {
+    setDraft((now) => ({ ...now, rules: now.rules.filter((_, at) => at !== index) }));
+    setEditingTarget(null);
+  };
+
+  const move = (index: number, delta: number) => {
+    setDraft((now) => {
+      const rules = [...now.rules];
+      const moved = rules[index];
+      const displaced = rules[index + delta];
+      if (moved === undefined || displaced === undefined) return now;
+      rules[index] = displaced;
+      rules[index + delta] = moved;
+      return { ...now, rules };
+    });
+  };
+
+  const save = async () => {
+    setBusy(true);
     setError(null);
     try {
-      const result = await action();
+      const rules = draft.rules.map((rule, index) => {
+        const previous: Partial<RoutingRule["target"]> = stored.rules[index]?.target ?? {};
+        const { type, model, ...options } = rule.target;
+        const { type: _t, model: _m, ...storedOptions } = previous;
+        return {
+          ...rule,
+          target: {
+            type,
+            ...mergeCredentials(options, storedOptions),
+            ...(model === undefined || model === "" ? {} : { model }),
+          },
+        };
+      });
+      const result = await api.putRouting({ ...draft, rules }, "update model routing");
       setWarnings(result.warnings ?? []);
       await router.invalidate();
     } catch (caught) {
-      if (options.surfaceError !== false) {
-        setError(caught instanceof Error ? caught.message : "The change could not be saved.");
-      }
-      throw caught;
+      setError(caught instanceof Error ? caught.message : "The change could not be saved.");
     } finally {
-      setBusy(null);
+      setBusy(false);
     }
   };
 
-  const catchAllAt = shadowedFrom(routing.rules);
-
-  const move = (index: number, delta: number) => {
-    const next = [...routing.rules];
-    const target = index + delta;
-    const moved = next[index];
-    const displaced = next[target];
-    if (moved === undefined || displaced === undefined) return;
-    next[index] = displaced;
-    next[target] = moved;
-    // Reordering is only expressible as a whole-list write: the per-rule endpoint
-    // deliberately keeps a rule's position so an edit cannot silently reorder.
-    void mutate(`move-${index}`, () =>
-      api.putRouting({ ...routing, rules: next }, "reorder routing rules"),
-    ).catch(() => undefined);
-  };
-
-  const remove = (rule: RoutingRule, index: number) => {
-    void mutate(`delete-${index}`, () => api.deleteRule(idOf(rule, index))).catch(() => undefined);
-  };
-
-  const probe = async (rule: RoutingRule, index: number) => {
-    const id = idOf(rule, index);
+  const probe = async (id: string) => {
     setProbes((now) => ({ ...now, [id]: "running" }));
     try {
       const result = await api.testRule(id);
@@ -127,189 +211,245 @@ function RoutingScreen() {
 
   return (
     <>
-      <PageHeader
-        title="Model routing"
-        description="One ordered list. The first rule whose condition matches wins, and its target carries the provider, the credentials and the upstream model. No match is a 404."
-        actions={
-          <Button
-            variant="primary"
-            onClick={() => {
-              setEditing(null);
-              setEditorOpen(true);
-            }}
-          >
-            Add rule
-          </Button>
-        }
+      <ActionBar
+        dirty={dirty}
+        busy={busy}
+        onDiscard={() => {
+          setDraft(stored);
+          setWarnings([]);
+        }}
+        onSave={save}
       />
 
-      <PageBody>
+      <WidePane>
+        <PaneTitle>Model Routing</PaneTitle>
+
         {error !== null ? (
           <Callout tone="danger" title="The change was rejected" role="alert">
-            <p className="mt-1">{error}</p>
+            <p className="mt-[4px]">{error}</p>
           </Callout>
         ) : null}
 
         {warnings.map((warning) => (
           <Callout key={warning} tone="warning" title="Saved, but read this" role="status">
-            <p className="mt-1">{warning}</p>
+            <p className="mt-[4px]">{warning}</p>
           </Callout>
         ))}
 
-        <Panel
-          title="Rules"
-          description={`${routing.rules.length} rule${routing.rules.length === 1 ? "" : "s"}, evaluated top to bottom.`}
-        >
-          {routing.rules.length === 0 ? (
-            <p className="text-sm text-foreground-secondary">
-              No rules yet, so every request to <span className="font-mono">/v1</span> is a 404. Add
-              one with <span className="font-mono">when: true</span> to serve everything through a
-              single upstream.
-            </p>
-          ) : (
-            <ol className="flex flex-col gap-2">
-              {routing.rules.map((rule, index) => {
-                const id = idOf(rule, index);
-                const unreachable = catchAllAt !== -1 && index > catchAllAt;
-                const result = probes[id];
-                return (
-                  <li
-                    key={id}
-                    className="flex flex-col gap-3 rounded-[var(--radius-field)] border border-border bg-background-grouped-content px-4 py-3"
-                  >
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-mono text-xs text-foreground-secondary">
-                        {index + 1}
+        {draft.rules.length === 0 ? (
+          <Callout tone="warning" role="status">
+            No rules, so every request to <span className="type-mono-12">/v1</span> is a 404. Add
+            one with <span className="type-mono-12">true</span> as its condition to serve everything
+            through a single upstream.
+          </Callout>
+        ) : null}
+
+        {draft.rules.map((rule, index) => {
+          const id = idOf(rule, index);
+          const unreachable = catchAll !== -1 && index > catchAll;
+          const valid = expressionLooksValid(rule.when);
+          const probeResult = probes[id];
+          const schema =
+            meta.providers.find((entry) => entry.type === rule.target.type)?.optionsSchema ?? null;
+
+          return (
+            <div key={id} className="flex w-full items-start" data-rule={id}>
+              {/* The match rule: a card whose body is the expression box. */}
+              <Card
+                className="min-w-0 flex-1"
+                title="Match rule"
+                actions={
+                  <div className="flex items-center gap-[4px]">
+                    <Button
+                      size="medium"
+                      disabled={index === 0}
+                      aria-label={`Move ${id} up`}
+                      onClick={() => move(index, -1)}
+                    >
+                      ↑
+                    </Button>
+                    <Button
+                      size="medium"
+                      disabled={index === draft.rules.length - 1}
+                      aria-label={`Move ${id} down`}
+                      onClick={() => move(index, 1)}
+                    >
+                      ↓
+                    </Button>
+                    <Button
+                      size="medium"
+                      disabled={probeResult === "running"}
+                      onClick={() => void probe(id)}
+                    >
+                      {probeResult === "running" ? "Testing…" : "Test"}
+                    </Button>
+                    <Button
+                      size="medium"
+                      variant="destructive"
+                      aria-label={`Remove ${id}`}
+                      onClick={() => removeRule(index)}
+                    >
+                      Remove
+                    </Button>
+                  </div>
+                }
+                bodyClassName="gap-[12px]"
+              >
+                <div className="flex w-full flex-col overflow-clip rounded-[var(--radius-card)] border border-solid border-border bg-background-grouped-container">
+                  <label className="sr-only" htmlFor={`when-${id}`}>
+                    Condition for {id}
+                  </label>
+                  <textarea
+                    id={`when-${id}`}
+                    value={rule.when}
+                    rows={4}
+                    spellCheck={false}
+                    placeholder={'request.model == "smart" && has(user.claims.tier)'}
+                    className="w-full resize-none bg-transparent p-[16px] type-mono-12 text-foreground-primary outline-none"
+                    onChange={(event) => updateRule(index, { when: event.target.value })}
+                  />
+                  <div className="flex w-full items-center justify-between p-[12px]">
+                    <span className="type-mono-12 text-foreground-secondary">{id}</span>
+                    <span className="flex items-start gap-[4px]">
+                      <img
+                        src={validIcon}
+                        alt=""
+                        aria-hidden
+                        className={cx("size-[16px]", !valid && "opacity-30")}
+                      />
+                      <span
+                        className={cx(
+                          "type-strong-12",
+                          valid ? "text-success" : "text-foreground-secondary",
+                        )}
+                      >
+                        {rule.when.trim() === CATCH_ALL
+                          ? "Catch-all — matches everything"
+                          : valid
+                            ? "Valid expression"
+                            : "Incomplete expression"}
                       </span>
-                      <span className="text-sm font-medium text-foreground-primary">
-                        {rule.name ?? id}
-                      </span>
-                      <Badge tone="accent">{rule.target.type}</Badge>
-                      {rule.target.model !== undefined ? (
-                        <Badge>{rule.target.model}</Badge>
-                      ) : (
-                        <Badge>passes the client’s model through</Badge>
-                      )}
-                      {rule.when.trim() === CATCH_ALL ? (
-                        <Badge tone="success">catch-all</Badge>
-                      ) : null}
-                      {unreachable ? <Badge tone="danger">unreachable</Badge> : null}
-                      <CredentialBadge target={rule.target} />
-                    </div>
+                    </span>
+                  </div>
+                </div>
 
-                    <code className="block overflow-x-auto whitespace-pre rounded-[6px] bg-background-grouped-container px-3 py-2 font-mono text-xs text-foreground-primary">
-                      {rule.when}
-                    </code>
+                {unreachable ? (
+                  <p className="type-label-12 text-destructive">
+                    A catch-all above this rule matches everything, so this rule can never fire.
+                    Move it above rule {catchAll + 1}.
+                  </p>
+                ) : null}
 
-                    {unreachable ? (
-                      <p className="text-xs text-destructive">
-                        A catch-all above this rule matches everything, so this rule can never fire.
-                        Move it above rule {catchAllAt + 1}.
-                      </p>
-                    ) : null}
+                {probeResult !== undefined && probeResult !== "running" ? (
+                  <ProbeResult result={probeResult} />
+                ) : null}
+              </Card>
 
-                    {result !== undefined ? <ProbeResult result={result} /> : null}
+              {/* The connector between the rule and where it goes. */}
+              <img src={connectorImage} alt="" aria-hidden className="h-[50px] w-[72px] shrink-0" />
 
-                    <div className="flex flex-wrap gap-2">
-                      <Button
-                        className="px-2 py-1 text-xs"
-                        onClick={() => {
-                          setEditing({ rule, index });
-                          setEditorOpen(true);
-                        }}
-                      >
-                        Edit
-                      </Button>
-                      <Button
-                        className="px-2 py-1 text-xs"
-                        disabled={result === "running"}
-                        onClick={() => void probe(rule, index)}
-                      >
-                        {result === "running" ? "Testing…" : "Test upstream"}
-                      </Button>
-                      <Button
-                        className="px-2 py-1 text-xs"
-                        disabled={index === 0 || busy !== null}
-                        aria-label={`Move ${id} up`}
-                        onClick={() => move(index, -1)}
-                      >
-                        ↑
-                      </Button>
-                      <Button
-                        className="px-2 py-1 text-xs"
-                        disabled={index === routing.rules.length - 1 || busy !== null}
-                        aria-label={`Move ${id} down`}
-                        onClick={() => move(index, 1)}
-                      >
-                        ↓
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        className="px-2 py-1 text-xs text-destructive"
-                        disabled={busy !== null}
-                        onClick={() => remove(rule, index)}
-                      >
-                        Remove
-                      </Button>
-                    </div>
-                  </li>
-                );
-              })}
-            </ol>
-          )}
-        </Panel>
+              {/* The target: provider, credentials and model together. */}
+              <Card
+                className="w-[408px] shrink-0 self-stretch"
+                title={VENDOR_TITLES[rule.target.type] ?? rule.target.type}
+                icon={
+                  VENDOR_ICONS[rule.target.type] === undefined ? (
+                    <span className="size-[24px] shrink-0 rounded-[6px] bg-item-selection" />
+                  ) : (
+                    <img
+                      src={VENDOR_ICONS[rule.target.type]}
+                      alt=""
+                      aria-hidden
+                      className="size-[24px] shrink-0"
+                    />
+                  )
+                }
+                actions={
+                  <IconButton
+                    icon={editIcon}
+                    label={`Change the provider for ${id}`}
+                    onClick={() => setEditingTarget(editingTarget === index ? null : index)}
+                  />
+                }
+              >
+                {editingTarget === index ? (
+                  <SelectField
+                    label="Provider"
+                    value={rule.target.type}
+                    items={meta.providers.map((entry) => ({
+                      value: entry.type,
+                      label: VENDOR_TITLES[entry.type] ?? entry.type,
+                    }))}
+                    onValueChange={(type) =>
+                      // Options belong to a provider type; carrying them across a
+                      // change would submit keys the new factory rejects.
+                      setTarget(index, { type })
+                    }
+                  />
+                ) : null}
 
-        <AllowedModelsPanel
-          routing={routing}
-          onSave={(allowedModels) =>
-            mutate("allowed-models", () =>
-              api.putRouting({ ...routing, allowedModels }, "update the client-facing model list"),
-            )
-          }
+                <SchemaForm
+                  schema={schema}
+                  values={rule.target}
+                  only={TARGET_FIELDS[rule.target.type] ?? ["apiKey"]}
+                  omit={["type", "model"]}
+                  idPrefix={`target-${id}`}
+                  onChange={(options) =>
+                    setTarget(index, {
+                      ...options,
+                      type: rule.target.type,
+                    } as RoutingRule["target"])
+                  }
+                />
+
+                <TextAreaField
+                  label="Model"
+                  mono
+                  rows={1}
+                  value={rule.target.model ?? ""}
+                  placeholder="gpt-4o-mini"
+                  help="The upstream model to forward as. Leave blank to pass the client's model through unchanged."
+                  onChange={(event) =>
+                    setTarget(index, { ...rule.target, model: event.target.value })
+                  }
+                />
+              </Card>
+            </div>
+          );
+        })}
+
+        {/* The dashed add-target row the design ends the list with. */}
+        <div className="flex w-full items-start">
+          <div className="min-w-0 flex-1" />
+          <div className="h-[50px] w-[72px] shrink-0" />
+          <button
+            type="button"
+            onClick={addRule}
+            className="flex h-[54px] w-[408px] shrink-0 items-center justify-center gap-[6px] rounded-[var(--radius-card)] border border-dashed border-border bg-background-l3 type-copy-14 text-foreground-secondary hover:bg-item-selection"
+          >
+            <img src={plusTargetIcon} alt="" aria-hidden className="size-[16px]" />
+            Model
+          </button>
+        </div>
+
+        <Button icon={plusIcon} onClick={addRule} className="self-start">
+          Matching Rule
+        </Button>
+
+        <AllowedModelsCard
+          value={draft.allowedModels}
+          onChange={(allowedModels) => setDraft((now) => ({ ...now, allowedModels }))}
         />
 
         <SimulatePanel
-          suggestedModel={routing.allowedModels[0] ?? routing.rules[0]?.target.model ?? null}
+          suggestedModel={draft.allowedModels[0] ?? draft.rules[0]?.target.model ?? null}
         />
-      </PageBody>
-
-      {editorOpen ? (
-        <RuleEditor
-          open={editorOpen}
-          onOpenChange={setEditorOpen}
-          editing={editing}
-          providers={meta.providers}
-          takenIds={routing.rules
-            .map((rule, index) => idOf(rule, index))
-            .filter((id) => id !== (editing === null ? null : idOf(editing.rule, editing.index)))}
-          onSubmit={(id, value) =>
-            mutate("save-rule", () => api.putRule(id, value), { surfaceError: false })
-          }
-        />
-      ) : null}
+      </WidePane>
     </>
   );
 }
 
-/** Where this rule's credential comes from — never what it is. */
-function CredentialBadge({ target }: { target: RoutingRule["target"] }) {
-  for (const field of ["apiKey", "serviceAccountKey", "privateKey"] as const) {
-    const value = target[field];
-    if (isSecretRef(value)) return <Badge tone="success">sealed credential</Badge>;
-    if (isEnvRef(value)) return <Badge tone="neutral">{String(value)}</Badge>;
-    if (typeof value === "string" && value !== "") {
-      // Only reachable on a deployment seeded from the environment with no
-      // keyring configured, since the admin API seals anything it is given.
-      return <Badge tone="warning">unsealed credential</Badge>;
-    }
-  }
-  return null;
-}
-
-function ProbeResult({ result }: { result: ProbeResponse | "running" }) {
-  if (result === "running") {
-    return <p className="text-xs text-foreground-secondary">Contacting the upstream…</p>;
-  }
+function ProbeResult({ result }: { result: ProbeResponse }) {
   if (result.ok === null) {
     return (
       <Callout tone="info" role="status">
@@ -332,62 +472,32 @@ function ProbeResult({ result }: { result: ProbeResponse | "running" }) {
  * The client-facing catalogue.
  *
  * Enforced *before* any rule runs, and it is what `GET /v1/models` lists — so
- * this is the one place that decides what a client may ask for, independent of
- * what the rules can serve.
+ * this decides what a client may ask for, independent of what the rules serve.
  */
-function AllowedModelsPanel({
-  routing,
-  onSave,
+function AllowedModelsCard({
+  value,
+  onChange,
 }: {
-  routing: RoutingBlock;
-  onSave: (allowedModels: string[]) => Promise<void>;
+  value: readonly string[];
+  onChange: (models: string[]) => void;
 }) {
-  const stored = routing.allowedModels.join("\n");
-  const [text, setText] = useState(stored);
-  const [busy, setBusy] = useState(false);
-  const dirty = text !== stored;
-
-  const save = async () => {
-    setBusy(true);
-    try {
-      await onSave(
-        text
-          .split("\n")
-          .map((line) => line.trim())
-          .filter((line) => line !== ""),
-      );
-    } catch {
-      // `mutate` has already surfaced the reason at the top of the page.
-    } finally {
-      setBusy(false);
-    }
-  };
-
   return (
-    <Panel
-      title="Client-facing models"
-      description="What a client may ask for. Anything else is a 404 before any rule runs, and GET /v1/models lists exactly these."
-      actions={
-        <>
-          {dirty ? (
-            <Button onClick={() => setText(stored)} disabled={busy}>
-              Discard
-            </Button>
-          ) : null}
-          <Button variant="primary" onClick={save} disabled={!dirty || busy}>
-            {busy ? "Saving…" : "Save"}
-          </Button>
-        </>
-      }
-    >
+    <Card title="Client-facing models">
       <TextAreaField
         label="Allowed models"
         mono
         rows={4}
-        value={text}
-        hint="One per line. Leave empty to allow any name, in which case /v1/models falls back to the models the rules forward to."
-        onChange={(event) => setText(event.target.value)}
+        value={value.join("\n")}
+        help="One per line. Anything else is a 404 before any rule runs, and GET /v1/models lists exactly these. Leave empty to allow any name."
+        onChange={(event) =>
+          onChange(
+            event.target.value
+              .split("\n")
+              .map((line) => line.trim())
+              .filter((line) => line !== ""),
+          )
+        }
       />
-    </Panel>
+    </Card>
   );
 }

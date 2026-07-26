@@ -19,7 +19,7 @@ const SCHEMA: JsonSchema = {
 };
 
 describe("generated labels", () => {
-  it("labels a camelCase property in sentence case", () => {
+  it("labels a camelCase property the way the design writes it", () => {
     render(
       <SchemaForm
         schema={SCHEMA}
@@ -30,11 +30,11 @@ describe("generated labels", () => {
       />,
     );
 
-    // Sentence case, matching the hand-written labels elsewhere. Title case
-    // ("Base URL", "Api Key") is the drift this asserts against.
-    expect(screen.getByLabelText("Base url")).toBeInTheDocument();
-    expect(screen.getByLabelText("Api key")).toBeInTheDocument();
-    expect(screen.getByLabelText("Max tokens default")).toBeInTheDocument();
+    // Title Case with acronyms uppercased, exactly as the Figma file labels
+    // them. "Api key" / "Base url" is the drift this asserts against.
+    expect(screen.getByLabelText("Base URL")).toBeInTheDocument();
+    expect(screen.getByLabelText("API Key")).toBeInTheDocument();
+    expect(screen.getByLabelText("Max Tokens Default")).toBeInTheDocument();
   });
 
   it("picks a control per schema type", () => {
@@ -48,11 +48,12 @@ describe("generated labels", () => {
       />,
     );
 
-    expect(screen.getByLabelText("Api key")).toHaveAttribute("type", "password");
-    expect(screen.getByLabelText("Max tokens default")).toHaveAttribute("type", "number");
-    expect(screen.getByLabelText("Models").tagName).toBe("TEXTAREA");
+    expect(screen.getByLabelText("API Key")).toHaveAttribute("type", "password");
+    expect(screen.getByLabelText("Max Tokens Default")).toHaveAttribute("type", "number");
+    // A list is a chip box: an <input> that commits one value at a time.
+    expect(screen.getByLabelText("Models").tagName).toBe("INPUT");
     expect(screen.getByLabelText("Headers").tagName).toBe("TEXTAREA");
-    expect(screen.getByRole("switch", { name: "Include stream usage" })).toBeInTheDocument();
+    expect(screen.getByRole("switch", { name: "Include Stream Usage" })).toBeInTheDocument();
     expect(screen.getByRole("combobox", { name: /scheme/i })).toBeInTheDocument();
   });
 
@@ -67,7 +68,7 @@ describe("generated labels", () => {
       />,
     );
 
-    expect(screen.queryByLabelText("Api key")).toBeNull();
+    expect(screen.queryByLabelText("API Key")).toBeNull();
   });
 
   it("says so when a component publishes no schema", () => {

@@ -18,7 +18,7 @@ describe("the session guard", () => {
     const { router } = await renderAt("/routing");
 
     expect(currentPath(router)).toBe("/sign-in");
-    expect(await screen.findByRole("heading", { name: "Sign in" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Welcome back" })).toBeInTheDocument();
   });
 
   it("sends a signed-out visitor to setup instead when no account exists", async () => {
@@ -30,9 +30,7 @@ describe("the session guard", () => {
     const { router } = await renderAt("/routing");
 
     expect(currentPath(router)).toBe("/setup");
-    expect(
-      await screen.findByRole("heading", { name: "Create the first operator" }),
-    ).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Admin Setup" })).toBeInTheDocument();
   });
 
   it("does not fetch configuration for a signed-out visitor", async () => {
@@ -48,7 +46,7 @@ describe("the session guard", () => {
     const { router } = await renderAt("/routing");
 
     expect(currentPath(router)).toBe("/routing");
-    expect(await screen.findByRole("heading", { name: "Model routing" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Model Routing" })).toBeInTheDocument();
   });
 });
 
@@ -63,9 +61,9 @@ describe("sign in", () => {
 
     await user.type(screen.getByLabelText("Email"), "ops@example.test");
     await user.type(screen.getByLabelText("Password"), "correct horse battery staple");
-    await user.click(screen.getByRole("button", { name: "Sign in" }));
+    await user.click(screen.getByRole("button", { name: "Sign In" }));
 
-    expect(await screen.findByRole("heading", { name: "Model routing" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Model Routing" })).toBeInTheDocument();
     expect(currentPath(router)).toBe("/routing");
   });
 
@@ -75,7 +73,7 @@ describe("sign in", () => {
 
     await user.type(screen.getByLabelText("Email"), "ops@example.test");
     await user.type(screen.getByLabelText("Password"), "wrong");
-    await user.click(screen.getByRole("button", { name: "Sign in" }));
+    await user.click(screen.getByRole("button", { name: "Sign In" }));
 
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("That email and password combination is not correct.");
@@ -104,13 +102,12 @@ describe("first-run setup", () => {
     const user = userEvent.setup();
     const { router } = await renderAt("/setup");
 
-    await user.type(screen.getByLabelText("Name"), "Ops");
     await user.type(screen.getByLabelText("Email"), "ops@example.test");
     await user.type(screen.getByLabelText("Password"), "a long test passphrase");
-    await user.type(screen.getByLabelText("Confirm password"), "a long test passphrase");
-    await user.click(screen.getByRole("button", { name: "Create operator" }));
+    await user.type(screen.getByLabelText("Re-enter Password"), "a long test passphrase");
+    await user.click(screen.getByRole("button", { name: "Save" }));
 
-    expect(await screen.findByRole("heading", { name: "Model routing" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Model Routing" })).toBeInTheDocument();
     expect(currentPath(router)).toBe("/routing");
     // Sign-up establishes the session, so there must be no sign-in round trip.
     expect(fake.callsTo("POST", "/auth/sign-in/email")).toHaveLength(0);
@@ -120,13 +117,12 @@ describe("first-run setup", () => {
     const user = userEvent.setup();
     await renderAt("/setup");
 
-    await user.type(screen.getByLabelText("Name"), "Ops");
     await user.type(screen.getByLabelText("Email"), "ops@example.test");
     await user.type(screen.getByLabelText("Password"), "a long test passphrase");
-    await user.type(screen.getByLabelText("Confirm password"), "a long test passphrasf");
+    await user.type(screen.getByLabelText("Re-enter Password"), "a long test passphrasf");
 
     expect(await screen.findByText("The two passwords do not match.")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Create operator" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
     expect(fake.callsTo("POST", "/auth/sign-up/email")).toHaveLength(0);
   });
 
@@ -137,7 +133,7 @@ describe("first-run setup", () => {
     await user.type(screen.getByLabelText("Password"), "short");
 
     expect(await screen.findByText("Use at least 8 characters.")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Create operator" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
   });
 
   it("is closed once an account exists", async () => {

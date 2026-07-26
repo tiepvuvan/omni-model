@@ -14,7 +14,8 @@
       "!docs",
       "!packages/dashboard/src/routeTree.gen.ts",
       "!packages/dashboard/src/theme.css",
-      "!packages/dashboard/design/*.tokens.json"
+      "!packages/dashboard/design/*.tokens.json",
+      "!packages/dashboard/src/assets"
     ]
   },
   "css": {

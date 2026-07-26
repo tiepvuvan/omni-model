@@ -77,7 +77,7 @@ describe("the generated theme", () => {
   it("uses no colour outside the token set", () => {
     // A hardcoded hex is the one thing that silently stops matching the design,
     // so the components may not contain one.
-    const sources = ["src/components/ui/primitives.tsx", "src/components/shell.tsx"];
+    const sources = ["src/components/ui/primitives.tsx", "src/components/chrome.tsx"];
     for (const path of sources) {
       const source = read(path);
       const hexes = source.match(/#[0-9a-fA-F]{3,8}\b/g) ?? [];

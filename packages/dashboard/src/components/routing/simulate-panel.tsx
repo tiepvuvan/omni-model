@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { api, type SimulateResponse } from "../../lib/api";
-import { Badge, Button, Callout, Panel, TextAreaField, TextField } from "../ui/primitives";
+import { Badge, Button, Callout, Card, TextAreaField, TextField } from "../ui/primitives";
 
 const OUTCOME_TONE = {
   match: "success",
@@ -61,10 +61,7 @@ export function SimulatePanel({ suggestedModel }: { suggestedModel: string | nul
   };
 
   return (
-    <Panel
-      title="Simulate a request"
-      description="Evaluate the applied rules against a hypothetical request, rule by rule, without sending anything upstream."
-    >
+    <Card title="Simulate a request">
       <form onSubmit={run} className="flex flex-col gap-4">
         <div className="grid gap-4 sm:grid-cols-2">
           <TextField
@@ -79,7 +76,7 @@ export function SimulatePanel({ suggestedModel }: { suggestedModel: string | nul
             label="User id"
             mono
             value={userId}
-            hint="Optional; exposed to rules as user.id."
+            help="Optional; exposed to rules as user.id."
             onChange={(event) => setUserId(event.target.value)}
           />
         </div>
@@ -89,7 +86,7 @@ export function SimulatePanel({ suggestedModel }: { suggestedModel: string | nul
           mono
           rows={3}
           value={claimsText}
-          hint="The end user’s token claims, as JSON. Rules read these as user.claims.*"
+          help="The end user’s token claims, as JSON. Rules read these as user.claims.*"
           onChange={(event) => setClaimsText(event.target.value)}
         />
 
@@ -101,7 +98,7 @@ export function SimulatePanel({ suggestedModel }: { suggestedModel: string | nul
       </form>
 
       {error !== null ? (
-        <div className="mt-4">
+        <div className="mt-[16px] w-full">
           <Callout tone="danger" role="alert">
             {error}
           </Callout>
@@ -109,7 +106,7 @@ export function SimulatePanel({ suggestedModel }: { suggestedModel: string | nul
       ) : null}
 
       {result !== null ? (
-        <div className="mt-4 flex flex-col gap-3 border-t border-border pt-4">
+        <div className="mt-[16px] flex w-full flex-col gap-[12px] border-t border-solid border-border pt-[16px]">
           {result.matched ? (
             <Callout tone="success" role="status">
               <span>
@@ -139,14 +136,12 @@ export function SimulatePanel({ suggestedModel }: { suggestedModel: string | nul
             {result.rules.map((rule) => (
               <li
                 key={rule.rule}
-                className="flex items-center justify-between gap-3 rounded-[var(--radius-field)] bg-background-grouped-container px-3 py-2"
+                className="flex items-center justify-between gap-3 rounded-[var(--radius-field)] bg-background-grouped-container px-[12px] py-[8px]"
               >
-                <span className="truncate font-mono text-xs text-foreground-primary">
-                  {rule.rule}
-                </span>
+                <span className="truncate type-mono-12 text-foreground-primary">{rule.rule}</span>
                 <span className="flex shrink-0 items-center gap-2">
                   {rule.error !== undefined ? (
-                    <span className="text-xs text-foreground-secondary">{rule.error}</span>
+                    <span className="type-label-12 text-foreground-secondary">{rule.error}</span>
                   ) : null}
                   <Badge tone={OUTCOME_TONE[rule.outcome]}>{rule.outcome}</Badge>
                 </span>
@@ -154,11 +149,11 @@ export function SimulatePanel({ suggestedModel }: { suggestedModel: string | nul
             ))}
           </ol>
           {/* `explain` stops at the first match, so a short list is not a bug. */}
-          <p className="text-xs text-foreground-secondary">
+          <p className="type-label-12 text-foreground-secondary">
             Evaluation stops at the first match; rules after it never run.
           </p>
         </div>
       ) : null}
-    </Panel>
+    </Card>
   );
 }

@@ -1,5 +1,5 @@
 import { createFileRoute, Outlet, redirect } from "@tanstack/react-router";
-import { Shell } from "../components/shell";
+import { AppChrome } from "../components/chrome";
 import { Callout } from "../components/ui/primitives";
 import { type Actor, ApiError, api, type StatusState } from "../lib/api";
 
@@ -36,12 +36,12 @@ export const Route = createFileRoute("/_app")({
 function AppLayout() {
   const { actor, status } = Route.useLoaderData();
   return (
-    <Shell actor={actor} status={status}>
+    <AppChrome actor={actor} status={status}>
       {status?.lastError != null ? (
-        <div className="px-8 pt-8">
+        <div className="px-[24px] pt-[24px]">
           <Callout tone="danger" title="The stored configuration was rejected" role="alert">
-            <p className="mt-1">{status.lastError}</p>
-            <p className="mt-2 text-xs">
+            <p className="mt-[4px]">{status.lastError}</p>
+            <p className="mt-[8px] type-label-12">
               The proxy is still serving the last configuration that built successfully, so what you
               see below may not be what is handling traffic.
             </p>
@@ -49,6 +49,6 @@ function AppLayout() {
         </div>
       ) : null}
       <Outlet />
-    </Shell>
+    </AppChrome>
   );
 }

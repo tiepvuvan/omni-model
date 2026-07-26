@@ -67,6 +67,52 @@ export const PROVIDER_SCHEMAS = [
 
 export const VERIFIER_SCHEMAS = [
   {
+    type: "apple-app-attest",
+    optionsSchema: {
+      type: "object",
+      properties: {
+        type: { type: "string" },
+        teamId: { type: "string" },
+        bundleId: { type: "string" },
+        environment: { type: "string", enum: ["production", "development"] },
+      },
+      required: ["teamId", "bundleId"],
+    },
+  },
+  {
+    type: "apple-device-check",
+    optionsSchema: {
+      type: "object",
+      properties: {
+        type: { type: "string" },
+        teamId: { type: "string" },
+        keyId: { type: "string" },
+        privateKey: { type: "string" },
+      },
+      required: ["teamId", "keyId", "privateKey"],
+    },
+  },
+  {
+    type: "firebase-app-check",
+    optionsSchema: {
+      type: "object",
+      properties: {
+        type: { type: "string" },
+        projectNumber: { type: "string" },
+        appIds: { type: "array", items: { type: "string" } },
+        consume: { type: "boolean", description: "Use App Check limited token" },
+      },
+    },
+  },
+  {
+    type: "firebase-auth",
+    optionsSchema: {
+      type: "object",
+      properties: { type: { type: "string" }, projectId: { type: "string" } },
+      required: ["projectId"],
+    },
+  },
+  {
     type: "jwt",
     optionsSchema: {
       type: "object",
@@ -80,15 +126,15 @@ export const VERIFIER_SCHEMAS = [
     },
   },
   {
-    type: "firebase-app-check",
+    type: "supabase",
     optionsSchema: {
       type: "object",
       properties: {
         type: { type: "string" },
-        projectId: { type: "string" },
-        consume: { type: "boolean" },
+        baseUrl: { type: "string" },
+        jwksUrl: { type: "string" },
+        jwtSecret: { type: "string" },
       },
-      required: ["projectId"],
     },
   },
 ];

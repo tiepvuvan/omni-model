@@ -11,7 +11,7 @@ import { TextAreaField, TextField } from "../src/components/ui/primitives";
  */
 describe("field labelling", () => {
   it("keeps a text field's hint out of its accessible name", () => {
-    render(<TextField label="Condition" hint="A CEL expression over request and user." />);
+    render(<TextField label="Condition" help="A CEL expression over request and user." />);
 
     expect(screen.getByLabelText("Condition")).toBeInTheDocument();
   });
@@ -19,7 +19,7 @@ describe("field labelling", () => {
   it("keeps a textarea's hint out of its accessible name", () => {
     // The original wrapped the control *and* the hint in one `<label>`, so a
     // screen reader announced the whole explanation as the field's name.
-    render(<TextAreaField label="Allowed models" hint="One per line." />);
+    render(<TextAreaField label="Allowed models" help="One per line." />);
 
     const field = screen.getByLabelText("Allowed models");
     expect(field.tagName).toBe("TEXTAREA");
