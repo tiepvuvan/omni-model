@@ -76,16 +76,49 @@ export function mountDashboard(
 
   const shell = join(root, SHELL);
 
-  const sendFile = async (path: string, cacheable: boolean): Promise<Response> => {
+  /**
+   * Serve one file, with something a browser can revalidate against.
+   *
+   * `no-cache` on the shell means "ask me before reusing this" — but a response
+   * with no `ETag` and no `Last-Modified` gives the browser nothing to ask *with*,
+   * so the conditional request it wants to make is impossible and behaviour comes
+   * down to heuristics. That is how a deploy ends up serving new files to a tab
+   * that keeps rendering the old app. The ETag makes revalidation a real 304, and
+   * it is derived from the file's size and mtime, which change on every rebuild.
+   */
+  interface ServedFile {
+    /** `ArrayBuffer`-backed so it satisfies `BodyInit`; a `SharedArrayBuffer` does not. */
+    body: Uint8Array<ArrayBuffer>;
+    etag: string;
+    headers: Record<string, string>;
+  }
+
+  const sendFile = async (path: string, cacheable: boolean): Promise<ServedFile> => {
     const body = await readFile(path);
-    return new Response(new Uint8Array(body), {
-      headers: {
-        "content-type": contentType(path),
-        // Vite fingerprints everything under `assets/`, so those are immutable;
-        // the shell must never be cached or a deploy keeps serving old asset URLs.
-        "cache-control": cacheable ? "public, max-age=31536000, immutable" : "no-cache",
-      },
-    });
+    const stat = statSync(path);
+    const etag = `"${stat.size.toString(36)}-${Math.floor(stat.mtimeMs).toString(36)}"`;
+
+    const headers: Record<string, string> = {
+      "content-type": contentType(path),
+      etag,
+      "last-modified": new Date(stat.mtimeMs).toUTCString(),
+      // Vite fingerprints everything under `assets/`, so those are immutable;
+      // the shell must never be cached or a deploy keeps serving old asset URLs.
+      "cache-control": cacheable ? "public, max-age=31536000, immutable" : "no-cache",
+    };
+
+    return { body: new Uint8Array(body.buffer.slice(0)), etag, headers };
+  };
+
+  /** Answer 304 when the client already has this exact file. */
+  const respond = (request: Request, file: ServedFile): Response => {
+    const asked = request.headers.get("if-none-match");
+    if (asked !== null && asked.split(",").some((tag) => tag.trim() === file.etag)) {
+      // A 304 carries no body, and must repeat the validators so the cached copy
+      // stays fresh for the next request.
+      return new Response(null, { status: 304, headers: file.headers });
+    }
+    return new Response(file.body, { headers: file.headers });
   };
 
   // Before the wildcard: `/admin/*` also matches `/admin`, so registering the
@@ -106,14 +139,14 @@ export function mountDashboard(
       const candidate = resolve(root, normalize(path));
       if (candidate === root || candidate.startsWith(root + sep)) {
         if (existsSync(candidate) && statSync(candidate).isFile()) {
-          return sendFile(candidate, path.startsWith("assets/"));
+          return respond(c.req.raw, await sendFile(candidate, path.startsWith("assets/")));
         }
       }
     }
 
     // Not a file: hand back the shell and let the client router decide. A cold
     // load of `/admin/routing` has to work, and only the SPA knows that route.
-    return sendFile(shell, false);
+    return respond(c.req.raw, await sendFile(shell, false));
   });
 
   options.logger?.info("dashboard mounted at /admin", { from: root });
