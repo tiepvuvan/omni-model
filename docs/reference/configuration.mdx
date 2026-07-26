@@ -469,9 +469,9 @@ its own options at startup, so unsupported fields fail before the service accept
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
-| `id` | string | no | Stable counter keyspace. Defaults to `name` — set it explicitly for any rule that can be renamed. |
-| `name` | string | yes | Display name, shown in rate-limit headers/logs. |
-| `when` | CEL string | no | Applies only when it evaluates to `true`. |
+| `id` | string | one of id/name | Stable counter keyspace. Defaults to `name` — set it explicitly for any rule that can be renamed. |
+| `name` | string | one of id/name | Display name, shown in rate-limit headers/logs. Defaults to `id`. |
+| `when` | CEL string | no | Applies only when it evaluates to `true`. Omitted means every request — a baseline, not a fallback: every matching rule is enforced. |
 | `key` | `user` \| `device` \| `client` \| `ip` \| `global` \| `expression` | no | Defaults to `user`. |
 | `keyExpression` | CEL string | when `key=expression` | Produces the rate-limit key. |
 | `requests` | `{ limit: positive integer, window: duration }` | one of requests/tokens | Request-window limit. |

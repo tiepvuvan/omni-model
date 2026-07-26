@@ -81,6 +81,31 @@ The dashboard adds three things over editing the document by hand:
   resolves to. The verdict comes from what the upstream answered, so a rejected API key reports as a
   failure rather than as a healthy provider.
 
+## Rate limits
+
+The same paired layout as routing: a condition on the left, the budget it buys on the right. A rule
+carries a token budget, a request limit, or both, and each is a number over a fixed window.
+
+Two things about the model are worth knowing before you edit it here.
+
+- **Rules stack; they do not fall through.** Every rule whose condition matches is enforced, so a
+  request matching a tier rule *and* a baseline is held to both and the first budget to run out is the
+  one that answers 429. This is what lets a per-IP flood cap coexist with a per-user token budget.
+- **A rule with no condition is a baseline, not a fallback.** It applies to every request, and the
+  screen draws it as the `Default` row — which is why that row has no condition to edit and no delete
+  button.
+
+Windows are fixed and clock-aligned: a `1d` budget resets at the day boundary, not one day after the
+first request. The `1 month` option is a 30-day window, since a calendar month is not a fixed length.
+A duration the select does not offer is kept and offered alongside the presets rather than replaced,
+so opening the screen never rewrites a window nobody touched.
+
+**Counted per** is the counter's owner — each user, device, client app, IP, or everyone together. It
+changes what the number means by orders of magnitude, so it is on the card rather than assumed.
+
+An absent `rateLimits` block is *not* an absence of limits: the schema fills it in and the proxy
+enforces it, so the screen shows those defaults rather than an empty list.
+
 ## Typing a credential
 
 You can type an API key straight into a rule. The admin API **seals it into encrypted storage before

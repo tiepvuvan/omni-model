@@ -91,8 +91,22 @@ export const rateLimitRuleSchema = z
      * display name silently resets every counter when renamed.
      */
     id: z.string().min(1).optional(),
-    name: z.string().min(1),
-    /** CEL expression; the rule applies only when it evaluates to true. */
+    /**
+     * Display name, reported in `x-ratelimit-rule` and in request logs.
+     *
+     * Optional, and defaults to `id`: a rule created from a dashboard has no
+     * field to type a name into, and inventing one to satisfy the schema would
+     * store a second copy of the id rather than anything an operator wrote.
+     */
+    name: z.string().min(1).optional(),
+    /**
+     * CEL expression; the rule applies only when it evaluates to true.
+     *
+     * Omitted means "every request", which is a *baseline* rather than a
+     * fallback: every matching rule is enforced, so a rule with no condition
+     * applies alongside the conditional ones above it and the first budget to
+     * run out is the one that rejects.
+     */
     when: z.string().optional(),
     key: z.enum(["user", "device", "client", "ip", "global", "expression"]).default("user"),
     /** CEL expression producing the limit key when `key: expression`. */
@@ -103,6 +117,9 @@ export const rateLimitRuleSchema = z
     tokens: z
       .strictObject({ limit: z.number().int().positive(), window: durationSchema })
       .optional(),
+  })
+  .refine((rule) => rule.id !== undefined || rule.name !== undefined, {
+    message: "a rate limit rule needs an `id` or a `name`",
   })
   .refine((rule) => rule.key !== "expression" || rule.keyExpression !== undefined, {
     message: 'key "expression" requires `keyExpression`',

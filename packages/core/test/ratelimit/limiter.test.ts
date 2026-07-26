@@ -468,4 +468,63 @@ describe("createRateLimiter", () => {
       expect(() => makeLimiter([perUser(1), perUser(2)])).toThrow(/duplicate rate limit rule/);
     });
   });
+
+  /*
+   * A rule created from a dashboard has an id and no name — there is no field on
+   * the screen to type one into. A hand-written rule usually has only a name.
+   * Both must work, and both must land in the right place: the id is the counter
+   * keyspace, the name is what a 429 reports.
+   */
+  describe("identity", () => {
+    it("reports the id as the rule name when only an id is set", async () => {
+      const { limiter } = makeLimiter([
+        { id: "limit-1", key: "user", requests: { limit: 1, window: "1m" } },
+      ]);
+      const facts = makeFacts({ userId: "alice" });
+
+      await limiter.check(facts);
+
+      expect(await limiter.check(facts)).toMatchObject({ allowed: false, rule: "limit-1" });
+    });
+
+    it("keys counters by id, so renaming preserves them", async () => {
+      const rule = (name: string): RateLimitRuleConfig => ({
+        id: "stable",
+        name,
+        key: "user",
+        requests: { limit: 2, window: "1m" },
+      });
+      const storage = new MemoryStorageAdapter(() => Date.now());
+      const facts = makeFacts({ userId: "alice" });
+
+      const before = makeLimiter([rule("Free tier")], { storage });
+      await before.limiter.check(facts);
+      await before.limiter.check(facts);
+
+      // A new limiter over the same storage is what a config reload builds.
+      const after = makeLimiter([rule("Free plan")], { storage });
+
+      expect(await after.limiter.check(facts)).toMatchObject({
+        allowed: false,
+        rule: "Free plan",
+      });
+    });
+
+    it("rejects a rule with neither an id nor a name", () => {
+      expect(() =>
+        makeLimiter([{ key: "user", requests: { limit: 1, window: "1m" } } as RateLimitRuleConfig]),
+      ).toThrow(/`id` or a `name`/);
+    });
+
+    it("detects a duplicate between an explicit id and another rule's name", () => {
+      // `shared` is one keyspace written two ways: the second rule's counters
+      // would silently share the first's budget.
+      expect(() =>
+        makeLimiter([
+          { name: "shared", key: "user", requests: { limit: 1, window: "1m" } },
+          { id: "shared", name: "other", key: "user", requests: { limit: 9, window: "1m" } },
+        ]),
+      ).toThrow(/duplicate rate limit rule id "shared"/);
+    });
+  });
 });

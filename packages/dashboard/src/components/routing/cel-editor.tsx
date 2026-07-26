@@ -62,6 +62,15 @@ export function CelEditor({
   const errors = diagnostics.filter((entry) => entry.severity === "error");
   const warnings = diagnostics.filter((entry) => entry.severity === "warning");
   const catchAll = value.trim() === "true";
+  /*
+   * The server outranks us on everything except an empty box.
+   *
+   * Asked to compile nothing, CEL answers `Unexpected token: EOF` — accurate, and
+   * useless to whoever has not typed anything yet. The local diagnostic for the
+   * same state says what to do instead, so it wins this one case.
+   */
+  const verdict =
+    value.trim() === "" ? null : serverError != null && serverError !== "" ? serverError : null;
 
   // Mount once. Monaco owns its own DOM, so React must not render into it — hence
   // the empty dependency list and the imperative updates below.
@@ -135,8 +144,10 @@ export function CelEditor({
   useEffect(() => {
     const model = editor.current?.getModel();
     if (model == null) return;
-    setMarkers(model, serverError ?? null);
-  }, [value, serverError, ready]);
+    // The same precedence the status line uses, so the squiggle and the sentence
+    // below it never disagree about what is wrong.
+    setMarkers(model, verdict);
+  }, [value, verdict, ready]);
 
   // Monaco's theme is global, so a toggle has to be pushed into it.
   useEffect(() => {
@@ -164,8 +175,8 @@ export function CelEditor({
        * which outranks the silent-failure warning.
        */}
       <div id={`${controlId}-status`} className="flex w-full flex-col items-end gap-[4px] p-[12px]">
-        {serverError != null && serverError !== "" ? (
-          <Status tone="error">{serverError}</Status>
+        {verdict !== null ? (
+          <Status tone="error">{verdict}</Status>
         ) : errors.length > 0 ? (
           <Status tone="error">{errors[0]?.message}</Status>
         ) : warnings.length > 0 ? (

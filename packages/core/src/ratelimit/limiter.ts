@@ -22,9 +22,9 @@ type CompiledKey =
   | { kind: "expression"; expression: CompiledExpression };
 
 interface CompiledRule {
-  /** Counter keyspace. `config.id ?? config.name`. */
+  /** Counter keyspace: `id ?? name`. */
   id: string;
-  /** Display name, reported in decisions and headers. */
+  /** Display name, reported in decisions and headers: `name ?? id`. */
   name: string;
   when: CompiledExpression | null;
   key: CompiledKey;
@@ -92,28 +92,45 @@ function compileWindow(
   return { limit: window.limit, windowMs, ttlSeconds: Math.ceil(windowMs / 1000) + 60 };
 }
 
+/**
+ * The rule's two identities, either of which may be the only one written down.
+ *
+ * `id` is the counter keyspace and `name` is what a 429 and a log row report;
+ * each falls back to the other, so a hand-written rule can carry just a name and
+ * a dashboard-written one just an id. The schema refinement guarantees one
+ * exists — the throw is for narrowing and for a caller bypassing the schema.
+ */
+function identityOf(rule: RateLimitRuleConfig): { id: string; name: string } {
+  const id = rule.id ?? rule.name;
+  const name = rule.name ?? rule.id;
+  if (id === undefined || name === undefined) {
+    throw new ConfigError("a rate limit rule needs an `id` or a `name`");
+  }
+  return { id, name };
+}
+
 function compileRule(rule: RateLimitRuleConfig, engine: ExpressionEngine): CompiledRule {
+  const { id, name } = identityOf(rule);
   let key: CompiledKey;
   if (rule.key === "expression") {
     // The schema refinement guarantees `keyExpression` here; guard for narrowing.
     if (rule.keyExpression === undefined) {
-      throw new ConfigError(`rate limit rule "${rule.name}": key "expression" needs keyExpression`);
+      throw new ConfigError(`rate limit rule "${name}": key "expression" needs keyExpression`);
     }
     key = {
       kind: "expression",
-      expression: compileExpression(engine, rule.keyExpression, rule.name, "keyExpression"),
+      expression: compileExpression(engine, rule.keyExpression, name, "keyExpression"),
     };
   } else {
     key = { kind: rule.key };
   }
   return {
-    id: rule.id ?? rule.name,
-    name: rule.name,
-    when: rule.when === undefined ? null : compileExpression(engine, rule.when, rule.name, "when"),
+    id,
+    name,
+    when: rule.when === undefined ? null : compileExpression(engine, rule.when, name, "when"),
     key,
-    requests:
-      rule.requests === undefined ? null : compileWindow(rule.requests, rule.name, "requests"),
-    tokens: rule.tokens === undefined ? null : compileWindow(rule.tokens, rule.name, "tokens"),
+    requests: rule.requests === undefined ? null : compileWindow(rule.requests, name, "requests"),
+    tokens: rule.tokens === undefined ? null : compileWindow(rule.tokens, name, "tokens"),
   };
 }
 
@@ -145,21 +162,21 @@ export function createRateLimiter(
   const seenIds = new Set<string>();
   const seenNames = new Set<string>();
   for (const rule of parsed.data) {
-    const id = rule.id ?? rule.name;
+    const { id, name } = identityOf(rule);
     if (seenIds.has(id)) {
       throw new ConfigError(
         `duplicate rate limit rule id "${id}"; ids isolate counter keyspaces and must be unique ` +
           "(a rule without an explicit `id` uses its `name`)",
       );
     }
-    if (seenNames.has(rule.name)) {
+    if (seenNames.has(name)) {
       throw new ConfigError(
-        `duplicate rate limit rule name "${rule.name}"; names identify rules in decisions and ` +
+        `duplicate rate limit rule name "${name}"; names identify rules in decisions and ` +
           "response headers and must be unique",
       );
     }
     seenIds.add(id);
-    seenNames.add(rule.name);
+    seenNames.add(name);
     compiled.push(compileRule(rule, deps.engine));
   }
 

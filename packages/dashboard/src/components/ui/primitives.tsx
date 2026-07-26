@@ -482,6 +482,7 @@ export function Card({
   icon,
   actions,
   children,
+  footer,
   className,
   bodyClassName,
 }: {
@@ -490,6 +491,14 @@ export function Card({
   icon?: ReactNode;
   actions?: ReactNode;
   children?: ReactNode;
+  /**
+   * A `px-16 py-12` strip below the body, separated by a border.
+   *
+   * The rate-limit screen's budget card has no header — the numbers are the whole
+   * card — so its remove button lives here instead. Right-aligned like the header
+   * slot it stands in for.
+   */
+  footer?: ReactNode;
   className?: string;
   bodyClassName?: string;
 }) {
@@ -513,6 +522,11 @@ export function Card({
         <div className={cx("flex w-full flex-col gap-[16px] p-[16px]", bodyClassName)}>
           {children}
         </div>
+      ) : null}
+      {footer !== undefined ? (
+        <footer className="flex w-full items-center justify-end border-t border-solid border-border px-[16px] py-[12px]">
+          {footer}
+        </footer>
       ) : null}
     </section>
   );

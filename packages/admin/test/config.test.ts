@@ -112,6 +112,60 @@ describe("block-level updates", () => {
     expect([...(holder.current()?.providers.keys() ?? [])]).toEqual(["default"]);
   });
 
+  it("replaces the rate-limit list, applying it to the running limiter", async () => {
+    // The dashboard's rate-limit screen is this one call: the list is ordered and
+    // a rule can be removed, neither of which a per-rule endpoint could express.
+    const { call, holder } = await createTestAdmin({ config: baseConfig() });
+    const response = await call("/admin/api/rate-limits", {
+      method: "PUT",
+      body: JSON.stringify({
+        value: [
+          {
+            id: "free-tier",
+            when: 'has(user.claims.tier) && user.claims.tier == "free"',
+            key: "user",
+            tokens: { limit: 30_000, window: "30d" },
+          },
+          { id: "baseline", key: "user", requests: { limit: 30, window: "1h" } },
+        ],
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(holder.current()?.config.rateLimits.map((rule) => rule.id)).toEqual([
+      "free-tier",
+      "baseline",
+    ]);
+  });
+
+  it("rejects a rate-limit rule with no budget, the way a boot would", async () => {
+    const { call, holder } = await createTestAdmin({ config: baseConfig() });
+    const before = holder.current()?.config.rateLimits;
+
+    const response = await call("/admin/api/rate-limits", {
+      method: "PUT",
+      body: JSON.stringify({ value: [{ id: "pointless", key: "user" }] }),
+    });
+
+    expect(response.status).toBe(400);
+    expect((await errorOf(response)).message).toContain("`requests` or `tokens`");
+    // Nothing applied: a rejected document leaves the previous one serving.
+    expect(holder.current()?.config.rateLimits).toEqual(before);
+  });
+
+  it("accepts a rule identified only by id, which is all a dashboard has", async () => {
+    const { call, holder } = await createTestAdmin({ config: baseConfig() });
+
+    const response = await call("/admin/api/rate-limits", {
+      method: "PUT",
+      body: JSON.stringify({ value: [{ id: "limit-1", tokens: { limit: 1000, window: "1d" } }] }),
+    });
+
+    expect(response.status).toBe(200);
+    // There is no field on the screen to type a name into, so the id is the name.
+    expect(holder.current()?.config.rateLimits[0]?.name).toBeUndefined();
+  });
+
   it("adds and removes a routing rule", async () => {
     const { call, holder } = await createTestAdmin({ config: baseConfig() });
     const added = await call("/admin/api/routing/rules/backup", {

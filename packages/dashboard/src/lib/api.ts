@@ -60,6 +60,36 @@ export interface RoutingBlock {
   rules: RoutingRule[];
 }
 
+/** How much of something, per fixed window: `30000` tokens per `"1d"`. */
+export interface RateLimitBudget {
+  limit: number;
+  window: string;
+}
+
+/** What a limit is counted against — one counter per distinct value. */
+export type RateLimitKey = "user" | "device" | "client" | "ip" | "global" | "expression";
+
+/**
+ * One rate-limit rule.
+ *
+ * Every field except the budgets is optional, and that shapes the screen: a rule
+ * with no `when` applies to every request (the design's "Default" card), and a
+ * rule the dashboard creates carries an `id` and no `name` because there is
+ * nowhere on the screen to type one. Identity is `id ?? name`; the display name a
+ * 429 reports is `name ?? id`.
+ */
+export interface RateLimitRule {
+  id?: string;
+  name?: string;
+  /** Absent means every request. */
+  when?: string;
+  key?: RateLimitKey;
+  /** Required when `key` is `expression`; produces the counter key. */
+  keyExpression?: string;
+  requests?: RateLimitBudget;
+  tokens?: RateLimitBudget;
+}
+
 export interface VerifierEntry {
   type: string;
   name?: string;
@@ -77,6 +107,8 @@ export interface SecurityBlock {
 export interface StoredConfig {
   routing?: Partial<RoutingBlock>;
   security?: Partial<SecurityBlock>;
+  /** Absent is not "none": the schema supplies defaults the proxy then enforces. */
+  rateLimits?: RateLimitRule[];
   [block: string]: unknown;
 }
 
@@ -321,6 +353,10 @@ export const api = {
   /** Replace `routing` wholesale — the only call that can express a new order. */
   putRouting: (value: RoutingBlock, note?: string) =>
     request<SaveResponse>("/routing", { method: "PUT", body: { value, note } }),
+
+  /** Replace the whole `rateLimits` list. Order is the order rules are reported in. */
+  putRateLimits: (value: RateLimitRule[], note?: string) =>
+    request<SaveResponse>("/rate-limits", { method: "PUT", body: { value, note } }),
 
   /** Insert or replace one rule, keeping its position if it already exists. */
   putRule: (id: string, value: Omit<RoutingRule, "id">, note?: string) =>

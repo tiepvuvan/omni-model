@@ -24,6 +24,8 @@ export interface FakeState {
   revision: number;
   /** Set to make the next save fail, the way a rejected document does. */
   rejectSave: string | null;
+  /** What `POST /config/validate` should answer; `null` means the document is fine. */
+  validateError: string | null;
   lastError: string | null;
   /** Recorded requests, for asserting what was actually sent. */
   calls: { method: string; path: string; body: unknown }[];
@@ -160,6 +162,7 @@ export function createFakeApi(initial: Partial<FakeState> = {}) {
     config: {},
     revision: 1,
     rejectSave: null,
+    validateError: null,
     lastError: null,
     calls: [],
     probe: { ok: true, latencyMs: 12, models: 3 },
@@ -282,6 +285,20 @@ export function createFakeApi(initial: Partial<FakeState> = {}) {
         const value = isRecord(body) && isRecord(body.value) ? body.value : {};
         return save({ ...state.config, security: value });
       }
+
+      case path === "/rate-limits" && method === "PUT": {
+        // An array, not an object: `rateLimits` is the one top-level block that is
+        // a list, and a `{}` fallback here would silently store the wrong shape.
+        const value = isRecord(body) && Array.isArray(body.value) ? body.value : [];
+        return save({ ...state.config, rateLimits: value });
+      }
+
+      case path === "/config/validate" && method === "POST":
+        return json(
+          state.validateError === null
+            ? { valid: true }
+            : { valid: false, error: state.validateError },
+        );
 
       case path === "/providers/models" && method === "POST":
         return json(state.upstreamModels);

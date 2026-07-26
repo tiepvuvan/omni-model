@@ -1,7 +1,7 @@
 import { createFileRoute, useRouter } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import connectorImage from "../../assets/connector.svg";
-import editIcon from "../../assets/edit.svg";
+import deleteIcon from "../../assets/delete.svg";
 import plusIcon from "../../assets/plus.svg";
 import plusTargetIcon from "../../assets/plus-target.svg";
 import { ActionBar, WidePane } from "../../components/chrome";
@@ -340,7 +340,7 @@ function RoutingScreen() {
                 icon={<VendorIcon type={rule.target.type} size={24} />}
                 actions={
                   <IconButton
-                    icon={editIcon}
+                    icon={deleteIcon}
                     label={`Remove ${id}`}
                     onClick={() => removeRule(index)}
                   />

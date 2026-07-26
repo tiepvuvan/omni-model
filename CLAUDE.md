@@ -52,7 +52,9 @@ packages/dashboard         Operator console. TanStack Start SPA over the admin A
   scripts/verify-build     Post-build: every asset the shell links must exist
   src/lib/api.ts           The one typed client for /admin/api
   src/components/          schema-form (forms from /meta) · ui/primitives (Base UI)
+                           routing/ (Monaco + the CEL language) · ratelimit/
   src/routes/              _app guard · sign-in · setup · routing · authentication
+                           rate-limit
 swift/OmniModelFoundation   Apple Foundation Models LanguageModel package (SPM)
 swift/OmniModelClientKit    MacPaw/OpenAI client + OmniAuthMiddleware (SPM)
 examples/                  Example configs + iOS client (examples/ios, ios-app)
