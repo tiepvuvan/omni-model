@@ -6,6 +6,7 @@ import plusIcon from "../../assets/plus.svg";
 import plusTargetIcon from "../../assets/plus-target.svg";
 import { ActionBar, WidePane } from "../../components/chrome";
 import { CelEditor } from "../../components/routing/cel-editor";
+import { CelReference } from "../../components/routing/cel-reference";
 import { ModelField } from "../../components/routing/model-field";
 import {
   ProviderPicker,
@@ -58,6 +59,18 @@ function routingOf(config: ConfigResponse): RoutingBlock {
 }
 
 const idOf = (rule: RoutingRule, index: number): string => rule.id ?? `rules[${index}]`;
+
+/**
+ * A rule that has not been set up yet.
+ *
+ * Its picker stays open rather than hiding behind the edit button: until a target
+ * has an endpoint or a credential, choosing the provider *is* the task, and the
+ * card has nothing else to show.
+ */
+function isNew(rule: RoutingRule): boolean {
+  const { type, model, ...options } = rule.target;
+  return Object.keys(options).length === 0 && (model === undefined || model === "");
+}
 
 /**
  * Rules an earlier catch-all makes unreachable.
@@ -176,17 +189,15 @@ function RoutingScreen() {
     const taken = new Set(draft.rules.map((rule, index) => idOf(rule, index)));
     let n = draft.rules.length + 1;
     while (taken.has(`rule-${n}`)) n += 1;
-    setDraft((now) => ({
-      ...now,
-      rules: [
-        ...now.rules,
-        {
-          id: `rule-${n}`,
-          when: "",
-          target: { type: meta.providers[0]?.type ?? "openai-compatible" },
-        },
-      ],
-    }));
+    setDraft((now) => {
+      const rules = [...now.rules, { id: `rule-${n}`, when: "", target: { type: firstProvider } }];
+      // Open the new rule's picker straight away. Choosing where a rule sends its
+      // matches is the first decision, and it decides which fields the card then
+      // asks for — landing on a silent default and hiding the choice behind an
+      // edit button gets that backwards.
+      setEditingTarget(rules.length - 1);
+      return { ...now, rules };
+    });
   };
 
   const removeRule = (index: number) => {
@@ -314,6 +325,8 @@ function RoutingScreen() {
                   serverError={compileErrorFor(id)}
                 />
 
+                <CelReference />
+
                 {unreachable ? (
                   <p className="type-label-12 text-destructive">
                     A catch-all above this rule matches everything, so this rule can never fire.
@@ -358,7 +371,7 @@ function RoutingScreen() {
                   />
                 }
               >
-                {editingTarget === index ? (
+                {editingTarget === index || isNew(rule) ? (
                   <ProviderPicker
                     available={meta.providers.map((entry) => entry.type)}
                     value={rule.target.type}

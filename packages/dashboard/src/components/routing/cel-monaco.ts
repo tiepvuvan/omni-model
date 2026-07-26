@@ -1,11 +1,25 @@
 /*
- * The editor API only — never `"monaco-editor"`, which is the package root and
- * pulls in the TypeScript, CSS, HTML and JSON language services with their four
- * web workers. CEL is a custom language with no language *service*, so none of
- * that is reachable code; importing the root took the bundle from 1MB to 14MB.
- * Types come from the root as a type-only import, which emits nothing.
+ * `editor.main`, deliberately — not `editor.api`, and not the package root.
+ *
+ * Three entry points, and the difference matters:
+ *
+ * - the package **root** is the whole bundle: the editor, every basic language,
+ *   and the TypeScript / CSS / HTML / JSON language services with four web
+ *   workers. 14MB, almost none of it reachable for a custom language.
+ * - **`editor.api`** is the API surface with *no editor contributions*. It builds
+ *   and it types, and the editor renders — but there is no suggest widget and no
+ *   hover, because those *are* contributions. Registering a completion provider
+ *   against it does nothing at all, silently.
+ * - **`editor.main`** adds the contributions *and* re-pulls the language services
+ *   through its standalone bootstrap — back to 14MB.
+ * - **`editor.all`** is the contributions alone. Imported for its side effect,
+ *   with the typed API taken from `editor.api`, this is the editor with a working
+ *   suggest widget and hover and none of the language services: 3.6MB, one worker.
  */
 import * as monaco from "monaco-editor/esm/vs/editor/editor.api";
+// Side-effect import: registers the suggest widget, hover, bracket matching and
+// the rest. Without it a completion provider is accepted and never consulted.
+import "monaco-editor/esm/vs/editor/editor.all.js";
 
 import editorWorker from "monaco-editor/esm/vs/editor/editor.worker?worker";
 import { complete, diagnose, FUNCTIONS, KEYWORDS, NAMESPACES, ROOTS } from "./cel";

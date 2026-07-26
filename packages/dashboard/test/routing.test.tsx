@@ -578,3 +578,83 @@ describe("the provider picker", () => {
     );
   });
 });
+
+describe("the variable reference", () => {
+  it("names every namespace without being opened", async () => {
+    // Autocomplete only helps someone who knows a namespace exists — you have to
+    // type `user.` to discover what `user` has. The summary answers the first
+    // question, which is what can be matched on at all.
+    await renderAt("/routing");
+
+    const summary = within(row("pro-users")).getByText(/A CEL expression over/);
+    for (const namespace of ["request", "user", "device", "client", "http"]) {
+      expect(summary).toHaveTextContent(namespace);
+    }
+    expect(summary).toHaveTextContent("Only a literal true counts as a match");
+  });
+
+  it("lists every field with a worked example when opened", async () => {
+    const user = userEvent.setup();
+    await renderAt("/routing");
+
+    await user.click(within(row("pro-users")).getByRole("button", { name: "Show variables" }));
+
+    const reference = within(row("pro-users"));
+    expect(reference.getByText("request.messageCount")).toBeInTheDocument();
+    expect(reference.getByText("client.authenticated")).toBeInTheDocument();
+    // An example, not just a name: a field list you cannot copy from is a glossary.
+    expect(reference.getByText("request.messageCount > 4")).toBeInTheDocument();
+    expect(reference.getByText("request.stream == true")).toBeInTheDocument();
+    // `startsWith` appears twice on purpose — as the `model` example and in the
+    // function list — so it is asserted as a pair rather than as a single node.
+    expect(reference.getAllByText('request.model.startsWith("claude-")')).toHaveLength(2);
+  });
+
+  it("shows a dynamic map's example already guarded", async () => {
+    // The example for a claim has to be the *correct* form, because the obvious
+    // form throws and the router turns a throw into "no match".
+    const user = userEvent.setup();
+    await renderAt("/routing");
+
+    await user.click(within(row("pro-users")).getByRole("button", { name: "Show variables" }));
+
+    expect(
+      within(row("pro-users")).getByText('has(user.claims.tier) && user.claims.tier == "value"'),
+    ).toBeInTheDocument();
+    expect(within(row("pro-users")).getByText(/silently never fires/)).toBeInTheDocument();
+  });
+});
+
+describe("adding a rule", () => {
+  it("opens the provider picker for the new rule", async () => {
+    // Choosing where a rule sends its matches decides which fields the card then
+    // asks for, so it cannot land on a silent default behind an edit button.
+    const user = userEvent.setup();
+    await renderAt("/routing");
+
+    await user.click(screen.getByRole("button", { name: "Matching Rule" }));
+
+    const added = row("rule-3");
+    for (const name of [/OpenAI Compatible/, /Anthropic/]) {
+      expect(within(added).getByRole("button", { name })).toBeInTheDocument();
+    }
+  });
+
+  it("keeps the picker open until the target has been given something", async () => {
+    const user = userEvent.setup();
+    await renderAt("/routing");
+
+    await user.click(screen.getByRole("button", { name: "Model" }));
+    const added = row("rule-3");
+    expect(within(added).getByRole("button", { name: /Anthropic/ })).toBeInTheDocument();
+
+    // Picking a provider is not "set up" on its own — the endpoint or key is what
+    // the card then needs, so the picker stays until one of those is filled in.
+    await user.click(within(added).getByRole("button", { name: /Anthropic/ }));
+    await user.type(within(added).getByLabelText("API Key"), "sk-ant-x");
+
+    await waitFor(() => {
+      expect(within(added).queryByRole("button", { name: /OpenAI Compatible/ })).toBeNull();
+    });
+  });
+});

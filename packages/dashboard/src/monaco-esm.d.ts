@@ -11,6 +11,13 @@ declare module "monaco-editor/esm/vs/editor/editor.api" {
   export * from "monaco-editor";
 }
 
+/**
+ * The editor contributions — suggest widget, hover, bracket matching — imported
+ * for their side effect. `editor.api` alone registers providers that are never
+ * consulted, because the widgets that consult them live here.
+ */
+declare module "monaco-editor/esm/vs/editor/editor.all.js";
+
 /** Vite's `?worker` suffix: a constructor for the bundled worker. */
 declare module "*?worker" {
   const WorkerConstructor: new () => Worker;
