@@ -45,6 +45,14 @@ packages/admin             Operator API. Authorization + HTTP over existing stor
   src/app.ts               Hono sub-app; the first-run sign-up gate lives here
   src/routes/              config · writekeys · secrets · logs · meta
 packages/node              Node server + CLI — the container entry point
+  src/dashboard.ts         Serves the built dashboard at /admin, SPA history fallback
+packages/dashboard         Operator console. TanStack Start SPA over the admin API
+  design/*.tokens.json     The Figma variable export — the source of truth for colour
+  scripts/generate-theme   Turns that export into src/theme.css (never hand-edited)
+  scripts/verify-build     Post-build: every asset the shell links must exist
+  src/lib/api.ts           The one typed client for /admin/api
+  src/components/          schema-form (forms from /meta) · ui/primitives (Base UI)
+  src/routes/              _app guard · sign-in · setup · routing · authentication
 swift/OmniModelFoundation   Apple Foundation Models LanguageModel package (SPM)
 swift/OmniModelClientKit    MacPaw/OpenAI client + OmniAuthMiddleware (SPM)
 examples/                  Example configs + iOS client (examples/ios, ios-app)
@@ -52,6 +60,12 @@ e2e/                       End-to-end suites (opt-in; two independent gates)
 docs/                      Mintlify docs site (docs.json + MDX): installation,
                            security, integrations, model routing, reference
 ```
+
+> The dashboard's `build` is `tsc --noEmit && vite build && verify-build`, so `pnpm build` also
+> typechecks it and refuses a bundle whose shell links an asset the build did not write. Its tests
+> mount the real router at a real URL against a fake `fetch`, so guards and loaders actually run;
+> `test/support/render.tsx` explains the one shim that is needed (the shell's `<html>` cannot nest
+> inside a test container).
 
 > Non-JS members (`swift/`, `examples/ios*`) are not part of the pnpm workspace or `pnpm run ci`;
 > they build with their own toolchains (`swift build`, `xcodebuild`, `tuist`). Biome ignores them.
@@ -153,6 +167,14 @@ docs/                      Mintlify docs site (docs.json + MDX): installation,
     Ours takes `pg_advisory_xact_lock` over the whole set in one transaction, so concurrent boots
     cannot half-apply; drizzle-kit's does not. Generated SQL is embedded, never read from files, and
     its `"public".` qualifiers must be stripped — they pin the schema and break per-schema isolation.
+22. **The dashboard renders forms from the API, and colour from the token export.**
+    A component's form comes from the JSON Schema `GET /admin/api/meta` publishes, so a provider
+    added to the registry gets a working form with no dashboard change and a form cannot accept what
+    a factory rejects. Colour comes from `design/*.tokens.json` via a generator, and a test fails the
+    build if `theme.css` is stale — a hand-copied hex is the one thing that silently stops matching
+    the design. The dashboard never imports `@omni-model/core` at runtime: it would pull hono, zod,
+    jose and the CEL engine into a browser bundle. Where it must duplicate a constant, a test asserts
+    parity with core's copy.
 
 ## Toolchain
 
@@ -166,7 +188,8 @@ docs/                      Mintlify docs site (docs.json + MDX): installation,
 ```sh
 pnpm install
 pnpm build          # tsc for every package (this is also the typecheck)
-pnpm test           # vitest run (all packages; DB-backed suites skip)
+pnpm test           # vitest run — two projects: `engine` (node) and `dashboard`
+                    # (jsdom + JSX); DB-backed suites skip without a database
 pnpm test:pg        # starts PostgreSQL in Docker, then runs everything
 pnpm test:pg:up     # just start it (for TEST_POSTGRES_URL=… pnpm test:e2e)
 pnpm test:pg:down   # stop it
@@ -188,7 +211,13 @@ pnpm run ci         # lint + build + test — must be green before any PR
 - **Gated suites must actually run somewhere.** A skipped suite reads like a passing one, so
   `pnpm test:pg` starts a real Postgres (`docker-compose.test.yml`) and CI runs the same suites
   with `OMNI_REQUIRE_PG=1`, which turns a closed gate into a failure. Give each run its own
-  Postgres schema so "applies from scratch" is a real assertion, not leftover state.
+  Postgres schema so "applies from scratch" is a real assertion, not leftover state — **except a
+  suite that runs Better Auth's migrator, which needs its own `CREATE DATABASE`.** That migrator
+  introspects with Kysely, which enumerates the whole database and then queries what it found, so a
+  sibling suite dropping *its* schema in between fails the query with `schema … does not exist`
+  naming a schema the suite has never heard of. A scoped `search_path` does not help, because the
+  introspection is not scoped by it — and `pg` silently drops `options=-c search_path=…` from a
+  connection URL in every encoding, so scoping that way does nothing at all.
 - **Do not assert generated SQL.** Drizzle writes the statements now, so pinning their text would
   test its codegen and break on a dependency bump. `packages/postgres/test/support/fake-pool.ts`
   recognises *operations* and implements the semantics Drizzle cannot give us (expiry, upsert

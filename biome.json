@@ -6,7 +6,21 @@
     "useIgnoreFile": true
   },
   "files": {
-    "includes": ["**", "!**/dist", "!**/node_modules", "!pnpm-lock.yaml", "!docs"]
+    "includes": [
+      "**",
+      "!**/dist",
+      "!**/node_modules",
+      "!pnpm-lock.yaml",
+      "!docs",
+      "!packages/dashboard/src/routeTree.gen.ts",
+      "!packages/dashboard/src/theme.css",
+      "!packages/dashboard/design/*.tokens.json"
+    ]
+  },
+  "css": {
+    "parser": {
+      "tailwindDirectives": true
+    }
   },
   "formatter": {
     "enabled": true,

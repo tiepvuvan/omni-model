@@ -12,11 +12,17 @@
     "groups": [
       {
         "group": "Get started",
-        "pages": ["index", "quickstart"]
+        "pages": [
+          "index",
+          "quickstart"
+        ]
       },
       {
         "group": "Installation",
-        "pages": ["installation/docker"]
+        "pages": [
+          "installation/docker",
+          "installation/dashboard"
+        ]
       },
       {
         "group": "Security",
@@ -40,7 +46,10 @@
       },
       {
         "group": "Model routing",
-        "pages": ["model-routing/expressions", "model-routing/routing"]
+        "pages": [
+          "model-routing/expressions",
+          "model-routing/routing"
+        ]
       },
       {
         "group": "Reference",

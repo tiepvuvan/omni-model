@@ -34,7 +34,17 @@ const SECRET = "a".repeat(32);
 const PASSWORD = "correct horse battery staple";
 
 describe.skipIf(!url)("admin auth (integration)", () => {
-  const schema = `omni_admin_${process.pid.toString(36)}${Date.now().toString(36)}`;
+  /**
+   * Its own **database**, not a schema in a shared one.
+   *
+   * Better Auth's migrator introspects with Kysely, which enumerates the whole
+   * database and then queries what it found. Another suite dropping its schema in
+   * between makes that second query fail with `schema … does not exist` — naming a
+   * schema this suite has never heard of. A schema-scoped `search_path` does not
+   * help, because the introspection is not scoped by it.
+   */
+  const database = `omni_admin_${process.pid.toString(36)}${Date.now().toString(36)}`;
+  let cluster: Pool;
   let owner: Pool;
   let pool: PgPoolLike;
   let admin: AdminApp;
@@ -59,14 +69,13 @@ describe.skipIf(!url)("admin auth (integration)", () => {
   };
 
   beforeAll(async () => {
-    owner = new Pool({ connectionString: url });
-    await owner.query(`CREATE SCHEMA IF NOT EXISTS ${schema}`);
-    // A scoped search_path keeps Better Auth's unquoted `user` table inside this
-    // run's schema, so a failed run cannot poison the next one.
-    pool = new Pool({
-      connectionString: url,
-      options: `-c search_path=${schema}`,
-    }) as unknown as PgPoolLike;
+    cluster = new Pool({ connectionString: url });
+    await cluster.query(`CREATE DATABASE ${database}`);
+
+    const scoped = new URL(url as string);
+    scoped.pathname = `/${database}`;
+    owner = new Pool({ connectionString: scoped.toString() });
+    pool = new Pool({ connectionString: scoped.toString() }) as unknown as PgPoolLike;
 
     const runtime: RuntimeContext = {
       env: {},
@@ -101,15 +110,16 @@ describe.skipIf(!url)("admin auth (integration)", () => {
   }, 30_000);
 
   afterAll(async () => {
+    // Every connection has to be closed before the database can be dropped.
     await (pool as unknown as Pool)?.end?.();
-    await owner?.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);
     await owner?.end();
-  });
+    await cluster?.query(`DROP DATABASE IF EXISTS ${database} WITH (FORCE)`);
+    await cluster?.end();
+  }, 30_000);
 
   it("creates its own tables in our pool", async () => {
     const result = await owner.query(
-      "SELECT table_name FROM information_schema.tables WHERE table_schema = $1 ORDER BY table_name",
-      [schema],
+      "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_name",
     );
     const tables = result.rows.map((row) => String(row.table_name));
     expect(tables).toEqual(expect.arrayContaining(["account", "session", "user", "verification"]));
@@ -153,7 +163,7 @@ describe.skipIf(!url)("admin auth (integration)", () => {
     const body = (await response.json()) as { error: { code: string } };
     expect(body.error.code).toBe("signup_closed");
     // And nothing was created.
-    const count = await owner.query(`SELECT count(*)::int AS n FROM ${schema}."user"`);
+    const count = await owner.query('SELECT count(*)::int AS n FROM "user"');
     expect(count.rows[0]?.n).toBe(1);
   });
 
@@ -201,15 +211,13 @@ describe.skipIf(!url)("admin auth (integration)", () => {
     expect(created.email).toBe("cli@test.local");
 
     // A fresh account is a plain user until it is promoted...
-    const before = await owner.query(`SELECT role FROM ${schema}."user" WHERE email = $1`, [
+    const before = await owner.query('SELECT role FROM "user" WHERE email = $1', [
       "cli@test.local",
     ]);
     expect(before.rows[0]?.role).not.toBe("admin");
 
     expect(await grantAdminRole(pool, "cli@test.local")).toBe(true);
-    const after = await owner.query(`SELECT role FROM ${schema}."user" WHERE email = $1`, [
-      "cli@test.local",
-    ]);
+    const after = await owner.query('SELECT role FROM "user" WHERE email = $1', ["cli@test.local"]);
     expect(after.rows[0]?.role).toBe("admin");
   });
 

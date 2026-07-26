@@ -22,6 +22,10 @@ COPY packages/core/package.json packages/core/
 COPY packages/postgres/package.json packages/postgres/
 COPY packages/admin/package.json packages/admin/
 COPY packages/node/package.json packages/node/
+# The dashboard's manifest is needed for the workspace to resolve, but it declares
+# every dependency as a dev one — it emits static files and nothing imports it at
+# runtime — so `--prod` installs none of React for it.
+COPY packages/dashboard/package.json packages/dashboard/
 RUN pnpm install --prod --frozen-lockfile
 
 # --- Stage 3: runtime --------------------------------------------------------
@@ -38,6 +42,9 @@ COPY --from=build /repo/packages/core/dist /app/packages/core/dist
 COPY --from=build /repo/packages/postgres/dist /app/packages/postgres/dist
 COPY --from=build /repo/packages/admin/dist /app/packages/admin/dist
 COPY --from=build /repo/packages/node/dist /app/packages/node/dist
+# The operator dashboard: a static bundle served at /admin. Only `dist/client` —
+# the SSR output next to it exists solely so the build can prerender the shell.
+COPY --from=build /repo/packages/dashboard/dist/client /app/packages/dashboard/dist/client
 # On PATH so `docker exec <container> omni-model create-admin …` works, which is
 # how an operator is seeded in a deployment with no public sign-up. `migrate` and
 # `import-config` are reachable the same way.

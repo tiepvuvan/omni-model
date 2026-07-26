@@ -14,6 +14,10 @@ docker run -p 8787:8787 --env-file omni.env ghcr.io/tiepvuvan/omni-model:latest
 
 No fork, no clone, no build. Credentials stay in your platform's secret store.
 
+The same image serves an **operator dashboard at `/admin`** — client authentication and model
+routing, configured at runtime and applied to every replica within seconds, with no restart. Set
+`OMNI_ADMIN_SECRET` to turn it on; see [the dashboard](docs/installation/dashboard.mdx).
+
 ## How it works
 
 ```text

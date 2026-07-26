@@ -1,0 +1,66 @@
+@import "tailwindcss";
+@import "./theme.css";
+
+/*
+ * Geist is self-hosted from the `geist` package rather than fetched from a CDN.
+ * A dashboard that only renders correctly with outbound internet access is the
+ * wrong shape for something you deploy into your own network — and the variable
+ * file is one request for every weight the design uses.
+ */
+@font-face {
+  font-family: "Geist";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("geist/dist/fonts/geist-sans/Geist-Variable.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Geist Mono";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("geist/dist/fonts/geist-mono/GeistMono-Variable.woff2") format("woff2");
+}
+
+@theme {
+  --font-sans: "Geist", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, "SF Mono", monospace;
+  --radius-field: 0.5rem;
+  --radius-panel: 0.75rem;
+}
+
+@layer base {
+  html {
+    /* The chrome is fixed; only panels scroll, so the page itself must not. */
+    height: 100%;
+  }
+
+  body {
+    height: 100%;
+    background-color: var(--color-background-l1);
+    color: var(--color-foreground-primary);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /*
+   * One focus treatment for everything. Base UI renders semantic elements, so
+   * styling the ring here rather than per component means a control cannot ship
+   * without a visible focus state.
+   */
+  :focus-visible {
+    outline: 2px solid var(--color-accent-primary);
+    outline-offset: 2px;
+  }
+
+  ::placeholder {
+    color: var(--color-foreground-secondary);
+  }
+}
+
+@utility panel {
+  background-color: var(--color-background-l3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-panel);
+}

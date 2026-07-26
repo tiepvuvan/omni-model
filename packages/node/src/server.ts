@@ -31,6 +31,7 @@ import {
   type WriteKeyStore,
 } from "@omni-model/core";
 import { createPostgresBackend, type PgPoolLike, sweepRequestLogs } from "@omni-model/postgres";
+import { mountDashboard } from "./dashboard.js";
 import { containerRegistry } from "./registry.js";
 
 /**
@@ -430,6 +431,12 @@ export async function startServer(options: StartOptions): Promise<RunningServer>
       // Mounted on the proxy app so one port serves both surfaces.
       app.route("/", admin.app);
       logger.info("admin API enabled at /admin/api");
+      // After the API, so the static handler cannot shadow an API route — and
+      // only when the API exists, since a dashboard without one is a dead page.
+      mountDashboard(app, {
+        ...(env.OMNI_DASHBOARD_DIR === undefined ? {} : { directory: env.OMNI_DASHBOARD_DIR }),
+        logger,
+      });
     } else {
       logger.info(`admin API disabled (set ${ADMIN_SECRET_VARIABLE} to enable it)`);
     }

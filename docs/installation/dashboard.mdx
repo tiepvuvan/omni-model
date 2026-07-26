@@ -1,0 +1,118 @@
+---
+title: Dashboard
+description: The operator console the container serves at /admin — sign-in, client authentication and model routing.
+---
+
+The container ships an operator dashboard at **`/admin`**, on the same port as the proxy. It is a
+static bundle talking to the [admin API](/reference/admin-api) over a session cookie, so there is no
+second service to run and nothing to point at anything.
+
+It appears **only when `OMNI_ADMIN_SECRET` is set** — the same variable that enables the API. A
+dashboard without an API behind it is a dead page, so the two are wired together.
+
+```sh
+docker run -p 8787:8787 \
+  -e OMNI_STORAGE_TYPE=postgres \
+  -e OMNI_STORAGE_POSTGRES_URL="$DATABASE_URL" \
+  -e OMNI_ENCRYPTION_KEY="$(openssl rand -base64 32)" \
+  -e OMNI_ADMIN_SECRET="$(openssl rand -base64 32)" \
+  ghcr.io/tiepvuvan/omni-model
+```
+
+Then open `http://localhost:8787/admin`.
+
+<Warning>
+  `/admin` is a configuration surface. Put it behind whatever fronts the proxy, and do not expose it
+  to the internet unless you mean to — the only thing between the port and the API is an operator
+  session.
+</Warning>
+
+## First run
+
+A deployment with no accounts sends you to **Create the first operator**. That window is open exactly
+once: the account it creates is granted the operator role, and sign-up closes permanently afterwards.
+
+There is no way to reopen it. To add operators later, use the CLI against the same database:
+
+```sh
+docker exec <container> env OMNI_ADMIN_PASSWORD='a long passphrase' \
+  omni-model create-admin --email you@example.com --name You
+```
+
+Re-running it for an existing address promotes that account rather than failing, which is also how
+you get back in if you lose access.
+
+## Client authentication
+
+Who may call `/v1`. Verifiers establish **who or what** is calling; a
+[write key](/reference/write-keys) says **which app**. The two are separate axes and are checked
+independently, so a request usually carries both.
+
+The screen renders each verifier's form from that verifier's own options schema, published by
+`GET /admin/api/meta`. All six built-in types — and any you register yourself — get a form that
+accepts exactly what the proxy accepts, rather than a hand-written one that can drift from it.
+
+Two settings on this screen are worth reading before you change them:
+
+| Setting | What to know |
+| --- | --- |
+| **Verifier mode** | `all` requires every verifier to accept, which is right for an app attestation *plus* a user token. `any` takes the first that accepts. A presented-but-invalid credential rejects the request either way — only *absence* falls through. |
+| **Require a write key** | Turning this on locks out every client not already sending `x-omni-key`. Presented keys are validated regardless, so attribution works before you enable it; revocation only becomes binding after. |
+
+Removing the last verifier is refused. A proxy that authenticates nobody is an open relay on your
+provider credits, so `/v1` answers 503 rather than serving anything until one exists.
+
+## Model routing
+
+One ordered list. The first rule whose condition matches wins, and its target carries the provider,
+the credentials and the upstream model together — see [model routing](/model-routing/routing) for the
+shape and [CEL expressions](/model-routing/expressions) for the conditions.
+
+The dashboard adds three things over editing the document by hand:
+
+- **Order is visible.** Rules render in evaluation order, the catch-all is marked, and a rule an
+  earlier catch-all makes unreachable is flagged before you save it. Reordering is the arrow buttons,
+  which rewrite the whole list — the only request that can express a new order.
+- **Simulate.** Run a hypothetical request against the applied rules and see the verdict rule by
+  rule. This is how you catch CEL's two silent failures: reading a missing map key *throws*, and only
+  a literal `true` counts as a match, so a broken rule never fires and the proxy answers normally
+  from a later one.
+- **Test upstream.** Probe the upstream a rule points at, using the credential that rule actually
+  resolves to. The verdict comes from what the upstream answered, so a rejected API key reports as a
+  failure rather than as a healthy provider.
+
+## Typing a credential
+
+You can type an API key straight into a rule. The admin API **seals it into encrypted storage before
+the revision is written**, so the stored document only ever holds a `{"$secret": id}` reference — see
+[credentials](/installation/docker#credentials-managed-from-the-dashboard).
+
+Coming back to that field afterwards shows it empty with a "stored — leave blank to keep"
+placeholder. That is not a rendering gap: there is no endpoint that returns the plaintext, by design.
+Leave it blank to keep what is stored, or type a new value to replace it.
+
+A `${VAR}` reference is displayed as itself, since it names an environment variable rather than
+carrying a value.
+
+## Requires a keyring
+
+Sealing needs `OMNI_ENCRYPTION_KEY`. Without it the API refuses any write that *introduces* a new
+plaintext credential, and tells you to set the key or use a `${VAR}` reference instead. Writes that
+change something else still work, so a deployment seeded from the environment is not stuck.
+
+## Theme
+
+Light and dark, following the operating system until you pick one; the choice is remembered per
+browser. Colours come from the design system's token export, so the dashboard and the design cannot
+disagree about them.
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="The API underneath" icon="terminal" href="/reference/admin-api">
+    Every screen drives these endpoints. Useful for scripting what the dashboard does by hand.
+  </Card>
+  <Card title="Routing rules in depth" icon="route" href="/model-routing/routing">
+    First match wins, what a target owns, and the two silent failures.
+  </Card>
+</CardGroup>

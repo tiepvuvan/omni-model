@@ -19,18 +19,32 @@ if (process.env.OMNI_REQUIRE_PG === "1" && !url) {
 const PASSWORD = "correct horse battery staple";
 
 describe.skipIf(!url)("create-admin (integration)", () => {
-  const schema = `omni_cli_${process.pid.toString(36)}${Date.now().toString(36)}`;
+  /**
+   * Its own **database**, not its own schema.
+   *
+   * The command is only reachable through an environment variable holding a
+   * connection URL, and `pg` silently drops an `options=-c search_path=…`
+   * parameter from a URL — every encoding of it — so a schema cannot be scoped
+   * this way at all. The previous attempt to do so left this suite running in
+   * `public`, sharing it with anything else that landed there: the symptom was
+   * this suite failing against *another* suite's schema after that suite had
+   * dropped it. A separate database is isolation the URL can actually express.
+   */
+  const database = `omni_cli_${process.pid.toString(36)}${Date.now().toString(36)}`;
+  let admin: Pool;
   let owner: Pool;
-  /** Env as the container would see it, scoped to this run's schema. */
+  /** Env as the container would see it, pointed at this run's database. */
   let env: Record<string, string | undefined>;
 
   beforeAll(async () => {
-    owner = new Pool({ connectionString: url });
-    await owner.query(`CREATE SCHEMA IF NOT EXISTS ${schema}`);
-    // Better Auth's tables are unquoted and unqualified, so a scoped search_path
-    // is what keeps this run out of the next one's way.
+    admin = new Pool({ connectionString: url });
+    // `CREATE DATABASE` cannot run inside a transaction or against itself, hence
+    // the separate connection that outlives it.
+    await admin.query(`CREATE DATABASE ${database}`);
+
     const scoped = new URL(url as string);
-    scoped.searchParams.set("options", `-c search_path=${schema}`);
+    scoped.pathname = `/${database}`;
+    owner = new Pool({ connectionString: scoped.toString() });
     env = {
       OMNI_STORAGE_TYPE: "postgres",
       OMNI_STORAGE_POSTGRES_URL: scoped.toString(),
@@ -39,12 +53,14 @@ describe.skipIf(!url)("create-admin (integration)", () => {
   }, 30_000);
 
   afterAll(async () => {
-    await owner?.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);
+    // Every connection to it has to be gone before it can be dropped.
     await owner?.end();
-  });
+    await admin?.query(`DROP DATABASE IF EXISTS ${database} WITH (FORCE)`);
+    await admin?.end();
+  }, 30_000);
 
   const roleOf = async (email: string): Promise<string | null> => {
-    const result = await owner.query(`SELECT role FROM ${schema}."user" WHERE email = $1`, [email]);
+    const result = await owner.query(`SELECT role FROM "user" WHERE email = $1`, [email]);
     const role = result.rows[0]?.role;
     return typeof role === "string" ? role : null;
   };
