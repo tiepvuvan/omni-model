@@ -67,14 +67,13 @@ describe("environment configuration examples", () => {
       version: 1,
       storage: { type: "memory" },
       security: {
-        providers: [{ type: "jwt", secret: "$" + "{OMNI_JWT_SECRET}", algorithms: ["HS256"] }],
+        userAuth: { type: "jwt", secret: "$" + "{OMNI_JWT_SECRET}", algorithms: ["HS256"] },
       },
       rateLimits: [
         {
           name: "free-tier",
           when: 'has(user.claims.tier) && user.claims.tier == "free"',
-          key: "user",
-          requests: { limit: 60, window: "1m" },
+          tokens: { limit: 30_000, window: "1d" },
         },
       ],
       routing: {
@@ -106,7 +105,6 @@ describe("environment configuration examples", () => {
     const expressions: string[] = [];
     for (const rule of config.rateLimits) {
       if (rule.when !== undefined) expressions.push(rule.when);
-      if (rule.keyExpression !== undefined) expressions.push(rule.keyExpression);
     }
     for (const rule of config.routing.rules) expressions.push(rule.when);
 
@@ -161,7 +159,8 @@ describe("full config examples in the reference page parse", () => {
       "OMNI_SERVER_JSON",
       "OMNI_STORAGE_JSON",
       "OMNI_SECURITY_JSON",
-      "OMNI_SECURITY_PROVIDERS_JSON",
+      "OMNI_SECURITY_USER_AUTH_JSON",
+      "OMNI_SECURITY_APP_AUTH_JSON",
       "OMNI_RATE_LIMITS_JSON",
       "OMNI_ROUTING_JSON",
       "OMNI_STORAGE_POSTGRES_URL",
@@ -197,13 +196,13 @@ describe("the documented container production configuration", () => {
       OMNI_TARGET_TYPE: "openai",
       OMNI_TARGET_API_KEY: "$" + "{OPENAI_API_KEY}",
       OMNI_RATE_LIMITS_JSON:
-        '[{"name":"per-user-requests","key":"user","requests":{"limit":30,"window":"1h"}}]',
+        '[{"name":"per-user-daily-tokens","tokens":{"limit":30000,"window":"1d"}}]',
     });
     expect(config.storage).toMatchObject({
       type: "postgres",
       url: "postgres://localhost/omni",
     });
-    expect(config.security.providers).toMatchObject([{ type: "jwt" }]);
+    expect(config.security.userAuth).toMatchObject({ type: "jwt" });
     // The shortcuts seed one catch-all rule, which is the whole point of them.
     expect(config.routing.rules).toMatchObject([
       { id: "default", when: "true", target: { type: "openai" } },

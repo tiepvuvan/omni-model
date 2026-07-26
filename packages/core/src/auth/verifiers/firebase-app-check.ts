@@ -33,6 +33,7 @@ const optionsSchema = z.strictObject({
  */
 export const firebaseAppCheckVerifierFactory: AuthVerifierFactory = {
   type: TYPE,
+  layer: "app",
   optionsSchema: optionsSchema,
   create(options: Record<string, unknown>, runtime: RuntimeContext): AuthVerifier {
     const parsed = optionsSchema.safeParse(options);

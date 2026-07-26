@@ -48,13 +48,44 @@ export const securityProviderConfigSchema = z.looseObject({
   name: z.string().optional(),
 });
 
-export const securityConfigSchema = z.strictObject({
+/**
+ * Layer 2: which app or device the request came from.
+ *
+ * Optional, and any number of them. Configuring several is normal — one app
+ * attestation scheme per platform — which is why `mode` exists: a deployment
+ * serving iOS and the web wants `any` (each client can only satisfy its own
+ * platform's scheme), while an iOS-only deployment layering App Attest over App
+ * Check wants `all`.
+ */
+export const appAuthConfigSchema = z.strictObject({
   /**
-   * "any": the first verifier that recognizes and accepts a credential wins;
-   *        a presented-but-invalid credential still rejects the request.
-   * "all": every configured verifier must accept the request.
+   * "any": the first configured scheme that accepts wins; a presented-but-invalid
+   *        credential still rejects the request, and if none accepts, the request
+   *        is rejected.
+   * "all": every configured scheme must accept.
    */
   mode: z.enum(["any", "all"]).default("all"),
+  providers: z.array(securityProviderConfigSchema).default([]),
+});
+
+export const securityConfigSchema = z.strictObject({
+  /**
+   * Layer 1: which user. Exactly one, and **required** — `firebase-auth`,
+   * `supabase` or `jwt`.
+   *
+   * One rather than a list because a request has one end user, and a deployment
+   * has one place identities come from. Two would raise a question with no good
+   * answer — which one owns `user.id`, and therefore whose budget a request
+   * spends — and `user.id` is what every rate limit counts against.
+   *
+   * Optional *here* so a document is still parseable without it; a bundle refuses
+   * to build without one, so `/v1` stays closed rather than open. That split is
+   * deliberate: shape errors belong to the schema, viability to the bundle, and
+   * the bundle's message is the one that says what to do about it.
+   */
+  userAuth: securityProviderConfigSchema.optional(),
+  /** Layer 2: app or device attestation, layered over the user. */
+  appAuth: appAuthConfigSchema.prefault({}),
   /** Paths (exact or trailing-`*` prefix) that bypass authentication. */
   publicPaths: z.array(z.string()).default([]),
   /**
@@ -67,17 +98,6 @@ export const securityConfigSchema = z.strictObject({
    * is true, because otherwise a revoked client can simply omit the header.
    */
   requireWriteKey: z.boolean().default(false),
-  /**
-   * Verifiers for `/v1/*`. **At least one is required** — see
-   * `createOmniApp`, which refuses to start without one. There is no opt-out:
-   * a proxy that authenticates nobody is an open relay on your provider
-   * credits and offers a caller nothing the upstream API doesn't, which is the
-   * entire reason this project exists.
-   *
-   * For local development, the `jwt` verifier with a shared `secret` is a
-   * three-line config that needs no external service.
-   */
-  providers: z.array(securityProviderConfigSchema).default([]),
 });
 
 export const rateLimitRuleSchema = z
@@ -87,7 +107,7 @@ export const rateLimitRuleSchema = z
      * which is what existing configurations rely on.
      *
      * Set it explicitly for any rule an operator can rename from a dashboard:
-     * counters live under `rl:req:<id>:…`, so a rule whose identity is its
+     * counters live under `rl:tok:<id>:…`, so a rule whose identity is its
      * display name silently resets every counter when renamed.
      */
     id: z.string().min(1).optional(),
@@ -108,39 +128,22 @@ export const rateLimitRuleSchema = z
      * run out is the one that rejects.
      */
     when: z.string().optional(),
-    key: z.enum(["user", "device", "client", "ip", "global", "expression"]).default("user"),
-    /** CEL expression producing the limit key when `key: expression`. */
-    keyExpression: z.string().optional(),
-    requests: z
-      .strictObject({ limit: z.number().int().positive(), window: durationSchema })
-      .optional(),
-    tokens: z
-      .strictObject({ limit: z.number().int().positive(), window: durationSchema })
-      .optional(),
+    /**
+     * Prompt plus completion tokens allowed per fixed window, per user.
+     *
+     * The only kind of budget there is. Tokens are what a request costs, and one
+     * unit means the counter is a number an operator can reason about against a
+     * provider bill. There is no request-count window: see the note on
+     * `rateLimits` for what that gives up.
+     */
+    tokens: z.strictObject({ limit: z.number().int().positive(), window: durationSchema }),
   })
   .refine((rule) => rule.id !== undefined || rule.name !== undefined, {
     message: "a rate limit rule needs an `id` or a `name`",
-  })
-  .refine((rule) => rule.key !== "expression" || rule.keyExpression !== undefined, {
-    message: 'key "expression" requires `keyExpression`',
-  })
-  .refine((rule) => rule.requests !== undefined || rule.tokens !== undefined, {
-    message: "a rate limit rule needs at least one of `requests` or `tokens`",
   });
 
 function defaultRateLimits() {
-  return [
-    {
-      name: "per-user-requests",
-      key: "user" as const,
-      requests: { limit: 30, window: "1h" },
-    },
-    {
-      name: "per-user-daily-tokens",
-      key: "user" as const,
-      tokens: { limit: 30_000, window: "1d" },
-    },
-  ];
+  return [{ name: "per-user-daily-tokens", tokens: { limit: 30_000, window: "1d" } }];
 }
 
 /**
@@ -235,6 +238,17 @@ export const omniConfigSchema = z.strictObject({
   server: serverConfigSchema.prefault({}),
   storage: storageConfigSchema,
   security: securityConfigSchema.prefault({}),
+  /**
+   * Token budgets, all counted per user.
+   *
+   * Every rule whose `when` matches is enforced, so these are layered budgets
+   * rather than alternatives, and the first to run out is the one that rejects.
+   *
+   * Worth knowing what this does *not* do: there is no request-count window, so a
+   * flood of requests that spend no tokens — malformed bodies, requests the
+   * upstream refuses — is not limited here. Tokens are what a request costs, and
+   * that is the axis these rules protect.
+   */
   rateLimits: z.array(rateLimitRuleSchema).default(defaultRateLimits),
   // No `providers` block: an upstream is described by the rule that routes to it
   // (`routing.rules[].target`), so there is no name to reference and nothing to

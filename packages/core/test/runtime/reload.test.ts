@@ -42,24 +42,23 @@ describe("reloading configuration", () => {
     const proxy = await createTestProxy({ yaml: BASE });
     const before = proxy.holder.current();
 
-    const result = await proxy.reloadRaw({ version: 1, security: { providers: [] } });
+    const result = await proxy.reloadRaw({ version: 1, security: {} });
 
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.error).toMatch(/security\.providers is empty/);
+    if (!result.ok) expect(result.error).toMatch(/security\.userAuth is not set/);
     // Same object identity: nothing was rebuilt.
     expect(proxy.holder.current()).toBe(before);
     expect(proxy.holder.status()).toMatchObject({ configured: true, revision: 1 });
-    expect(proxy.holder.status().lastError).toMatch(/security\.providers is empty/);
+    expect(proxy.holder.status().lastError).toMatch(/security\.userAuth is not set/);
   });
 
   it("mounts and unmounts verifier-contributed routes", async () => {
     // Hono cannot unregister a route, so these are dispatched from the bundle.
     // Without that, removing a verifier would leave its endpoint live forever.
     const withRoute = `${BASE}security:
-  mode: any
-  providers:
-    - type: fake-auth
-      challengeRoute: true
+  userAuth:
+    type: fake-auth
+    challengeRoute: true
 `;
     const proxy = await createTestProxy({ yaml: withRoute, injectVerifier: false });
 
@@ -68,9 +67,8 @@ describe("reloading configuration", () => {
     expect(await open.json()).toEqual({ challenge: "abc" });
 
     await proxy.reload(`${BASE}security:
-  mode: any
-  providers:
-    - type: fake-auth
+  userAuth:
+    type: fake-auth
 `);
 
     const closed = await proxy.app.fetch(new Request("http://local/auth/fake/challenge"));
@@ -137,20 +135,18 @@ describe("reloading configuration", () => {
   it("swaps verifiers, so a credential that worked stops working", async () => {
     const proxy = await createTestProxy({
       yaml: `${BASE}security:
-  mode: any
-  providers:
-    - type: fake-auth
-      header: x-old
+  userAuth:
+    type: fake-auth
+    header: x-old
 `,
       injectVerifier: false,
     });
     expect((await proxy.app.fetch(chatRequest(CHAT_BODY, { "x-old": "u1" }))).status).toBe(200);
 
     await proxy.reload(`${BASE}security:
-  mode: any
-  providers:
-    - type: fake-auth
-      header: x-new
+  userAuth:
+    type: fake-auth
+    header: x-new
 `);
 
     expect((await proxy.app.fetch(chatRequest(CHAT_BODY, { "x-old": "u1" }))).status).toBe(401);
@@ -164,20 +160,19 @@ describe("reloading configuration", () => {
     const rule = (name: string): string => `${BASE}rateLimits:
   - id: per-user
     name: ${name}
-    key: user
-    requests: { limit: 2, window: 1h }
+    tokens: { limit: 10, window: 1h }
 `;
     const proxy = await createTestProxy({ yaml: rule("original"), storage });
 
     expect((await proxy.app.fetch(chatRequest(CHAT_BODY))).status).toBe(200);
-    expect((await proxy.app.fetch(chatRequest(CHAT_BODY))).status).toBe(200);
+    await proxy.collector.flush();
 
     await proxy.reload(rule("renamed-by-an-admin"));
 
-    // The third request is still the third request.
-    const third = await proxy.app.fetch(chatRequest(CHAT_BODY));
-    expect(third.status).toBe(429);
-    expect(third.headers.get("x-ratelimit-rule")).toBe("renamed-by-an-admin");
+    // The spend survived the rename; only the reported name changed.
+    const rejected = await proxy.app.fetch(chatRequest(CHAT_BODY));
+    expect(rejected.status).toBe(429);
+    expect(rejected.headers.get("x-ratelimit-rule")).toBe("renamed-by-an-admin");
   });
 
   it("gives a rule a fresh keyspace when its id changes", async () => {
@@ -185,12 +180,11 @@ describe("reloading configuration", () => {
     const rule = (id: string): string => `${BASE}rateLimits:
   - id: ${id}
     name: per-user
-    key: user
-    requests: { limit: 2, window: 1h }
+    tokens: { limit: 10, window: 1h }
 `;
     const proxy = await createTestProxy({ yaml: rule("v1"), storage });
     await proxy.app.fetch(chatRequest(CHAT_BODY));
-    await proxy.app.fetch(chatRequest(CHAT_BODY));
+    await proxy.collector.flush();
 
     await proxy.reload(rule("v2"));
 
@@ -249,13 +243,12 @@ describe("reloading configuration", () => {
 
   it("keeps rate-limit counters exact across reloads under load", async () => {
     // Reloading rebuilds the limiter. If a rebuild reset or double-counted its
-    // counters, the split here would not land exactly on the limit.
+    // counters, the recorded total would not land exactly on what was spent.
     const storage = new MemoryStorageAdapter(() => FIXED_NOW);
     const limited = `${BASE}rateLimits:
   - id: per-user
     name: per-user
-    key: user
-    requests: { limit: 30, window: 1h }
+    tokens: { limit: 100000, window: 1h }
 `;
     const proxy = await createTestProxy({ yaml: limited, storage });
 
@@ -265,10 +258,13 @@ describe("reloading configuration", () => {
       if (i % 10 === 0) void proxy.reload(limited);
     }
     const statuses = await Promise.all(inFlight.map(async (p) => (await p).status));
+    await proxy.collector.flush();
 
     expect(statuses.filter((status) => status >= 500)).toEqual([]);
-    expect(statuses.filter((status) => status === 200)).toHaveLength(30);
-    expect(statuses.filter((status) => status === 429)).toHaveLength(30);
+    expect(statuses.filter((status) => status === 200)).toHaveLength(60);
+    // 60 responses at 15 tokens each, whatever the limiter was rebuilt on top of.
+    const windowStart = Math.floor(FIXED_NOW / 3_600_000) * 3_600_000;
+    expect(await storage.getCounter(`rl:tok:per-user:test-user:${windowStart}`)).toBe(900);
   });
 });
 

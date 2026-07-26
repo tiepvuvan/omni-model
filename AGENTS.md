@@ -21,7 +21,8 @@ packages/core              Runtime-agnostic engine. No Node APIs, no platform AP
   src/writekeys/           Per-client API keys: format, store, TTL cache
   src/logs/                Request log sink: fail-open buffering, content capping
   src/openai/              OpenAI wire types (permissive; unknown fields pass through)
-  src/auth/                AuthVerifier contract + built-in verifiers (jwt family, apple/)
+  src/auth/                AuthVerifier contract + built-in verifiers (jwt family, apple/);
+                           each declares its `layer`: "user" (one, required) or "app"
   src/providers/           ChatProvider contract + openai / anthropic / google adapters
   src/routing/             CEL expression engine + router
   src/ratelimit/           Request windows + token budgets over StorageAdapter
@@ -169,7 +170,20 @@ docs/                      Mintlify docs site (docs.json + MDX): installation,
     Ours takes `pg_advisory_xact_lock` over the whole set in one transaction, so concurrent boots
     cannot half-apply; drizzle-kit's does not. Generated SQL is embedded, never read from files, and
     its `"public".` qualifiers must be stripped — they pin the schema and break per-schema isolation.
-22. **The dashboard renders forms from the API, and colour from the token export.**
+22. **Authentication is two layers, and only one of them is required.** `security.userAuth` is one
+    verifier answering "which user", and it is mandatory — every rate limit counts tokens against
+    `user.id`, so a request with no user has nothing to charge. `security.appAuth` is any number of
+    verifiers answering "which app", layered over it, combined by `mode` (`any` as soon as you serve
+    more than one platform, since a client can only satisfy its own). A factory's `layer` decides
+    which half it belongs to and `/meta` publishes it, so a new verifier needs no dashboard change;
+    a verifier configured in the wrong half is refused by name at bundle build. Attesting an app is
+    never the same as knowing who is calling.
+23. **Rate limits are per-user token budgets, and nothing else.** No counter key, no request-count
+    window: tokens are what a request costs. Every rule whose `when` matches is enforced, so budgets
+    layer and the first exhausted rejects; a rule with no `when` is a baseline, not a fallback.
+    `check` is read-only and `recordUsage` charges afterwards, so one request can overshoot its
+    budget — what a completion costs is not knowable until it exists.
+24. **The dashboard renders forms from the API, and colour from the token export.**
     A component's form comes from the JSON Schema `GET /admin/api/meta` publishes, so a provider
     added to the registry gets a working form with no dashboard change and a form cannot accept what
     a factory rejects. Colour comes from `design/*.tokens.json` via a generator, and a test fails the

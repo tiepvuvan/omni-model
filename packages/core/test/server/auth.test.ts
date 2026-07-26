@@ -6,9 +6,8 @@ import { CHAT_BODY, chatRequest, createTestApp } from "./helpers.js";
 const AUTH_YAML = `
 version: 1
 security:
-  mode: any
-  providers:
-    - type: fake-auth
+  userAuth:
+    type: fake-auth
 routing:
   rules:
     - { id: fake, when: "true", target: { type: fake } }
@@ -66,25 +65,31 @@ describe("mergeIdentities", () => {
   });
 });
 
-describe("auth middleware (mode: any)", () => {
+describe("layer 1: the user", () => {
   it("keeps /healthz public even with auth configured", async () => {
     const { app } = await createTestApp({ yaml: AUTH_YAML });
-    const response = await app.fetch(new Request("http://local/healthz"));
-    expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ status: "ok" });
+    expect((await app.fetch(new Request("http://local/healthz"))).status).toBe(200);
   });
 
-  it("rejects credential-less requests with 401 and WWW-Authenticate", async () => {
+  it("serves a request whose user credential is accepted", async () => {
+    const { app, providers } = await createTestApp({ yaml: AUTH_YAML });
+    const response = await app.fetch(chatRequest(CHAT_BODY, { "x-test-user": "alice" }));
+    expect(response.status).toBe(200);
+    expect(providers.get("fake")?.chatCalls).toHaveLength(1);
+  });
+
+  it("rejects a request that presents no user credential", async () => {
+    // `null` from the user verifier is a rejection, not a fall-through: there is
+    // nowhere else a user credential could come from, and a request with no user
+    // has no budget to spend.
     const { app } = await createTestApp({ yaml: AUTH_YAML });
     const response = await app.fetch(chatRequest(CHAT_BODY));
     expect(response.status).toBe(401);
-    expect(response.headers.get("www-authenticate")).toBe("Bearer");
-    const body = (await response.json()) as { error: { message: string; type: string } };
-    expect(body.error.type).toBe("authentication_error");
+    const body = (await response.json()) as { error: { message: string } };
     expect(body.error.message).toBe("authentication required");
   });
 
-  it("surfaces the verifier's rejection reason", async () => {
+  it("rejects with the verifier's own reason when the credential is invalid", async () => {
     const { app } = await createTestApp({ yaml: AUTH_YAML });
     const response = await app.fetch(chatRequest(CHAT_BODY, { "x-test-user": "bad" }));
     expect(response.status).toBe(401);
@@ -92,61 +97,21 @@ describe("auth middleware (mode: any)", () => {
     expect(body.error.message).toBe("invalid credential for fake-auth");
   });
 
-  it("authenticates and serves the request", async () => {
-    const { app, providers } = await createTestApp({ yaml: AUTH_YAML });
-    const response = await app.fetch(chatRequest(CHAT_BODY, { "x-test-user": "alice" }));
-    expect(response.status).toBe(200);
-    expect(providers.get("fake")?.chatCalls).toHaveLength(1);
-  });
-
-  it("tries the next verifier when the first sees no credential", async () => {
-    const yaml = `
-version: 1
-security:
-  mode: any
-  providers:
-    - type: fake-auth
-      name: primary
-      header: x-user-a
-    - type: fake-auth
-      name: secondary
-      header: x-user-b
-routing:
-  rules:
-    - { id: fake, when: "true", target: { type: fake } }
-`;
-    const { app } = await createTestApp({ yaml });
-    const ok = await app.fetch(chatRequest(CHAT_BODY, { "x-user-b": "bob" }));
-    expect(ok.status).toBe(200);
-
-    // A later verifier's acceptance still wins over an earlier explicit failure.
-    const mixed = await app.fetch(chatRequest(CHAT_BODY, { "x-user-a": "bad", "x-user-b": "bob" }));
-    expect(mixed.status).toBe(200);
-
-    // With only a bad credential, the remembered failure's reason surfaces.
-    const failed = await app.fetch(chatRequest(CHAT_BODY, { "x-user-a": "bad" }));
-    expect(failed.status).toBe(401);
-    const body = (await failed.json()) as { error: { message: string } };
-    expect(body.error.message).toBe("invalid credential for primary");
-  });
-
   it("bypasses auth for configured publicPaths", async () => {
     const yaml = `
 version: 1
 security:
   publicPaths: ["/v1/models"]
-  providers:
-    - type: fake-auth
+  userAuth:
+    type: fake-auth
 routing:
   rules:
     - { id: fake, when: "true", target: { type: fake } }
 `;
     const { app } = await createTestApp({ yaml });
-    const models = await app.fetch(new Request("http://local/v1/models"));
-    expect(models.status).toBe(200);
+    expect((await app.fetch(new Request("http://local/v1/models"))).status).toBe(200);
     // Non-public /v1 paths still require credentials.
-    const chat = await app.fetch(chatRequest(CHAT_BODY));
-    expect(chat.status).toBe(401);
+    expect((await app.fetch(chatRequest(CHAT_BODY))).status).toBe(401);
   });
 
   const NO_VERIFIER_YAML = `
@@ -156,12 +121,12 @@ routing:
     - { id: fake, when: "true", target: { type: fake } }
 `;
 
-  it("refuses to start when no verifier is configured", async () => {
+  it("refuses to start when no user authentication is configured", async () => {
     // A proxy that authenticates nobody is an open relay on the operator's
     // provider credits, and gives a caller nothing the upstream API doesn't.
     // Omitting `security` must not silently produce one.
     await expect(createTestApp({ yaml: NO_VERIFIER_YAML, injectVerifier: false })).rejects.toThrow(
-      /security\.providers is empty/,
+      /security\.userAuth is not set/,
     );
   });
 
@@ -173,60 +138,163 @@ routing:
     );
   });
 
-  it("has no opt-out: an explicit empty provider list still refuses", async () => {
+  it("has no opt-out: app attestation alone does not stand in for a user", async () => {
+    // The tempting mistake: attest the app and call it authenticated. An attested
+    // app still does not say *who* is calling, so there is nobody to bill.
     const yaml = `${NO_VERIFIER_YAML}security:
-  mode: any
-  providers: []
+  appAuth:
+    providers:
+      - type: fake-app-auth
 `;
     await expect(createTestApp({ yaml, injectVerifier: false })).rejects.toThrow(
-      /security\.providers is empty/,
+      /security\.userAuth is not set/,
+    );
+  });
+
+  it("refuses an app verifier configured as the user method, and says where it goes", async () => {
+    const yaml = `${NO_VERIFIER_YAML}security:
+  userAuth:
+    type: fake-app-auth
+`;
+    await expect(createTestApp({ yaml, injectVerifier: false })).rejects.toThrow(
+      /verifies an app or device, not a user.*security\.appAuth\.providers/s,
+    );
+  });
+
+  it("refuses a user verifier configured in the app layer", async () => {
+    const yaml = `${NO_VERIFIER_YAML}security:
+  userAuth:
+    type: fake-auth
+  appAuth:
+    providers:
+      - type: fake-auth
+`;
+    await expect(createTestApp({ yaml, injectVerifier: false })).rejects.toThrow(
+      /verifies a user, not an app/,
     );
   });
 });
 
-describe("auth middleware (mode: all)", () => {
-  const ALL_YAML = `
+describe("layer 2: the app (mode: all)", () => {
+  const LAYERED_YAML = `
 version: 1
 security:
-  mode: all
-  providers:
-    - type: fake-auth
-      name: primary
-      header: x-user-a
-    - type: fake-auth
-      name: secondary
-      header: x-user-b
-      kind: device
+  userAuth:
+    type: fake-auth
+    header: x-user-a
+  appAuth:
+    mode: all
+    providers:
+      - type: fake-app-auth
+        name: attestation
+        header: x-device-a
 routing:
   rules:
-    - { id: merged-claims, name: merged-claims, when: 'user.claims.tier == "pro" && device.id == "dev-1"', target: { type: fake, model: merged-model } }
+    - { id: merged, name: merged, when: 'user.claims.tier == "pro" && device.id == "dev-1"', target: { type: fake, model: merged-model } }
 `;
 
-  it("accepts when every verifier accepts and merges identities", async () => {
-    const { app, providers } = await createTestApp({ yaml: ALL_YAML });
+  it("accepts when both layers accept, and merges their identities", async () => {
+    const { app, providers } = await createTestApp({ yaml: LAYERED_YAML });
     const response = await app.fetch(
-      chatRequest(CHAT_BODY, { "x-user-a": "pro", "x-user-b": "dev-1" }),
+      chatRequest(CHAT_BODY, { "x-user-a": "pro", "x-device-a": "dev-1" }),
     );
-    // The route only matches when merged claims AND merged device id are visible.
+
+    // The rule only matches when the user's claims *and* the device id from the
+    // app layer are both visible, which is what proves the merge.
     expect(response.status).toBe(200);
-    expect(providers.get("merged-claims")?.chatCalls[0]?.request.model).toBe("merged-model");
+    expect(providers.get("merged")?.chatCalls[0]?.request.model).toBe("merged-model");
   });
 
-  it("rejects when any verifier sees no credential", async () => {
-    const { app } = await createTestApp({ yaml: ALL_YAML });
+  it("rejects when the app credential is absent", async () => {
+    const { app } = await createTestApp({ yaml: LAYERED_YAML });
     const response = await app.fetch(chatRequest(CHAT_BODY, { "x-user-a": "pro" }));
     expect(response.status).toBe(401);
     const body = (await response.json()) as { error: { message: string } };
-    expect(body.error.message).toBe("credential missing for secondary");
+    expect(body.error.message).toBe("credential missing for attestation");
   });
 
-  it("rejects with the failing verifier's reason", async () => {
-    const { app } = await createTestApp({ yaml: ALL_YAML });
+  it("rejects with the app verifier's reason when its credential is invalid", async () => {
+    const { app } = await createTestApp({ yaml: LAYERED_YAML });
     const response = await app.fetch(
-      chatRequest(CHAT_BODY, { "x-user-a": "pro", "x-user-b": "bad" }),
+      chatRequest(CHAT_BODY, { "x-user-a": "pro", "x-device-a": "bad" }),
     );
     expect(response.status).toBe(401);
     const body = (await response.json()) as { error: { message: string } };
-    expect(body.error.message).toBe("invalid credential for secondary");
+    expect(body.error.message).toBe("invalid attestation for attestation");
+  });
+
+  it("still requires the user, even with the app attested", async () => {
+    const { app } = await createTestApp({ yaml: LAYERED_YAML });
+    const response = await app.fetch(chatRequest(CHAT_BODY, { "x-device-a": "dev-1" }));
+    expect(response.status).toBe(401);
+    const body = (await response.json()) as { error: { message: string } };
+    expect(body.error.message).toBe("authentication required");
+  });
+});
+
+describe("layer 2: the app (mode: any)", () => {
+  /*
+   * Two schemes, one per platform, which is why `any` exists: an iOS client can
+   * satisfy the Apple scheme and nothing else, and a web client the other. Under
+   * `all` neither client could ever call.
+   */
+  const MULTI_PLATFORM_YAML = `
+version: 1
+security:
+  userAuth:
+    type: fake-auth
+    header: x-user-a
+  appAuth:
+    mode: any
+    providers:
+      - type: fake-app-auth
+        name: ios
+        header: x-ios
+      - type: fake-app-auth
+        name: web
+        header: x-web
+routing:
+  rules:
+    - { id: fake, when: "true", target: { type: fake } }
+`;
+
+  it("accepts a client that satisfies either scheme", async () => {
+    const { app } = await createTestApp({ yaml: MULTI_PLATFORM_YAML });
+
+    expect(
+      (await app.fetch(chatRequest(CHAT_BODY, { "x-user-a": "alice", "x-ios": "dev-1" }))).status,
+    ).toBe(200);
+    expect(
+      (await app.fetch(chatRequest(CHAT_BODY, { "x-user-a": "alice", "x-web": "session-1" })))
+        .status,
+    ).toBe(200);
+  });
+
+  it("accepts when a later scheme succeeds after an earlier one failed", async () => {
+    const { app } = await createTestApp({ yaml: MULTI_PLATFORM_YAML });
+    const response = await app.fetch(
+      chatRequest(CHAT_BODY, { "x-user-a": "alice", "x-ios": "bad", "x-web": "session-1" }),
+    );
+    expect(response.status).toBe(200);
+  });
+
+  it("rejects when no scheme accepts, with the first explicit failure's reason", async () => {
+    const { app } = await createTestApp({ yaml: MULTI_PLATFORM_YAML });
+    const response = await app.fetch(
+      chatRequest(CHAT_BODY, { "x-user-a": "alice", "x-ios": "bad" }),
+    );
+    expect(response.status).toBe(401);
+    const body = (await response.json()) as { error: { message: string } };
+    expect(body.error.message).toBe("invalid attestation for ios");
+  });
+
+  it("rejects an authenticated user whose app attests nothing at all", async () => {
+    // The whole point of the layer: a valid user token from a client that is not
+    // the app is exactly what attestation exists to stop.
+    const { app } = await createTestApp({ yaml: MULTI_PLATFORM_YAML });
+    const response = await app.fetch(chatRequest(CHAT_BODY, { "x-user-a": "alice" }));
+    expect(response.status).toBe(401);
+    const body = (await response.json()) as { error: { message: string } };
+    expect(body.error.message).toBe("app attestation required");
   });
 });

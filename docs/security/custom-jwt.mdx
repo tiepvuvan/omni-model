@@ -9,7 +9,7 @@ header — by default `Authorization: Bearer <token>`. They share the same JWKS
 resolver and error handling; the Firebase and Supabase variants are pre-wired
 presets of the generic `jwt` verifier.
 
-These verifiers are configured under `security.providers`. All of them validate
+These verifiers are configured as `security.userAuth` — layer 1, the user. All of them validate
 tokens against the issuer's public keys (or a shared secret), so none of them
 require anything beyond the proxy container itself.
 
@@ -87,9 +87,7 @@ secure-token JWKS. The Firebase uid (`sub`) becomes `user.id`. Clients send
 `Authorization: Bearer <ID token>`.
 
 ```sh
-export OMNI_SECURITY_PROVIDERS_JSON='[
-  {"type":"firebase-auth","projectId":"my-app-12345"}
-]'
+export OMNI_SECURITY_USER_AUTH_JSON='{"type":"firebase-auth","projectId":"my-app-12345"}'
 ```
 
 <ParamField path="projectId" type="string" required>
@@ -111,9 +109,7 @@ JWT secret (HS256) or against the project's JWKS for asymmetric signing keys.
 available under `user.claims`.
 
 ```sh
-export OMNI_SECURITY_PROVIDERS_JSON='[
-  {"type":"supabase","url":"https://abcdefgh.supabase.co"}
-]'
+export OMNI_SECURITY_USER_AUTH_JSON='{"type":"supabase","url":"https://abcdefgh.supabase.co"}'
 ```
 
 <ParamField path="url" type="URL">

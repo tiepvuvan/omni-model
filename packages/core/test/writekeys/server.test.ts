@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { WRITE_KEY_HEADER } from "../../src/server/writekey.js";
-import { MemoryStorageAdapter } from "../../src/storage/memory.js";
+import type { MemoryStorageAdapter } from "../../src/storage/memory.js";
 import { MemoryWriteKeyStore } from "../../src/writekeys/memory.js";
 import { CHAT_BODY, chatRequest, createTestProxy, FIXED_NOW } from "../server/helpers.js";
 
@@ -192,31 +192,6 @@ describe("write key attribution", () => {
     expect(providers.get("main")?.chatCalls.at(-1)?.request.model).toBe("smart");
   });
 
-  it("keys a rate limit per client", async () => {
-    const storage = new MemoryStorageAdapter(() => FIXED_NOW);
-    const { app, writeKeys } = await setup(
-      fixture({
-        rateLimits:
-          "rateLimits:\n  - id: per-client\n    name: per-client\n    key: client\n" +
-          "    requests: { limit: 2, window: 1h }",
-      }),
-      { storage },
-    );
-    const first = await writeKeys.create({ name: "app-one" });
-    const second = await writeKeys.create({ name: "app-two" });
-
-    const call = (secret: string) =>
-      app.fetch(chatRequest(CHAT_BODY, { [WRITE_KEY_HEADER]: secret }));
-
-    expect((await call(first.secret)).status).toBe(200);
-    expect((await call(first.secret)).status).toBe(200);
-    expect((await call(first.secret)).status).toBe(429);
-    // A different application has its own budget.
-    expect((await call(second.secret)).status).toBe(200);
-  });
-});
-
-describe("per-key model allowlist", () => {
   it("404s a model the key may not use, and serves one it may", async () => {
     const { app, writeKeys } = await setup(REQUIRED);
     const { secret } = await writeKeys.create({ name: "cheap-only", allowedModels: ["cheap"] });

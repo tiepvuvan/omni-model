@@ -23,12 +23,14 @@ function runtime(): RuntimeContext {
 function routeContributingFactory(
   paths: readonly string[],
   name = "router-verifier",
+  layer: "user" | "app" = "user",
 ): AuthVerifierFactory {
   return {
-    type: "route-verifier",
+    type: layer === "user" ? "route-verifier" : "route-app-verifier",
+    layer,
     create(options) {
       return {
-        type: "route-verifier",
+        type: layer === "user" ? "route-verifier" : "route-app-verifier",
         name: typeof options.name === "string" ? options.name : name,
         verify: async () => null,
         routes: paths.map((path) => ({
@@ -63,7 +65,7 @@ function build(
 const MINIMAL = {
   version: 1,
   storage: { type: "memory" },
-  security: { providers: [{ type: "test-authenticated" }] },
+  security: { userAuth: { type: "test-authenticated" } },
   routing: { rules: [{ id: "main", when: "true", target: { type: "fake" } }] },
 };
 
@@ -106,8 +108,8 @@ describe("buildBundle", () => {
   });
 
   it("refuses a configuration with no verifier, and says how to fix it", () => {
-    expect(() => build({ ...MINIMAL, security: { providers: [] } })).toThrow(ConfigError);
-    expect(() => build({ ...MINIMAL, security: { providers: [] } })).toThrow(/type: jwt/);
+    expect(() => build({ ...MINIMAL, security: {} })).toThrow(ConfigError);
+    expect(() => build({ ...MINIMAL, security: {} })).toThrow(/type: jwt/);
   });
 
   it("names the unknown type and what is registered", () => {
@@ -117,9 +119,18 @@ describe("buildBundle", () => {
         routing: { rules: [{ id: "main", when: "true", target: { type: "nope" } }] },
       }),
     ).toThrow(/routing\.rules\[0\]\.target.*"nope".*fake/s);
-    expect(() => build({ ...MINIMAL, security: { providers: [{ type: "nope" }] } })).toThrow(
-      /security\.providers\[0\].*"nope"/s,
+    expect(() => build({ ...MINIMAL, security: { userAuth: { type: "nope" } } })).toThrow(
+      /security\.userAuth.*"nope"/s,
     );
+    expect(() =>
+      build({
+        ...MINIMAL,
+        security: {
+          userAuth: { type: "test-authenticated" },
+          appAuth: { providers: [{ type: "nope" }] },
+        },
+      }),
+    ).toThrow(/security\.appAuth\.providers\[0\].*"nope"/s);
   });
 
   it("resolves environment references at build time, not at store time", () => {
@@ -216,7 +227,7 @@ describe("buildBundle", () => {
 
   it("indexes verifier routes by method and path", () => {
     const bundle = build(
-      { ...MINIMAL, security: { providers: [{ type: "route-verifier" }] } },
+      { ...MINIMAL, security: { userAuth: { type: "route-verifier" } } },
       (registry) =>
         registry.auth.set("route-verifier", routeContributingFactory(["/auth/a", "/auth/b"])),
     );
@@ -228,7 +239,7 @@ describe("buildBundle", () => {
     // would be a security hole, not a quirk.
     for (const path of ["/v1/chat/completions", "/healthz", "/readyz", "/admin/api/config"]) {
       expect(() =>
-        build({ ...MINIMAL, security: { providers: [{ type: "route-verifier" }] } }, (registry) =>
+        build({ ...MINIMAL, security: { userAuth: { type: "route-verifier" } } }, (registry) =>
           registry.auth.set("route-verifier", routeContributingFactory([path])),
         ),
       ).toThrow(/reserved path/);
@@ -236,21 +247,57 @@ describe("buildBundle", () => {
   });
 
   it("rejects two verifiers claiming the same route", () => {
+    // One route can only have one handler, and the two layers are collected into
+    // one table — so a collision across layers has to be caught too.
     expect(() =>
       build(
         {
           ...MINIMAL,
           security: {
-            mode: "any",
-            providers: [
-              { type: "route-verifier", name: "first" },
-              { type: "route-verifier", name: "second" },
-            ],
+            userAuth: { type: "route-verifier", name: "first" },
+            appAuth: { providers: [{ type: "route-app-verifier", name: "second" }] },
           },
         },
-        (registry) => registry.auth.set("route-verifier", routeContributingFactory(["/auth/x"])),
+        (registry) => {
+          registry.auth.set("route-verifier", routeContributingFactory(["/auth/x"]));
+          registry.auth.set(
+            "route-app-verifier",
+            routeContributingFactory(["/auth/x"], "router-verifier", "app"),
+          );
+        },
       ),
     ).toThrow(/two verifiers claim the route/);
+  });
+
+  it("builds both layers, and refuses one configured in the wrong half", () => {
+    const bundle = build(
+      {
+        ...MINIMAL,
+        security: {
+          userAuth: { type: "test-authenticated" },
+          appAuth: { mode: "any", providers: [{ type: "route-app-verifier" }] },
+        },
+      },
+      (registry) =>
+        registry.auth.set(
+          "route-app-verifier",
+          routeContributingFactory(["/auth/attest"], "attestation", "app"),
+        ),
+    );
+    expect(bundle.userVerifier.type).toBe("test-authenticated");
+    expect(bundle.appVerifiers.map((verifier) => verifier.type)).toEqual(["route-app-verifier"]);
+    expect(bundle.appAuthMode).toBe("any");
+    // Routes come from both layers.
+    expect([...bundle.authRoutes.keys()]).toEqual(["GET /auth/attest"]);
+
+    expect(() =>
+      build({ ...MINIMAL, security: { userAuth: { type: "route-app-verifier" } } }, (registry) =>
+        registry.auth.set(
+          "route-app-verifier",
+          routeContributingFactory(["/auth/attest"], "attestation", "app"),
+        ),
+      ),
+    ).toThrow(/verifies an app or device, not a user/);
   });
 
   it("reports an empty registry rather than a bare failure", () => {

@@ -7,25 +7,26 @@
     "type": "memory"
   },
   "security": {
-    "mode": "any",
-    "providers": [
-      {
-        "type": "firebase-auth",
-        "projectId": "${FIREBASE_PROJECT_ID}"
-      },
-      {
-        "type": "firebase-app-check",
-        "projectNumber": "${FIREBASE_PROJECT_NUMBER}"
-      }
-    ]
+    "userAuth": {
+      "type": "firebase-auth",
+      "projectId": "${FIREBASE_PROJECT_ID}"
+    },
+    "appAuth": {
+      "mode": "all",
+      "providers": [
+        {
+          "type": "firebase-app-check",
+          "projectNumber": "${FIREBASE_PROJECT_NUMBER}"
+        }
+      ]
+    }
   },
   "rateLimits": [
     {
-      "name": "per-user-requests",
-      "key": "user",
-      "requests": {
-        "limit": 120,
-        "window": "1m"
+      "name": "per-user-tokens",
+      "tokens": {
+        "limit": 200000,
+        "window": "1h"
       }
     }
   ],

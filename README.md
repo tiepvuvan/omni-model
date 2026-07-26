@@ -140,10 +140,12 @@ Use `OMNI_CONFIG_JSON` for a complete configuration, named JSON blocks for provi
 `OMNI__...` variables for individual fields. This example combines all three:
 
 ```sh
-OMNI_SECURITY_PROVIDERS_JSON='[{"type":"firebase-app-check","projectNumber":"${FIREBASE_PROJECT_NUMBER}"}]'
+OMNI_SECURITY_USER_AUTH_JSON='{"type":"firebase-auth","projectId":"${FIREBASE_PROJECT_ID}"}'
+OMNI_SECURITY_APP_AUTH_JSON='{"providers":[{"type":"firebase-app-check","projectNumber":"${FIREBASE_PROJECT_NUMBER}"}]}'
 OMNI_RATE_LIMITS_JSON='[
-  {"name":"per-device-requests","key":"device","requests":{"limit":30,"window":"1m"}},
-  {"name":"per-device-daily-tokens","key":"device","tokens":{"limit":150000,"window":"1d"}}
+  {"name":"free-tier","when":"has(user.claims.tier) && user.claims.tier == \"free\"",
+   "tokens":{"limit":30000,"window":"1d"}},
+  {"name":"everyone","tokens":{"limit":150000,"window":"1d"}}
 ]'
 OMNI_ROUTING_JSON='{
   "rules":[

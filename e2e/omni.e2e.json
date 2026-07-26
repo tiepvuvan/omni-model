@@ -7,21 +7,18 @@
     "type": "memory"
   },
   "security": {
-    "providers": [
-      {
-        "type": "jwt",
-        "secret": "omni-e2e-shared-secret-not-a-real-credential",
-        "algorithms": ["HS256"]
-      }
-    ]
+    "userAuth": {
+      "type": "jwt",
+      "secret": "omni-e2e-shared-secret-not-a-real-credential",
+      "algorithms": ["HS256"]
+    }
   },
   "rateLimits": [
     {
-      "name": "per-ip-requests",
-      "key": "ip",
-      "requests": {
-        "limit": 120,
-        "window": "1m"
+      "name": "per-user-tokens",
+      "tokens": {
+        "limit": 200000,
+        "window": "1h"
       }
     }
   ],

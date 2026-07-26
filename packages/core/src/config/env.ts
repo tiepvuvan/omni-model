@@ -10,7 +10,8 @@ const JSON_BLOCKS: ReadonlyArray<readonly [name: string, path: readonly string[]
   ["OMNI_SERVER_JSON", ["server"]],
   ["OMNI_STORAGE_JSON", ["storage"]],
   ["OMNI_SECURITY_JSON", ["security"]],
-  ["OMNI_SECURITY_PROVIDERS_JSON", ["security", "providers"]],
+  ["OMNI_SECURITY_USER_AUTH_JSON", ["security", "userAuth"]],
+  ["OMNI_SECURITY_APP_AUTH_JSON", ["security", "appAuth"]],
   ["OMNI_RATE_LIMITS_JSON", ["rateLimits"]],
   ["OMNI_ROUTING_JSON", ["routing"]],
   ["OMNI_LOGGING_JSON", ["logging"]],
@@ -27,7 +28,7 @@ const SIMPLE_VALUES: ReadonlyArray<readonly [name: string, path: readonly string
   ["OMNI_SERVER_MAX_BODY_BYTES", ["server", "maxBodyBytes"]],
   ["OMNI_SERVER_CORS", ["server", "cors"]],
   ["OMNI_STORAGE_TYPE", ["storage", "type"]],
-  ["OMNI_SECURITY_MODE", ["security", "mode"]],
+  ["OMNI_SECURITY_APP_AUTH_MODE", ["security", "appAuth", "mode"]],
   ["OMNI_SECURITY_PUBLIC_PATHS", ["security", "publicPaths"]],
   ["OMNI_ROUTING_ALLOWED_MODELS", ["routing", "allowedModels"]],
   ["OMNI_ROUTING_RULES", ["routing", "rules"]],
@@ -64,6 +65,14 @@ const TARGET_VALUES: ReadonlyArray<readonly [name: string, field: string]> = [
 
 interface SecurityProfile {
   readonly type: string;
+  /**
+   * Which half of `security` this profile writes to.
+   *
+   * A copy of the factory's own `layer`, because this module maps environment
+   * variables and cannot reach the registry without a cycle. `env.test.ts` asserts
+   * the two agree, so a new verifier cannot land here in the wrong half.
+   */
+  readonly layer: "user" | "app";
   readonly enabled: string;
   readonly values: ReadonlyArray<readonly [name: string, field: string]>;
   readonly appId?: string;
@@ -74,6 +83,7 @@ interface SecurityProfile {
 const SECURITY_PROFILES: readonly SecurityProfile[] = [
   {
     type: "firebase-auth",
+    layer: "user",
     enabled: "OMNI_SECURITY_FIREBASE_AUTH_ENABLED",
     values: [
       ["OMNI_SECURITY_FIREBASE_AUTH_PROJECT_ID", "projectId"],
@@ -83,6 +93,7 @@ const SECURITY_PROFILES: readonly SecurityProfile[] = [
   },
   {
     type: "firebase-app-check",
+    layer: "app",
     enabled: "OMNI_SECURITY_FIREBASE_APPCHECK_ENABLED",
     values: [
       ["OMNI_SECURITY_FIREBASE_APPCHECK_PROJECT_NUMBER", "projectNumber"],
@@ -95,6 +106,7 @@ const SECURITY_PROFILES: readonly SecurityProfile[] = [
   },
   {
     type: "jwt",
+    layer: "user",
     enabled: "OMNI_SECURITY_JWT_ENABLED",
     values: [
       ["OMNI_SECURITY_JWT_SECRET", "secret"],
@@ -112,6 +124,7 @@ const SECURITY_PROFILES: readonly SecurityProfile[] = [
   },
   {
     type: "supabase",
+    layer: "user",
     enabled: "OMNI_SECURITY_SUPABASE_ENABLED",
     values: [
       ["OMNI_SECURITY_SUPABASE_URL", "url"],
@@ -125,6 +138,7 @@ const SECURITY_PROFILES: readonly SecurityProfile[] = [
   },
   {
     type: "apple-app-attest",
+    layer: "app",
     enabled: "OMNI_SECURITY_APP_ATTEST_ENABLED",
     values: [
       ["OMNI_SECURITY_APP_ATTEST_TEAM_ID", "teamId"],
@@ -139,6 +153,7 @@ const SECURITY_PROFILES: readonly SecurityProfile[] = [
   },
   {
     type: "apple-device-check",
+    layer: "app",
     enabled: "OMNI_SECURITY_DEVICE_CHECK_ENABLED",
     values: [
       ["OMNI_SECURITY_DEVICE_CHECK_TEAM_ID", "teamId"],
@@ -480,36 +495,54 @@ function requiredBoolean(value: string, key: string): boolean {
   return parsed;
 }
 
-function securityProvidersDocument(root: Record<string, unknown>): unknown[] {
-  const existingSecurity = root.security;
-  let security: Record<string, unknown>;
-  if (existingSecurity === undefined) {
-    security = {};
+/** The `security` object out of the document under construction. */
+function securityDocument(root: Record<string, unknown>): Record<string, unknown> {
+  const existing = root.security;
+  if (existing === undefined) {
+    const security: Record<string, unknown> = {};
     root.security = security;
-  } else if (isObject(existingSecurity)) {
-    security = existingSecurity;
-  } else {
-    throw new ConfigError("security shortcuts conflict with a non-object security configuration");
+    return security;
   }
+  if (isObject(existing)) return existing;
+  throw new ConfigError("security shortcuts conflict with a non-object security configuration");
+}
 
-  const existingProviders = security.providers;
-  if (existingProviders === undefined) {
-    const providers: unknown[] = [];
-    security.providers = providers;
-    return providers;
-  }
-  if (Array.isArray(existingProviders) === false) {
+/** The `security.appAuth.providers` array, created on demand. */
+function appAuthProvidersDocument(root: Record<string, unknown>): unknown[] {
+  const security = securityDocument(root);
+  const existingAppAuth = security.appAuth;
+  let appAuth: Record<string, unknown>;
+  if (existingAppAuth === undefined) {
+    appAuth = {};
+    security.appAuth = appAuth;
+  } else if (isObject(existingAppAuth)) {
+    appAuth = existingAppAuth;
+  } else {
     throw new ConfigError(
-      "security shortcuts conflict with a non-array security.providers configuration",
+      "security shortcuts conflict with a non-object security.appAuth configuration",
     );
   }
-  return existingProviders;
+
+  const existing = appAuth.providers;
+  if (existing === undefined) {
+    const providers: unknown[] = [];
+    appAuth.providers = providers;
+    return providers;
+  }
+  if (Array.isArray(existing) === false) {
+    throw new ConfigError(
+      "security shortcuts conflict with a non-array security.appAuth.providers configuration",
+    );
+  }
+  return existing;
 }
 
 function applySecurityProfiles(
   root: Record<string, unknown>,
   env: Record<string, string | undefined>,
 ): void {
+  let userProfile: SecurityProfile | null = null;
+
   for (const profile of SECURITY_PROFILES) {
     const enabled = env[profile.enabled];
     if (enabled === undefined || requiredBoolean(enabled, profile.enabled) === false) continue;
@@ -527,7 +560,23 @@ function applySecurityProfiles(
       }
     }
 
-    const providers = securityProvidersDocument(root);
+    if (profile.layer === "user") {
+      // Two user methods is a question with no answer — which one owns `user.id`,
+      // and so whose token budget a request spends. Refusing beats picking.
+      if (userProfile !== null && userProfile.type !== profile.type) {
+        throw new ConfigError(
+          `${userProfile.enabled} and ${profile.enabled} are both set: a deployment has exactly ` +
+            "one user authentication method. Enable one of them.",
+        );
+      }
+      userProfile = profile;
+      const security = securityDocument(root);
+      const existing = security.userAuth;
+      security.userAuth = isObject(existing) ? mergeConfigValue(existing, provider) : provider;
+      continue;
+    }
+
+    const providers = appAuthProvidersDocument(root);
     const index = providers.findIndex(
       (existing) => isObject(existing) && existing.type === profile.type,
     );

@@ -7,7 +7,6 @@ const STREAM_YAML = `
 version: 1
 rateLimits:
   - name: daily-tokens
-    key: user
     tokens: { limit: 100000, window: 1h }
 routing:
   rules:

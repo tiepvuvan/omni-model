@@ -40,7 +40,7 @@ const CONFIG = {
   version: 1,
   server: { logLevel: "silent" },
   storage: { type: "memory" },
-  security: { providers: [{ type: "jwt", secret: "a-test-shared-secret-value" }] },
+  security: { userAuth: { type: "jwt", secret: "a-test-shared-secret-value" } },
   routing: {
     rules: [
       {

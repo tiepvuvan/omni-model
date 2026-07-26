@@ -125,7 +125,8 @@ describe("status", () => {
     expect(body.configured).toBe(false);
     expect(body.revision).toBeNull();
     expect(body.providers).toEqual([]);
-    expect(body.verifiers).toEqual([]);
+    expect(body.userAuth).toBeNull();
+    expect(body.appAuth).toEqual([]);
   });
 
   it("reports what is applied", async () => {
@@ -134,7 +135,9 @@ describe("status", () => {
     expect(body.configured).toBe(true);
     expect(body.revision).toBe(1);
     expect(body.providers).toEqual(["default"]);
-    expect(body.verifiers).toEqual(["jwt"]);
+    // The two layers separately: one is required, the other optional.
+    expect(body.userAuth).toBe("jwt");
+    expect(body.appAuth).toEqual([]);
   });
 });
 

@@ -42,18 +42,34 @@ export interface AuthVerifier {
    * Verify the request's credential.
    *
    * Returns `null` when the request carries no credential this verifier is
-   * responsible for (e.g. its header is absent) — in `mode: any` the next
-   * verifier is consulted. Returns `{ ok: false }` when a credential was
-   * presented but is invalid; in `mode: any` later verifiers may still
-   * authenticate the request, but if none does, the first explicit failure's
+   * responsible for (e.g. its header is absent). For the user verifier that is a
+   * rejection — a request must say who it is. For an app verifier under
+   * `appAuth.mode: any` the next one is consulted. Returns `{ ok: false }` when a
+   * credential was presented but is invalid; under `any` a later verifier may
+   * still accept the request, but if none does, the first explicit failure's
    * reason (and status) is what the client receives.
    */
   verify(request: Request, ctx: VerifyContext): Promise<AuthResult | null>;
   routes?: AuthRoute[];
 }
 
+/**
+ * Which authentication question a verifier answers.
+ *
+ * The two are not interchangeable and the configuration keeps them apart:
+ * `user` verifiers answer "which person" and exactly one is required, `app`
+ * verifiers answer "which app or device this is running on" and any number may
+ * be layered over it. Declaring it here rather than listing types anywhere else
+ * is what lets a new verifier — reCAPTCHA, Play Integrity — land in the right
+ * half of the dashboard with no dashboard change: `GET /admin/api/meta`
+ * publishes it.
+ */
+export type AuthLayer = "user" | "app";
+
 export interface AuthVerifierFactory {
   readonly type: string;
+  /** Which of the two authentication layers this verifier belongs to. */
+  readonly layer: AuthLayer;
   /**
    * The zod schema this factory validates its options with.
    *

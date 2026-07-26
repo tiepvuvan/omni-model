@@ -13,8 +13,8 @@ import {
 const ROUTED_YAML = `
 version: 1
 security:
-  providers:
-    - type: fake-auth
+  userAuth:
+    type: fake-auth
 routing:
   rules:
     - { id: smart-for-pro, name: smart-for-pro, when: 'request.model == "smart" && user.claims.tier == "pro"', target: { type: fake, model: fake-large } }
@@ -83,8 +83,8 @@ describe("POST /v1/chat/completions", () => {
     const yaml = `
 version: 1
 security:
-  providers:
-    - type: fake-auth
+  userAuth:
+    type: fake-auth
 routing:
   allowedModels: [smart]
   rules:
@@ -110,7 +110,6 @@ routing:
 version: 1
 rateLimits:
   - name: daily-tokens
-    key: user
     tokens: { limit: 100000, window: 1h }
 routing:
   rules:

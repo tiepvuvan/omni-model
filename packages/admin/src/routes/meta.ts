@@ -45,6 +45,26 @@ function describe(
     .sort((a, b) => a.type.localeCompare(b.type));
 }
 
+/**
+ * Auth verifiers, each carrying the layer it belongs to.
+ *
+ * The layer is what lets the dashboard draw two sections — one required choice of
+ * user authentication, any number of app attestation schemes over it — without
+ * knowing the type names. A verifier added to the registry lands in the right half
+ * on its own.
+ */
+function describeVerifiers(
+  registry: ReadonlyMap<string, { optionsSchema?: ZodTypeLike; layer: "user" | "app" }>,
+): (ComponentDescriptor & { layer: "user" | "app" })[] {
+  return [...registry.entries()]
+    .map(([type, factory]) => ({
+      type,
+      layer: factory.layer,
+      optionsSchema: toJsonSchema(factory.optionsSchema),
+    }))
+    .sort((a, b) => a.type.localeCompare(b.type));
+}
+
 const simulateSchema = z.object({
   model: z.string().min(1),
   stream: z.boolean().optional(),
@@ -184,7 +204,7 @@ export function createMetaRoutes(deps: AdminDeps): Hono<AdminEnv> {
   app.get("/meta", (c) => {
     return c.json({
       providers: describe(deps.registry.providers),
-      authVerifiers: describe(deps.registry.auth),
+      authVerifiers: describeVerifiers(deps.registry.auth),
       storage: describe(deps.registry.storage),
       configSchema: toJsonSchema(omniConfigSchema as unknown as ZodTypeLike),
       secretsAvailable: deps.secrets !== null,

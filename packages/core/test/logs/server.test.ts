@@ -77,9 +77,7 @@ describe("request logging", () => {
     // Regression: `c.header()` seeds the response Hono builds, but a thrown
     // error and a directly-returned stream both replace it — dropping the header
     // on exactly the paths where a user needs an id to report.
-    const rejected = await setup(
-      fixture({ security: "\n  mode: any\n  providers:\n    - type: fake-auth" }),
-    );
+    const rejected = await setup(fixture({ security: "\n  userAuth: { type: fake-auth }" }));
     const failure = await rejected.app.fetch(chatRequest(CHAT_BODY));
     expect(failure.status).toBe(401);
     expect(failure.headers.get(REQUEST_ID_HEADER)).toMatch(/^[0-9a-f-]{36}$/);
@@ -130,16 +128,16 @@ describe("request logging", () => {
   it("records a rate-limited request, naming the rule that refused it", async () => {
     // A 429 row that does not say which limit was hit is nearly useless.
     const storage = new MemoryStorageAdapter(() => FIXED_NOW);
-    const { app, logs } = await setup(
+    const { app, logs, collector } = await setup(
       fixture({
         rateLimits:
-          "rateLimits:\n  - id: tight\n    name: tight\n    key: user\n" +
-          "    requests: { limit: 1, window: 1h }",
+          "rateLimits:\n  - id: tight\n    name: tight\n    tokens: { limit: 5, window: 1h }",
       }),
       { storage },
     );
 
     await app.fetch(chatRequest(CHAT_BODY));
+    await collector.flush();
     const refused = await app.fetch(chatRequest(CHAT_BODY));
     expect(refused.status).toBe(429);
 
@@ -153,9 +151,7 @@ describe("request logging", () => {
   });
 
   it("records an unauthenticated request", async () => {
-    const { app, logs } = await setup(
-      fixture({ security: "\n  mode: any\n  providers:\n    - type: fake-auth" }),
-    );
+    const { app, logs } = await setup(fixture({ security: "\n  userAuth: { type: fake-auth }" }));
     // No credential header: the fake verifier returns "not mine" and auth fails.
     const response = await app.fetch(chatRequest(CHAT_BODY));
     expect(response.status).toBe(401);
@@ -178,7 +174,7 @@ describe("request logging", () => {
 
   it("attributes a request to its client and user", async () => {
     const { app, writeKeys, logs } = await setup(
-      fixture({ security: "\n  mode: any\n  providers:\n    - type: fake-auth" }),
+      fixture({ security: "\n  userAuth: { type: fake-auth }" }),
     );
     const { writeKey, secret } = await writeKeys.create({ name: "ios-app" });
 

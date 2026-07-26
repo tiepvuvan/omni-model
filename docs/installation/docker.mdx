@@ -76,7 +76,7 @@ OMNI_SECURITY_JWT_SECRET=${OMNI_JWT_SECRET}
 OMNI_SECURITY_JWT_ALGORITHMS=["HS256"]
 OMNI_TARGET_TYPE=openai
 OMNI_TARGET_API_KEY=${OPENAI_API_KEY}
-OMNI_RATE_LIMITS_JSON=[{"name":"per-user-requests","key":"user","requests":{"limit":30,"window":"1h"}}]
+OMNI_RATE_LIMITS_JSON=[{"name":"per-user-daily-tokens","tokens":{"limit":30000,"window":"1d"}}]
 ```
 
 <Note>

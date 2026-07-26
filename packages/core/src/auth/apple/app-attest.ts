@@ -171,6 +171,7 @@ function uncompressedPointFromSpki(spki: Uint8Array): Uint8Array {
  */
 export const appleAppAttestVerifierFactory: AuthVerifierFactory = {
   type: "apple-app-attest",
+  layer: "app",
   optionsSchema: optionsSchema,
   create(options: Record<string, unknown>, _runtime: RuntimeContext): AuthVerifier {
     const parsed = optionsSchema.safeParse(options);

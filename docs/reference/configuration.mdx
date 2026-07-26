@@ -32,10 +32,10 @@ Use the smallest shape that fits the change:
 | Complete configuration | `OMNI_CONFIG_JSON` | A JSON object containing all top-level blocks. |
 | Routing rules and their upstreams | `OMNI_ROUTING_JSON` | A JSON object with `rules` and `allowedModels`. |
 | Rate-limit rules | `OMNI_RATE_LIMITS_JSON` | A JSON array of rules. |
-| Security providers | `OMNI_SECURITY_JSON` or `OMNI_SECURITY_PROVIDERS_JSON` | A JSON object or array. |
+| Authentication | `OMNI_SECURITY_JSON`, `OMNI_SECURITY_USER_AUTH_JSON` or `OMNI_SECURITY_APP_AUTH_JSON` | A JSON object per layer. |
 | One upstream for everything | `OMNI_TARGET_*` | `OMNI_TARGET_TYPE=openai`. |
 | One built-in verifier | `OMNI_SECURITY_<VERIFIER>_*` | `OMNI_SECURITY_FIREBASE_AUTH_ENABLED=true`. |
-| One simple value | `OMNI_STORAGE_TYPE`, `OMNI_TARGET_TYPE`, `OMNI_SERVER_LOG_LEVEL`, or `OMNI_SECURITY_MODE` | `OMNI_STORAGE_TYPE=postgres`. |
+| One simple value | `OMNI_STORAGE_TYPE`, `OMNI_TARGET_TYPE`, `OMNI_SERVER_LOG_LEVEL`, or `OMNI_SECURITY_APP_AUTH_MODE` | `OMNI_STORAGE_TYPE=postgres`. |
 | One deeply nested override | `OMNI__…` | `OMNI__ROUTING__RULES__0__TARGET__MODEL=gpt-4o-mini`. |
 
 The precedence order is: `OMNI_CONFIG_JSON`, named JSON blocks, simple variables, then `OMNI__…`
@@ -71,9 +71,11 @@ OMNI_ROUTING_RULES='[{"id":"smart","when":"request.model == \"smart\"","target":
 ```
 
 <Note>
-`*_ENABLED` switches accept only `true` or `false`. A verifier's companion variables do nothing
-until its switch is `true`. Every enabled verifier must validate the same request by default; set
-`OMNI_SECURITY_MODE=any` explicitly when either credential may authenticate it.
+`*_ENABLED` switches accept only `true` or `false`, and a verifier's companion variables do nothing
+until its switch is `true`. Enabling two *user* methods is refused rather than resolved — whichever
+won would own `user.id`, and that is whose token budget a request spends. App schemes layer: every
+enabled one must accept by default; set `OMNI_SECURITY_APP_AUTH_MODE=any` when a client only ever
+satisfies one of them, which is the case as soon as you serve more than one platform.
 </Note>
 
 ## Client response privacy
@@ -103,9 +105,7 @@ export OMNI_CONFIG_JSON='{
   "server": { "logLevel": "info" },
   "storage": { "type": "memory" },
   "security": {
-    "providers": [
-      { "type": "jwt", "secret": "${OMNI_JWT_SECRET}", "algorithms": ["HS256"] }
-    ]
+    "userAuth": { "type": "jwt", "secret": "${OMNI_JWT_SECRET}", "algorithms": ["HS256"] }
   },
   "routing": {
     "rules": [
@@ -130,10 +130,12 @@ with `OMNI_CONFIG_JSON`.
 ```sh
 export OMNI_STORAGE_JSON='{"type":"postgres","url":"${DATABASE_URL}"}'
 
-export OMNI_SECURITY_PROVIDERS_JSON='[
-  {"type":"firebase-app-check","appIds":["1:PROJECT_NUMBER:ios:APP_ID"]},
-  {"type":"firebase-auth","projectId":"${GOOGLE_CLOUD_PROJECT}"}
-]'
+export OMNI_SECURITY_USER_AUTH_JSON='{"type":"firebase-auth","projectId":"${GOOGLE_CLOUD_PROJECT}"}'
+
+export OMNI_SECURITY_APP_AUTH_JSON='{
+  "mode": "all",
+  "providers": [{"type":"firebase-app-check","appIds":["1:PROJECT_NUMBER:ios:APP_ID"]}]
+}'
 
 export OMNI_ROUTING_JSON='{
   "rules": [
@@ -164,7 +166,8 @@ Available block variables are:
 | `OMNI_SERVER_JSON` | `server` | object |
 | `OMNI_STORAGE_JSON` | `storage` | object |
 | `OMNI_SECURITY_JSON` | `security` | object |
-| `OMNI_SECURITY_PROVIDERS_JSON` | `security.providers` | array |
+| `OMNI_SECURITY_USER_AUTH_JSON` | `security.userAuth` | object |
+| `OMNI_SECURITY_APP_AUTH_JSON` | `security.appAuth` | object |
 | `OMNI_RATE_LIMITS_JSON` | `rateLimits` | array |
 | `OMNI_ROUTING_JSON` | `routing` | object |
 | `OMNI_LOGGING_JSON` | `logging` | object |
@@ -178,8 +181,11 @@ lower-camel-case property name. A numeric segment creates an array item.
 # server.maxBodyBytes = 3000000
 OMNI__SERVER__MAX_BODY_BYTES=3000000
 
-# security.providers[0].type = "jwt"
-OMNI__SECURITY__PROVIDERS__0__TYPE=jwt
+# security.userAuth.type = "jwt"
+OMNI__SECURITY__USER_AUTH__TYPE=jwt
+
+# security.appAuth.providers[0].type = "apple-app-attest"
+OMNI__SECURITY__APP_AUTH__PROVIDERS__0__TYPE=apple-app-attest
 
 # routing.rules[0].target.apiKey = "${OPENAI_API_KEY}"
 OMNI__ROUTING__RULES__0__TARGET__API_KEY='${OPENAI_API_KEY}'
@@ -257,13 +263,13 @@ storage options not listed here.
 ## Security
 
 Every HTTP proxy deployment needs at least one security provider. Every configured verifier must
-accept by default; set `OMNI_SECURITY_MODE=any` explicitly to accept the first recognized valid
+accept by default; set `OMNI_SECURITY_APP_AUTH_MODE=any` explicitly to accept the first recognized valid
 credential instead.
 
 ### Built-in verifier profiles
 
 Set the profile's `*_ENABLED=true` switch, then provide its required fields. You may enable several
-profiles; `OMNI_SECURITY_MODE` determines whether any or all must validate. Use
+profiles; `OMNI_SECURITY_APP_AUTH_MODE` determines whether any or all of the app schemes must validate. Use
 `OMNI_SECURITY_PUBLIC_PATHS='["/v1/models"]'` for paths that bypass authentication.
 
 | Verifier | Enable and required configuration | Optional configuration |
@@ -440,9 +446,8 @@ its own options at startup, so unsupported fields fail before the service accept
 | `version` | literal `1` | `1` | Compatibility marker. |
 | `server` | object | `{ logLevel: "info", trustProxyHeaders: false, maxBodyBytes: 131072 }` | HTTP and logging behavior. |
 | `storage` | object | `{ type: "memory" }` | Selects a storage backend and its options. |
-| `security` | object | `{ mode: "all", publicPaths: [], providers: [] }` | At least one provider is required for an HTTP proxy. |
-| `rateLimits` | array | `[{ per-user-requests: 30/1h }, { per-user-daily-tokens: 30000/1d }]` | Ordered request/token budget rules. |
-| `providers` | object keyed by ID | `{}` | Each value has a `type` and type-specific options. |
+| `security` | object | `{ publicPaths: [], appAuth: { mode: "all", providers: [] } }` | `userAuth` has no default and is required for an HTTP proxy. |
+| `rateLimits` | array | `[{ per-user-daily-tokens: 30000/1d }]` | Per-user token budgets. |
 | `routing` | object | `{ allowedModels: [], rules: [] }` | Restricts client model names and chooses an upstream. |
 
 ### `server` object
@@ -459,11 +464,38 @@ its own options at startup, so unsupported fields fail before the service accept
 
 ### `security` object
 
+Authentication is two layers. **Layer 1 — `userAuth`** answers *which user*: exactly one method,
+and required, because token budgets are counted per user and a request that does not say who it is
+has nothing to spend. **Layer 2 — `appAuth`** answers *which app*: optional, and any number, since
+one attestation scheme per platform is normal.
+
 | Field | Type | Default | Constraint |
 | --- | --- | --- | --- |
-| `mode` | `any` \| `all` | `all` | `all` requires every configured verifier; set `any` explicitly to accept either credential. |
+| `userAuth` | object | none | One of `firebase-auth`, `supabase`, `jwt`. A bundle refuses to build without it, so `/v1` answers 503 rather than serving unauthenticated traffic. |
+| `appAuth.mode` | `any` \| `all` | `all` | `all` requires every configured scheme — right for one platform layering two. `any` takes the first that accepts — right for several platforms, since a client can only satisfy its own. |
+| `appAuth.providers` | array | `[]` | Any of `firebase-app-check`, `apple-app-attest`, `apple-device-check`. |
 | `publicPaths` | string array | `[]` | Exact paths or a trailing `*` prefix. |
-| `providers` | array | `[]` | Must contain at least one accepted verifier for `/v1/*`. |
+| `requireWriteKey` | boolean | `false` | Demand `x-omni-key` on every `/v1/*` request. |
+
+A verifier configured in the wrong layer is refused by name, with the field it belongs in — putting
+App Attest in `userAuth` is one field away from correct, and attesting an app is not the same as
+knowing who is calling.
+
+```yaml
+security:
+  userAuth:
+    type: jwt
+    secret: ${OMNI_JWT_SECRET}
+    algorithms: [HS256]
+  appAuth:
+    mode: any
+    providers:
+      - type: apple-app-attest
+        teamId: ABCDE12345
+        bundleId: com.example.app
+      - type: firebase-app-check
+        projectNumber: "1234567890"
+```
 
 ### `rateLimits[]` object
 
@@ -472,10 +504,11 @@ its own options at startup, so unsupported fields fail before the service accept
 | `id` | string | one of id/name | Stable counter keyspace. Defaults to `name` — set it explicitly for any rule that can be renamed. |
 | `name` | string | one of id/name | Display name, shown in rate-limit headers/logs. Defaults to `id`. |
 | `when` | CEL string | no | Applies only when it evaluates to `true`. Omitted means every request — a baseline, not a fallback: every matching rule is enforced. |
-| `key` | `user` \| `device` \| `client` \| `ip` \| `global` \| `expression` | no | Defaults to `user`. |
-| `keyExpression` | CEL string | when `key=expression` | Produces the rate-limit key. |
-| `requests` | `{ limit: positive integer, window: duration }` | one of requests/tokens | Request-window limit. |
-| `tokens` | `{ limit: positive integer, window: duration }` | one of requests/tokens | Prompt + completion token budget. |
+| `tokens` | `{ limit: positive integer, window: duration }` | yes | Prompt + completion token budget, per user. |
+
+Every budget is counted **per user**, and tokens are the only axis. There is no request-count
+window: tokens are what a request costs, so that is what these rules protect. A flood of requests
+that spend no tokens is not limited here — see [concurrency](#concurrency) for the bound that is.
 
 ### `routing` object
 

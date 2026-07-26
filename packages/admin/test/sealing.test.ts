@@ -132,7 +132,7 @@ describe("credentials typed into a rule are sealed before they are stored", () =
       secrets: { name: string }[];
     };
     expect(secrets.secrets.map((secret) => secret.name)).toEqual([
-      "config.security.providers[0].secret",
+      "config.security.userAuth.secret",
     ]);
   });
 
@@ -174,10 +174,7 @@ describe("credentials typed into a rule are sealed before they are stored", () =
       (entry) => entry.message === "sealed credentials from an admin write",
     );
     expect(sealed).toBeDefined();
-    expect(sealed?.paths).toEqual([
-      "security.providers[0].secret",
-      "routing.rules[0].target.apiKey",
-    ]);
+    expect(sealed?.paths).toEqual(["security.userAuth.secret", "routing.rules[0].target.apiKey"]);
     expect(sealed?.by).toBe("root@test");
     expect(JSON.stringify(entries)).not.toContain(KEY);
   });
@@ -219,20 +216,20 @@ describe("credentials typed into a rule are sealed before they are stored", () =
   });
 
   it("seals a verifier's shared secret as well as a provider key", async () => {
-    // The credential field list is not provider-specific: `security.providers`
+    // The credential field list is not provider-specific: `security.userAuth`
     // holds a jwt shared secret, and that is a credential too.
     const { call } = await createTestAdmin({ config: baseConfig() });
     const response = await call("/admin/api/security", {
       method: "PUT",
       body: JSON.stringify({
-        value: { providers: [{ type: "jwt", secret: "j".repeat(40), algorithms: ["HS256"] }] },
+        value: { userAuth: { type: "jwt", secret: "j".repeat(40), algorithms: ["HS256"] } },
       }),
     });
     expect(response.status).toBe(200);
 
     const stored = await storedConfig(call);
     expect(JSON.stringify(stored)).not.toContain("j".repeat(40));
-    const providers = (stored.security as { providers: { secret: unknown }[] }).providers;
+    const providers = [(stored.security as { userAuth: { secret: unknown } }).userAuth];
     expect(isSecretRef(providers[0]?.secret)).toBe(true);
   });
 });

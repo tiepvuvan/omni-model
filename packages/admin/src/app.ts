@@ -180,7 +180,10 @@ export function createAdminApp(options: AdminAppOptions): AdminApp {
     return c.json({
       ...status,
       providers: bundle === null ? [] : [...bundle.providers.keys()],
-      verifiers: bundle === null ? [] : bundle.verifiers.map((verifier) => verifier.name),
+      // The two layers separately, because "authentication is configured" is two
+      // different facts: one is required and one is optional.
+      userAuth: bundle?.userVerifier.name ?? null,
+      appAuth: bundle === null ? [] : bundle.appVerifiers.map((verifier) => verifier.name),
       requireWriteKey: bundle?.requireWriteKey ?? null,
       logging: bundle?.logging ?? null,
     });

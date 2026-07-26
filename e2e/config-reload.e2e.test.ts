@@ -27,7 +27,7 @@ function config(overrides: Record<string, unknown> = {}): Record<string, unknown
     version: 1,
     server: { logLevel: "silent" },
     storage: { type: "postgres", url: "${OMNI_E2E_DATABASE_URL}" },
-    security: { providers: [{ type: "jwt", secret: JWT_SECRET, algorithms: ["HS256"] }] },
+    security: { userAuth: { type: "jwt", secret: JWT_SECRET, algorithms: ["HS256"] } },
     routing: {
       rules: [
         {

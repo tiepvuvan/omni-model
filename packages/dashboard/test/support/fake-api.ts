@@ -75,9 +75,11 @@ export const PROVIDER_SCHEMAS = [
   },
 ];
 
+/** Verifier descriptors carry the layer, exactly as `GET /meta` does. */
 export const VERIFIER_SCHEMAS = [
   {
     type: "apple-app-attest",
+    layer: "app",
     optionsSchema: {
       type: "object",
       properties: {
@@ -91,6 +93,7 @@ export const VERIFIER_SCHEMAS = [
   },
   {
     type: "apple-device-check",
+    layer: "app",
     optionsSchema: {
       type: "object",
       properties: {
@@ -104,6 +107,7 @@ export const VERIFIER_SCHEMAS = [
   },
   {
     type: "firebase-app-check",
+    layer: "app",
     optionsSchema: {
       type: "object",
       properties: {
@@ -116,6 +120,7 @@ export const VERIFIER_SCHEMAS = [
   },
   {
     type: "firebase-auth",
+    layer: "user",
     optionsSchema: {
       type: "object",
       properties: { type: { type: "string" }, projectId: { type: "string" } },
@@ -124,6 +129,7 @@ export const VERIFIER_SCHEMAS = [
   },
   {
     type: "jwt",
+    layer: "user",
     optionsSchema: {
       type: "object",
       properties: {
@@ -137,6 +143,7 @@ export const VERIFIER_SCHEMAS = [
   },
   {
     type: "supabase",
+    layer: "user",
     optionsSchema: {
       type: "object",
       properties: {

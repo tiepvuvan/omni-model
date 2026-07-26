@@ -427,6 +427,56 @@ export function Checkbox({
   );
 }
 
+/**
+ * A single-choice control: the checkbox's shape, round, and never self-clearing.
+ *
+ * A real `<input type="radio">`, hidden behind the styled circle rather than
+ * reimplemented. Not Base UI's `Radio`, which has to live inside a `RadioGroup`
+ * wrapping every option — and these options are separate cards on the screen, so
+ * the wrapper would have to own the cards. A native input in a `<label>` gets the
+ * grouping, the arrow-key behaviour and the accessible name for free, which is
+ * more than a `role="radio"` button would have carried.
+ *
+ * `onSelect` rather than `onChange(boolean)`: a radio cannot be unticked, only
+ * replaced, so there is no `false` to report.
+ */
+export function Radio({
+  label,
+  name,
+  checked,
+  onSelect,
+}: {
+  /** Names the control, and is read out. Kept short: "Use Firebase". */
+  label: string;
+  /** Groups the options, so arrow keys move between them. */
+  name: string;
+  checked: boolean;
+  onSelect: () => void;
+}) {
+  return (
+    <label className="flex shrink-0 cursor-default items-center gap-[8px] py-[6px] type-copy-14 text-foreground-primary">
+      <input
+        type="radio"
+        name={name}
+        checked={checked}
+        onChange={onSelect}
+        className="peer sr-only"
+      />
+      <span
+        aria-hidden
+        className={cx(
+          "flex size-[18px] shrink-0 items-center justify-center rounded-full border border-solid",
+          "peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-accent-primary",
+          checked ? "border-white/30 bg-accent-primary" : "border-border bg-input-background",
+        )}
+      >
+        {checked ? <span className="size-[6px] rounded-full bg-accent-foreground" /> : null}
+      </span>
+      {label}
+    </label>
+  );
+}
+
 /** A 30×19 switch. The thumb is a 15px circle inset 2px. */
 export function Switch({
   label,

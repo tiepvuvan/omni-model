@@ -11,7 +11,7 @@ const CONFIG = {
   version: 1,
   server: { logLevel: "silent" },
   storage: { type: "memory" },
-  security: { providers: [{ type: "jwt", secret: "test-shared-secret" }] },
+  security: { userAuth: { type: "jwt", secret: "test-shared-secret" } },
   routing: {
     rules: [{ id: "main", when: "true", target: { type: "openai", apiKey: "sk-test" } }],
   },
@@ -21,7 +21,10 @@ const APP_CHECK_WITHOUT_PROJECT_NUMBER = {
   version: 1,
   server: { logLevel: "silent" },
   storage: { type: "memory" },
-  security: { providers: [{ type: "firebase-app-check" }] },
+  security: {
+    userAuth: { type: "jwt", secret: "s".repeat(40), algorithms: ["HS256"] },
+    appAuth: { providers: [{ type: "firebase-app-check" }] },
+  },
   routing: {
     rules: [{ id: "main", when: "true", target: { type: "openai", apiKey: "sk-test" } }],
   },
@@ -30,7 +33,10 @@ const APP_CHECK_WITHOUT_PROJECT_NUMBER = {
 const CONSUMING_APP_CHECK_CONFIG = {
   ...APP_CHECK_WITHOUT_PROJECT_NUMBER,
   security: {
-    providers: [{ type: "firebase-app-check", projectNumber: "1234567890", consume: true }],
+    userAuth: { type: "jwt", secret: "s".repeat(40), algorithms: ["HS256"] },
+    appAuth: {
+      providers: [{ type: "firebase-app-check", projectNumber: "1234567890", consume: true }],
+    },
   },
 };
 
@@ -169,7 +175,7 @@ describe("startServer", () => {
       config: {
         server: { logLevel: "silent" },
         storage: { type: "no-such-storage" },
-        security: { providers: [{ type: "jwt", secret: "test-shared-secret" }] },
+        security: { userAuth: { type: "jwt", secret: "test-shared-secret" } },
         routing: {
           rules: [{ id: "main", when: "true", target: { type: "openai", apiKey: "sk-test" } }],
         },

@@ -21,7 +21,7 @@ export function isPublicPath(path: string, publicPaths: readonly string[]): bool
 }
 
 /**
- * Merge the identities accepted by every verifier in `mode: all`.
+ * Merge the identities the two layers produced.
  *
  * Merge rules (in verifier config order):
  * - `userId` / `deviceId`: the first defined value wins.
@@ -69,56 +69,77 @@ export interface AuthMiddlewareOptions {
 }
 
 /**
- * Authentication middleware for `/v1/*`.
+ * Authentication middleware for `/v1/*`, in two layers.
  *
- * `mode: any` consults verifiers in order: the first `{ ok: true }` wins;
- * `null` (credential absent) moves on to the next verifier; `{ ok: false }`
- * is remembered and the request is rejected with the first failure's reason
- * unless a later verifier positively authenticates it. When every verifier
- * returns `null` the request is rejected with "authentication required".
+ * **Layer 1 — the user.** One verifier, always configured, always required. A
+ * `null` result (no credential presented) is a rejection here: a request that
+ * does not say who it is has nothing to charge tokens to.
  *
- * `mode: all` requires every verifier to accept; a `null` result counts as
- * "credential missing for <name>". Accepted identities are combined with
- * `mergeIdentities`.
+ * **Layer 2 — the app or device.** Zero or more, layered over the user.
+ * `appAuth.mode: all` requires every configured scheme to accept, with a `null`
+ * counting as "credential missing for <name>". `any` takes the first that
+ * accepts, moves past a `null`, remembers the first explicit failure, and rejects
+ * when nothing accepted — which is what a deployment serving several platforms
+ * wants, since a client can only satisfy its own platform's scheme.
+ *
+ * Identities from both layers are combined with `mergeIdentities`, so `user.id`
+ * comes from layer 1 and `device.id` from whichever app scheme supplied one.
  *
  * Public paths (exact or trailing-`*` prefix) bypass verification entirely.
  *
- * There is no "no verifiers configured" branch: a bundle cannot exist without
- * at least one verifier, so the only way to reach `/v1/*` unauthenticated is a
- * public path you asked for.
+ * There is no "nothing configured" branch: a bundle cannot exist without a user
+ * verifier, so the only way to reach `/v1/*` unauthenticated is a public path you
+ * asked for.
  */
 export function createAuthMiddleware(options: AuthMiddlewareOptions): MiddlewareHandler<AppEnv> {
   const { requireBundle, contextFor } = options;
 
   return async (c, next) => {
-    const { securityMode: mode, publicPaths, verifiers } = requireBundle();
+    const { publicPaths, userVerifier, appVerifiers, appAuthMode } = requireBundle();
     if (isPublicPath(c.req.path, publicPaths)) {
       c.set("identity", null);
       return next();
     }
     const ctx = contextFor(c);
 
-    if (mode === "any") {
-      let firstFailure: { ok: false; reason: string } | null = null;
-      for (const verifier of verifiers) {
-        const result = await verifier.verify(c.req.raw, ctx);
-        if (result === null) continue;
-        if (result.ok) {
-          c.set("identity", result.identity);
-          return next();
+    // Layer 1: the user. `null` is a rejection, not a fall-through — there is
+    // nowhere else for a user credential to come from.
+    const user = await userVerifier.verify(c.req.raw, ctx);
+    if (user === null) throw authError("authentication required");
+    if (!user.ok) throw authError(user.reason);
+
+    const accepted: { verifier: AuthVerifier; identity: Identity }[] = [
+      { verifier: userVerifier, identity: user.identity },
+    ];
+
+    // Layer 2: the app or device, when any is configured.
+    if (appVerifiers.length > 0) {
+      if (appAuthMode === "any") {
+        let firstFailure: { ok: false; reason: string } | null = null;
+        let attested: { verifier: AuthVerifier; identity: Identity } | null = null;
+        for (const verifier of appVerifiers) {
+          const result = await verifier.verify(c.req.raw, ctx);
+          if (result === null) continue;
+          if (result.ok) {
+            attested = { verifier, identity: result.identity };
+            break;
+          }
+          if (firstFailure === null) firstFailure = result;
         }
-        if (firstFailure === null) firstFailure = result;
+        if (attested === null) {
+          throw authError(firstFailure?.reason ?? "app attestation required");
+        }
+        accepted.push(attested);
+      } else {
+        for (const verifier of appVerifiers) {
+          const result = await verifier.verify(c.req.raw, ctx);
+          if (result === null) throw authError(`credential missing for ${verifier.name}`);
+          if (!result.ok) throw authError(result.reason);
+          accepted.push({ verifier, identity: result.identity });
+        }
       }
-      throw authError(firstFailure?.reason ?? "authentication required");
     }
 
-    const accepted: { verifier: AuthVerifier; identity: Identity }[] = [];
-    for (const verifier of verifiers) {
-      const result = await verifier.verify(c.req.raw, ctx);
-      if (result === null) throw authError(`credential missing for ${verifier.name}`);
-      if (!result.ok) throw authError(result.reason);
-      accepted.push({ verifier, identity: result.identity });
-    }
     c.set("identity", mergeIdentities(accepted));
     return next();
   };

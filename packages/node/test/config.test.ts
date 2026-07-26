@@ -12,8 +12,8 @@ describe("resolveConfigSource", () => {
   it("combines full JSON, named JSON blocks and flat overrides", () => {
     const result = resolveConfigSource({
       env: {
-        OMNI_CONFIG_JSON: '{"storage":{"type":"memory"},"security":{"providers":[]}}',
-        OMNI_SECURITY_PROVIDERS_JSON: '[{"type":"jwt","secret":"test-jwt-secret"}]',
+        OMNI_CONFIG_JSON: '{"storage":{"type":"memory"},"security":{}}',
+        OMNI_SECURITY_USER_AUTH_JSON: '{"type":"jwt","secret":"test-jwt-secret"}',
         OMNI_ROUTING_JSON:
           '{"rules":[{"id":"main","when":"true","target":{"type":"openai","apiKey":"sk-test"}}]}',
         OMNI__SERVER__LOG_LEVEL: "silent",
@@ -23,7 +23,7 @@ describe("resolveConfigSource", () => {
     expect(result.source).toBe("environment variables");
     expect(result.config).toMatchObject({
       storage: { type: "memory" },
-      security: { providers: [{ type: "jwt" }] },
+      security: { userAuth: { type: "jwt" } },
       routing: {
         rules: [{ id: "main", when: "true", target: { type: "openai" } }],
       },
@@ -78,12 +78,9 @@ describe("container starter configuration", () => {
       type: "postgres",
       url: "postgres://localhost:5432/omni",
     });
-    expect(config.security.providers).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ type: "jwt" }),
-        expect.objectContaining({ type: "firebase-app-check" }),
-      ]),
-    );
+    // One user method, and the app scheme layered over it.
+    expect(config.security.userAuth).toMatchObject({ type: "jwt" });
+    expect(config.security.appAuth.providers).toMatchObject([{ type: "firebase-app-check" }]);
     expect(config.routing.rules[0]?.target).toEqual({
       type: "openai-compatible",
       baseUrl: "https://api.openai.com/v1",
@@ -97,7 +94,8 @@ describe("container starter configuration", () => {
     // and swap in memory storage so no database is required.
     const env = { ...starterEnv(), OMNI_SECURITY_FIREBASE_APPCHECK_ENABLED: "false" };
     const config = parseConfigObject(resolveConfigSource({ env }).config, env);
-    expect(config.security.providers).toMatchObject([{ type: "jwt" }]);
+    expect(config.security.userAuth).toMatchObject({ type: "jwt" });
+    expect(config.security.appAuth.providers).toEqual([]);
 
     const app = await createOmniApp({
       config,

@@ -53,6 +53,7 @@ const optionsSchema = z
  */
 export const supabaseVerifierFactory: AuthVerifierFactory = {
   type: TYPE,
+  layer: "user",
   optionsSchema: optionsSchema,
   create(options: Record<string, unknown>, runtime: RuntimeContext): AuthVerifier {
     const parsed = optionsSchema.safeParse(options);

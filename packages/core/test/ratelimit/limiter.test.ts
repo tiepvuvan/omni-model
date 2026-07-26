@@ -127,116 +127,127 @@ class FailingStorageAdapter implements StorageAdapter {
 
 const perUser = (limit: number, window = "1m"): RateLimitRuleConfig => ({
   name: "per-user",
-  key: "user",
-  requests: { limit, window },
+  tokens: { limit, window },
 });
 
+/** Where a window's counter lives, for asserting on the keyspace directly. */
+const windowStart = (nowMs: number, windowMs: number) => Math.floor(nowMs / windowMs) * windowMs;
+
 describe("createRateLimiter", () => {
-  describe("request windows", () => {
-    it("allows up to the limit, then rejects with rule metadata", async () => {
-      const { limiter } = makeLimiter([perUser(60)]);
+  describe("token budgets", () => {
+    it("allows until the budget is spent, then rejects with rule metadata", async () => {
+      const { limiter, storage, clock } = makeLimiter([perUser(100, "1h")]);
       const facts = makeFacts({ userId: "alice" });
-      for (let i = 0; i < 60; i++) {
-        const decision = await limiter.check(facts);
-        expect(decision.allowed).toBe(true);
-        expect(decision.rule).toBeNull();
-        expect(decision.retryAfterSeconds).toBeNull();
-      }
+
+      expect((await limiter.check(facts)).allowed).toBe(true);
+      await limiter.recordUsage(facts, usageOf(60));
+      // 60 of 100 spent: the next request is admitted on what is left.
+      expect((await limiter.check(facts)).allowed).toBe(true);
+      await limiter.recordUsage(facts, usageOf(60));
+
       const rejected = await limiter.check(facts);
       expect(rejected).toMatchObject({
         allowed: false,
         rule: "per-user",
-        kind: "requests",
-        limit: 60,
+        kind: "tokens",
+        limit: 100,
       });
       expect(rejected.retryAfterSeconds).toBeGreaterThanOrEqual(1);
-      expect(rejected.retryAfterSeconds).toBeLessThanOrEqual(60);
+      expect(rejected.retryAfterSeconds).toBeLessThanOrEqual(3600);
+      // 120 recorded against a 100 budget: a request can overshoot, because what a
+      // completion costs is only knowable once it exists. The overshoot is charged
+      // to the window it landed in rather than forgiven.
+      expect(await limiter.check(facts)).toMatchObject({ allowed: false });
+      expect(
+        await storage.getCounter(`rl:tok:per-user:alice:${windowStart(clock.now(), 3_600_000)}`),
+      ).toBe(120);
+    });
+
+    it("does not spend anything on a request it rejects", async () => {
+      // `check` is read-only. A client hammering an exhausted budget must not dig
+      // itself deeper, and a 429 costs no upstream tokens to produce.
+      const { limiter, storage, clock } = makeLimiter([perUser(10, "1h")]);
+      const facts = makeFacts({ userId: "alice" });
+      await limiter.recordUsage(facts, usageOf(10));
+      const key = `rl:tok:per-user:alice:${windowStart(clock.now(), 3_600_000)}`;
+
+      for (let i = 0; i < 5; i++) expect((await limiter.check(facts)).allowed).toBe(false);
+
+      expect(await storage.getCounter(key)).toBe(10);
     });
 
     it("allows again after the window rolls over", async () => {
-      const { limiter, clock } = makeLimiter([perUser(2)]);
+      const { limiter, clock } = makeLimiter([perUser(100, "1h")]);
       const facts = makeFacts({ userId: "alice" });
-      await limiter.check(facts);
-      await limiter.check(facts);
+      await limiter.recordUsage(facts, usageOf(150));
       expect((await limiter.check(facts)).allowed).toBe(false);
-      clock.advance(60_000); // guaranteed to land in the next 1m window
+
+      clock.advance(3_600_000);
+
       expect((await limiter.check(facts)).allowed).toBe(true);
     });
 
-    it("isolates counters per user", async () => {
-      const { limiter } = makeLimiter([perUser(1)]);
-      expect((await limiter.check(makeFacts({ userId: "alice" }))).allowed).toBe(true);
+    it("gives each user their own budget", async () => {
+      const { limiter } = makeLimiter([perUser(100, "1h")]);
+      await limiter.recordUsage(makeFacts({ userId: "alice" }), usageOf(200));
+
       expect((await limiter.check(makeFacts({ userId: "alice" }))).allowed).toBe(false);
       expect((await limiter.check(makeFacts({ userId: "bob" }))).allowed).toBe(true);
     });
 
-    it("rejected attempts still consume window slots", async () => {
-      const { limiter, storage, clock } = makeLimiter([perUser(1)]);
+    it("ignores zero, negative and NaN usage", async () => {
+      const { limiter, storage, clock } = makeLimiter([perUser(100, "1h")]);
       const facts = makeFacts({ userId: "alice" });
-      await limiter.check(facts);
-      await limiter.check(facts);
-      await limiter.check(facts);
-      const windowStart = Math.floor(clock.now() / 60_000) * 60_000;
-      expect(await storage.getCounter(`rl:req:per-user:alice:${windowStart}`)).toBe(3);
+      await limiter.recordUsage(facts, usageOf(0));
+      await limiter.recordUsage(facts, usageOf(-5));
+      await limiter.recordUsage(facts, usageOf(Number.NaN));
+
+      expect(
+        await storage.getCounter(`rl:tok:per-user:alice:${windowStart(clock.now(), 3_600_000)}`),
+      ).toBe(0);
     });
 
-    it('user key falls back to device id, then ip, then "anonymous"', async () => {
-      const { limiter } = makeLimiter([perUser(1)]);
-      // No user: device id becomes the key.
-      expect((await limiter.check(makeFacts({ deviceId: "dev-1" }))).allowed).toBe(true);
-      expect((await limiter.check(makeFacts({ deviceId: "dev-1" }))).allowed).toBe(false);
-      // No user or device: ip becomes the key, and distinct ips are isolated.
-      expect((await limiter.check(makeFacts({ ip: "1.1.1.1" }))).allowed).toBe(true);
-      expect((await limiter.check(makeFacts({ ip: "1.1.1.1" }))).allowed).toBe(false);
-      expect((await limiter.check(makeFacts({ ip: "2.2.2.2" }))).allowed).toBe(true);
-      // Nothing at all: everyone shares "anonymous".
-      expect((await limiter.check(makeFacts())).allowed).toBe(true);
-      expect((await limiter.check(makeFacts())).allowed).toBe(false);
-    });
-
-    it("device key uses device id and falls back to ip", async () => {
-      const rule: RateLimitRuleConfig = {
-        name: "per-device",
-        key: "device",
-        requests: { limit: 1, window: "1m" },
-      };
-      const { limiter } = makeLimiter([rule]);
-      expect((await limiter.check(makeFacts({ deviceId: "dev-1" }))).allowed).toBe(true);
-      expect((await limiter.check(makeFacts({ deviceId: "dev-1" }))).allowed).toBe(false);
-      expect((await limiter.check(makeFacts({ deviceId: "dev-2" }))).allowed).toBe(true);
-      expect((await limiter.check(makeFacts({ ip: "3.3.3.3" }))).allowed).toBe(true);
-      expect((await limiter.check(makeFacts({ ip: "3.3.3.3" }))).allowed).toBe(false);
-    });
-
-    it("global key shares one counter across all callers", async () => {
-      const rule: RateLimitRuleConfig = {
-        name: "everyone",
-        key: "global",
-        requests: { limit: 1, window: "1m" },
-      };
-      const { limiter } = makeLimiter([rule]);
-      expect((await limiter.check(makeFacts({ userId: "alice" }))).allowed).toBe(true);
-      expect((await limiter.check(makeFacts({ userId: "bob" }))).allowed).toBe(false);
-    });
-
-    it("reports the first violated rule in rule order and still charges later rules", async () => {
-      const ruleA: RateLimitRuleConfig = {
-        name: "a",
-        key: "user",
-        requests: { limit: 1, window: "1m" },
-      };
-      const ruleB: RateLimitRuleConfig = {
-        name: "b",
-        key: "user",
-        requests: { limit: 1, window: "1m" },
-      };
-      const { limiter, storage, clock } = makeLimiter([ruleA, ruleB]);
+    it("reports the first violated rule in rule order", async () => {
+      const { limiter } = makeLimiter([
+        { id: "small", tokens: { limit: 10, window: "1h" } },
+        { id: "large", tokens: { limit: 1000, window: "1h" } },
+      ]);
       const facts = makeFacts({ userId: "alice" });
-      await limiter.check(facts);
-      const rejected = await limiter.check(facts);
-      expect(rejected).toMatchObject({ allowed: false, rule: "a", kind: "requests" });
-      const windowStart = Math.floor(clock.now() / 60_000) * 60_000;
-      expect(await storage.getCounter(`rl:req:b:alice:${windowStart}`)).toBe(2);
+      await limiter.recordUsage(facts, usageOf(50));
+
+      // Budgets layer rather than replace: both were charged, and the tighter one
+      // is what answers.
+      expect(await limiter.check(facts)).toMatchObject({ rule: "small", limit: 10 });
+    });
+  });
+
+  /*
+   * Every budget is per user. The fallbacks are defensive — layer 1 of
+   * authentication guarantees a user exists — but a verifier that authenticates
+   * without producing a subject must not put every caller in one bucket.
+   */
+  describe("whose budget it is", () => {
+    it("counts against the user id", async () => {
+      const { limiter, storage, clock } = makeLimiter([perUser(100, "1h")]);
+      await limiter.recordUsage(makeFacts({ userId: "alice" }), usageOf(5));
+
+      expect(
+        await storage.getCounter(`rl:tok:per-user:alice:${windowStart(clock.now(), 3_600_000)}`),
+      ).toBe(5);
+    });
+
+    it("falls back to the device id, then the ip, then one shared bucket", async () => {
+      const { limiter, storage, clock } = makeLimiter([perUser(100, "1h")]);
+      const at = windowStart(clock.now(), 3_600_000);
+
+      await limiter.recordUsage(makeFacts({ deviceId: "device-1", ip: "1.2.3.4" }), usageOf(5));
+      await limiter.recordUsage(makeFacts({ ip: "1.2.3.4" }), usageOf(7));
+      await limiter.recordUsage(makeFacts(), usageOf(9));
+
+      expect(await storage.getCounter(`rl:tok:per-user:device-1:${at}`)).toBe(5);
+      expect(await storage.getCounter(`rl:tok:per-user:1.2.3.4:${at}`)).toBe(7);
+      // Stricter than a per-user budget, never looser: unidentifiable callers share.
+      expect(await storage.getCounter(`rl:tok:per-user:anonymous:${at}`)).toBe(9);
     });
   });
 
@@ -244,153 +255,58 @@ describe("createRateLimiter", () => {
     const freeTier: RateLimitRuleConfig = {
       name: "free-tier",
       when: 'user.claims.tier == "free"',
-      key: "user",
-      requests: { limit: 1, window: "1m" },
+      tokens: { limit: 100, window: "1h" },
     };
     const engine = () => fakeEngine({ 'user.claims.tier == "free"': claimProgram("tier", "free") });
 
     it("applies the rule only to matching requests", async () => {
       const { limiter } = makeLimiter([freeTier], { engine: engine() });
-      const free = makeFacts({ userId: "alice", claims: { tier: "free" } });
-      expect((await limiter.check(free)).allowed).toBe(true);
-      expect((await limiter.check(free)).allowed).toBe(false);
-      const pro = makeFacts({ userId: "bob", claims: { tier: "pro" } });
-      for (let i = 0; i < 5; i++) {
-        expect((await limiter.check(pro)).allowed).toBe(true);
-      }
+      await limiter.recordUsage(
+        makeFacts({ userId: "alice", claims: { tier: "free" } }),
+        usageOf(200),
+      );
+
+      expect(
+        (await limiter.check(makeFacts({ userId: "alice", claims: { tier: "free" } }))).allowed,
+      ).toBe(false);
+      expect(
+        (await limiter.check(makeFacts({ userId: "bob", claims: { tier: "pro" } }))).allowed,
+      ).toBe(true);
+    });
+
+    it("re-evaluates `when` so usage is only recorded for matching requests", async () => {
+      const { limiter, storage, clock } = makeLimiter([freeTier], { engine: engine() });
+      await limiter.recordUsage(
+        makeFacts({ userId: "pro", claims: { tier: "pro" } }),
+        usageOf(500),
+      );
+
+      expect(
+        await storage.getCounter(`rl:tok:free-tier:pro:${windowStart(clock.now(), 3_600_000)}`),
+      ).toBe(0);
     });
 
     it("skips the rule when `when` throws (e.g. missing claim) and logs at debug", async () => {
       const log = spyLogger();
       const { limiter } = makeLimiter([freeTier], { engine: engine(), log });
-      const noClaims = makeFacts({ userId: "carol" });
-      for (let i = 0; i < 5; i++) {
-        expect((await limiter.check(noClaims)).allowed).toBe(true);
-      }
+      await limiter.recordUsage(makeFacts({ userId: "alice" }), usageOf(500));
+
+      // An unguarded claim read throws, and a throw means "does not apply" — the
+      // same silent-failure shape the router has, said out loud in the log.
+      expect((await limiter.check(makeFacts({ userId: "alice" }))).allowed).toBe(true);
       expect(log.debug).toHaveBeenCalled();
-    });
-  });
-
-  describe("expression keys", () => {
-    const perOrg: RateLimitRuleConfig = {
-      name: "per-org",
-      key: "expression",
-      keyExpression: "user.claims.org",
-      requests: { limit: 1, window: "1m" },
-    };
-    const engine = () =>
-      fakeEngine({
-        "user.claims.org": (vars) => {
-          const user = vars.user as RequestFacts["user"];
-          const org = user.claims.org;
-          if (org === undefined) throw new Error("no such attribute: org");
-          return org;
-        },
-      });
-
-    it("keys counters by the expression result", async () => {
-      const { limiter } = makeLimiter([perOrg], { engine: engine() });
-      const acme = makeFacts({ userId: "alice", claims: { org: "acme" } });
-      const acme2 = makeFacts({ userId: "bob", claims: { org: "acme" } });
-      const globex = makeFacts({ userId: "carol", claims: { org: "globex" } });
-      expect((await limiter.check(acme)).allowed).toBe(true);
-      expect((await limiter.check(acme2)).allowed).toBe(false); // same org, same counter
-      expect((await limiter.check(globex)).allowed).toBe(true);
-    });
-
-    it("skips the rule and warns when the key expression throws", async () => {
-      const log = spyLogger();
-      const { limiter } = makeLimiter([perOrg], { engine: engine(), log });
-      const noOrg = makeFacts({ userId: "dave" });
-      expect((await limiter.check(noOrg)).allowed).toBe(true);
-      expect((await limiter.check(noOrg)).allowed).toBe(true);
-      expect(log.warn).toHaveBeenCalled();
-    });
-  });
-
-  describe("token budgets", () => {
-    const budget: RateLimitRuleConfig = {
-      name: "budget",
-      key: "user",
-      requests: { limit: 50, window: "1h" },
-      tokens: { limit: 100, window: "1h" },
-    };
-
-    it("accumulates usage and rejects once over the limit without consuming request slots", async () => {
-      const { limiter, storage, clock } = makeLimiter([budget]);
-      const facts = makeFacts({ userId: "alice" });
-      const windowStart = Math.floor(clock.now() / 3_600_000) * 3_600_000;
-
-      expect((await limiter.check(facts)).allowed).toBe(true);
-      await limiter.recordUsage(facts, usageOf(60));
-      expect((await limiter.check(facts)).allowed).toBe(true); // 60 < 100
-      await limiter.recordUsage(facts, usageOf(60));
-      expect(await storage.getCounter(`rl:tok:budget:alice:${windowStart}`)).toBe(120);
-
-      const rejected = await limiter.check(facts);
-      expect(rejected).toMatchObject({
-        allowed: false,
-        rule: "budget",
-        kind: "tokens",
-        limit: 100,
-      });
-      expect(rejected.retryAfterSeconds).toBeGreaterThanOrEqual(1);
-      expect(rejected.retryAfterSeconds).toBeLessThanOrEqual(3600);
-      // The two allowed checks consumed request slots; the token rejection did not.
-      expect(await storage.getCounter(`rl:req:budget:alice:${windowStart}`)).toBe(2);
-    });
-
-    it("resets the budget when the token window rolls over", async () => {
-      const { limiter, clock } = makeLimiter([budget]);
-      const facts = makeFacts({ userId: "alice" });
-      await limiter.recordUsage(facts, usageOf(150));
-      expect((await limiter.check(facts)).allowed).toBe(false);
-      clock.advance(3_600_000);
-      expect((await limiter.check(facts)).allowed).toBe(true);
-    });
-
-    it("ignores zero, negative and NaN usage", async () => {
-      const { limiter, storage, clock } = makeLimiter([budget]);
-      const facts = makeFacts({ userId: "alice" });
-      await limiter.recordUsage(facts, usageOf(0));
-      await limiter.recordUsage(facts, usageOf(-5));
-      await limiter.recordUsage(facts, usageOf(Number.NaN));
-      const windowStart = Math.floor(clock.now() / 3_600_000) * 3_600_000;
-      expect(await storage.getCounter(`rl:tok:budget:alice:${windowStart}`)).toBe(0);
-    });
-
-    it("re-evaluates `when` so usage is only recorded for matching requests", async () => {
-      const rule: RateLimitRuleConfig = {
-        name: "free-budget",
-        when: 'user.claims.tier == "free"',
-        key: "user",
-        tokens: { limit: 100, window: "1h" },
-      };
-      const engine = fakeEngine({
-        'user.claims.tier == "free"': claimProgram("tier", "free"),
-      });
-      const { limiter, storage, clock } = makeLimiter([rule], { engine });
-      await limiter.recordUsage(
-        makeFacts({ userId: "pro", claims: { tier: "pro" } }),
-        usageOf(500),
-      );
-      const windowStart = Math.floor(clock.now() / 3_600_000) * 3_600_000;
-      expect(await storage.getCounter(`rl:tok:free-budget:pro:${windowStart}`)).toBe(0);
     });
   });
 
   describe("storage failures fail open", () => {
     it("check allows the request and logs an error when storage throws", async () => {
       const log = spyLogger();
-      const rule: RateLimitRuleConfig = {
-        name: "budget",
-        key: "user",
-        requests: { limit: 1, window: "1m" },
-        tokens: { limit: 10, window: "1m" },
-      };
-      const { limiter } = makeLimiter([rule], { storage: new FailingStorageAdapter(), log });
-      const decision = await limiter.check(makeFacts({ userId: "alice" }));
-      expect(decision).toEqual({
+      const { limiter } = makeLimiter([perUser(10)], {
+        storage: new FailingStorageAdapter(),
+        log,
+      });
+
+      expect(await limiter.check(makeFacts({ userId: "alice" }))).toEqual({
         allowed: true,
         rule: null,
         kind: null,
@@ -402,12 +318,11 @@ describe("createRateLimiter", () => {
 
     it("recordUsage resolves and warns when storage throws", async () => {
       const log = spyLogger();
-      const rule: RateLimitRuleConfig = {
-        name: "budget",
-        key: "user",
-        tokens: { limit: 10, window: "1m" },
-      };
-      const { limiter } = makeLimiter([rule], { storage: new FailingStorageAdapter(), log });
+      const { limiter } = makeLimiter([perUser(10)], {
+        storage: new FailingStorageAdapter(),
+        log,
+      });
+
       await expect(
         limiter.recordUsage(makeFacts({ userId: "alice" }), usageOf(5)),
       ).resolves.toBeUndefined();
@@ -419,49 +334,28 @@ describe("createRateLimiter", () => {
     it("throws ConfigError when a `when` expression does not compile", () => {
       const rule: RateLimitRuleConfig = {
         name: "bad",
-        when: "this does not compile",
-        key: "user",
-        requests: { limit: 1, window: "1m" },
+        when: "nope",
+        tokens: { limit: 1, window: "1m" },
       };
       expect(() => makeLimiter([rule])).toThrow(ConfigError);
       expect(() => makeLimiter([rule])).toThrow(/`when` expression/);
     });
 
-    it("throws ConfigError when a key expression does not compile", () => {
-      const rule: RateLimitRuleConfig = {
-        name: "bad",
-        key: "expression",
-        keyExpression: "nope",
-        requests: { limit: 1, window: "1m" },
-      };
-      expect(() => makeLimiter([rule])).toThrow(ConfigError);
-    });
-
-    it("throws ConfigError when key is expression but keyExpression is missing", () => {
-      const rule: RateLimitRuleConfig = {
-        name: "bad",
-        key: "expression",
-        requests: { limit: 1, window: "1m" },
-      };
-      expect(() => makeLimiter([rule])).toThrow(ConfigError);
-    });
-
     it("throws ConfigError on an invalid window duration", () => {
-      const rule: RateLimitRuleConfig = {
-        name: "bad",
-        key: "user",
-        requests: { limit: 1, window: "soon" },
-      };
+      const rule: RateLimitRuleConfig = { name: "bad", tokens: { limit: 1, window: "soon" } };
       expect(() => makeLimiter([rule])).toThrow(ConfigError);
     });
 
     it("throws ConfigError on a zero-length window", () => {
-      const rule: RateLimitRuleConfig = {
-        name: "bad",
-        key: "user",
-        requests: { limit: 1, window: "0s" },
-      };
+      const rule: RateLimitRuleConfig = { name: "bad", tokens: { limit: 1, window: "0s" } };
       expect(() => makeLimiter([rule])).toThrow(/positive duration/);
+    });
+
+    it("throws ConfigError on a rule with no budget", () => {
+      // Tokens are the only axis, so a rule without them limits nothing.
+      expect(() => makeLimiter([{ name: "pointless" } as unknown as RateLimitRuleConfig])).toThrow(
+        ConfigError,
+      );
     });
 
     it("throws ConfigError on duplicate rule names", () => {
@@ -477,12 +371,9 @@ describe("createRateLimiter", () => {
    */
   describe("identity", () => {
     it("reports the id as the rule name when only an id is set", async () => {
-      const { limiter } = makeLimiter([
-        { id: "limit-1", key: "user", requests: { limit: 1, window: "1m" } },
-      ]);
+      const { limiter } = makeLimiter([{ id: "limit-1", tokens: { limit: 10, window: "1h" } }]);
       const facts = makeFacts({ userId: "alice" });
-
-      await limiter.check(facts);
+      await limiter.recordUsage(facts, usageOf(10));
 
       expect(await limiter.check(facts)).toMatchObject({ allowed: false, rule: "limit-1" });
     });
@@ -491,15 +382,13 @@ describe("createRateLimiter", () => {
       const rule = (name: string): RateLimitRuleConfig => ({
         id: "stable",
         name,
-        key: "user",
-        requests: { limit: 2, window: "1m" },
+        tokens: { limit: 10, window: "1h" },
       });
       const storage = new MemoryStorageAdapter(() => Date.now());
       const facts = makeFacts({ userId: "alice" });
 
       const before = makeLimiter([rule("Free tier")], { storage });
-      await before.limiter.check(facts);
-      await before.limiter.check(facts);
+      await before.limiter.recordUsage(facts, usageOf(10));
 
       // A new limiter over the same storage is what a config reload builds.
       const after = makeLimiter([rule("Free plan")], { storage });
@@ -512,7 +401,7 @@ describe("createRateLimiter", () => {
 
     it("rejects a rule with neither an id nor a name", () => {
       expect(() =>
-        makeLimiter([{ key: "user", requests: { limit: 1, window: "1m" } } as RateLimitRuleConfig]),
+        makeLimiter([{ tokens: { limit: 1, window: "1m" } } as RateLimitRuleConfig]),
       ).toThrow(/`id` or a `name`/);
     });
 
@@ -521,8 +410,8 @@ describe("createRateLimiter", () => {
       // would silently share the first's budget.
       expect(() =>
         makeLimiter([
-          { name: "shared", key: "user", requests: { limit: 1, window: "1m" } },
-          { id: "shared", name: "other", key: "user", requests: { limit: 9, window: "1m" } },
+          { name: "shared", tokens: { limit: 1, window: "1m" } },
+          { id: "shared", name: "other", tokens: { limit: 9, window: "1m" } },
         ]),
       ).toThrow(/duplicate rate limit rule id "shared"/);
     });

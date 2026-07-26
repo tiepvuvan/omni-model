@@ -123,10 +123,9 @@ describe("block-level updates", () => {
           {
             id: "free-tier",
             when: 'has(user.claims.tier) && user.claims.tier == "free"',
-            key: "user",
             tokens: { limit: 30_000, window: "30d" },
           },
-          { id: "baseline", key: "user", requests: { limit: 30, window: "1h" } },
+          { id: "baseline", tokens: { limit: 100_000, window: "1h" } },
         ],
       }),
     });
@@ -144,11 +143,12 @@ describe("block-level updates", () => {
 
     const response = await call("/admin/api/rate-limits", {
       method: "PUT",
-      body: JSON.stringify({ value: [{ id: "pointless", key: "user" }] }),
+      body: JSON.stringify({ value: [{ id: "pointless" }] }),
     });
 
     expect(response.status).toBe(400);
-    expect((await errorOf(response)).message).toContain("`requests` or `tokens`");
+    // Tokens are the only axis, so a rule without them limits nothing.
+    expect((await errorOf(response)).message).toContain("tokens");
     // Nothing applied: a rejected document leaves the previous one serving.
     expect(holder.current()?.config.rateLimits).toEqual(before);
   });

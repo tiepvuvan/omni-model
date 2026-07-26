@@ -32,7 +32,10 @@ export interface StatusState {
   revision: number | null;
   lastError: string | null;
   providers: string[];
-  verifiers: string[];
+  /** The applied user verifier, or null when nothing is configured. */
+  userAuth: string | null;
+  /** The applied app-attestation schemes, possibly none. */
+  appAuth: string[];
   requireWriteKey: boolean | null;
 }
 
@@ -66,28 +69,21 @@ export interface RateLimitBudget {
   window: string;
 }
 
-/** What a limit is counted against — one counter per distinct value. */
-export type RateLimitKey = "user" | "device" | "client" | "ip" | "global" | "expression";
-
 /**
- * One rate-limit rule.
+ * One rate-limit rule: a token budget, counted per user.
  *
- * Every field except the budgets is optional, and that shapes the screen: a rule
- * with no `when` applies to every request (the design's "Default" card), and a
- * rule the dashboard creates carries an `id` and no `name` because there is
- * nowhere on the screen to type one. Identity is `id ?? name`; the display name a
- * 429 reports is `name ?? id`.
+ * Every field but the budget is optional, and that shapes the screen: a rule with
+ * no `when` applies to every request (the design's "Default" card), and a rule the
+ * dashboard creates carries an `id` and no `name` because there is nowhere on the
+ * screen to type one. Identity is `id ?? name`; the display name a 429 reports is
+ * `name ?? id`.
  */
 export interface RateLimitRule {
   id?: string;
   name?: string;
   /** Absent means every request. */
   when?: string;
-  key?: RateLimitKey;
-  /** Required when `key` is `expression`; produces the counter key. */
-  keyExpression?: string;
-  requests?: RateLimitBudget;
-  tokens?: RateLimitBudget;
+  tokens: RateLimitBudget;
 }
 
 export interface VerifierEntry {
@@ -96,11 +92,19 @@ export interface VerifierEntry {
   [option: string]: unknown;
 }
 
-export interface SecurityBlock {
+/** Layer 2: app or device attestation, layered over the user. */
+export interface AppAuthBlock {
+  /** How several schemes combine. `any` is what a multi-platform deployment wants. */
   mode: "any" | "all";
+  providers: VerifierEntry[];
+}
+
+export interface SecurityBlock {
+  /** Layer 1: which user. Exactly one, and required before `/v1` will serve. */
+  userAuth: VerifierEntry | null;
+  appAuth: AppAuthBlock;
   publicPaths: string[];
   requireWriteKey: boolean;
-  providers: VerifierEntry[];
 }
 
 /** The stored configuration document: references, never plaintext. */
@@ -130,6 +134,9 @@ export interface SaveResponse {
   warnings?: string[];
 }
 
+/** Which authentication question a verifier answers. */
+export type AuthLayer = "user" | "app";
+
 /** One registered component type and the options it accepts, as JSON Schema. */
 export interface ComponentDescriptor {
   type: string;
@@ -138,7 +145,8 @@ export interface ComponentDescriptor {
 
 export interface MetaResponse {
   providers: ComponentDescriptor[];
-  authVerifiers: ComponentDescriptor[];
+  /** Each verifier carries the layer it belongs to, so the screen can split them. */
+  authVerifiers: (ComponentDescriptor & { layer: AuthLayer })[];
   storage: ComponentDescriptor[];
   secretsAvailable: boolean;
   logsAvailable: boolean;

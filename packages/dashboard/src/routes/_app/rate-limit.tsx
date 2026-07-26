@@ -25,8 +25,7 @@ export const Route = createFileRoute("/_app/rate-limit")({
  * against the real schema, so the two cannot drift.
  */
 export const SCHEMA_DEFAULTS: readonly RateLimitRule[] = [
-  { name: "per-user-requests", key: "user", requests: { limit: 30, window: "1h" } },
-  { name: "per-user-daily-tokens", key: "user", tokens: { limit: 30_000, window: "1d" } },
+  { name: "per-user-daily-tokens", tokens: { limit: 30_000, window: "1d" } },
 ];
 
 function rulesOf(config: ConfigResponse): RateLimitRule[] {
@@ -106,7 +105,6 @@ function RateLimitScreen() {
       const rule: RateLimitRule = {
         id: `limit-${n}`,
         when: "",
-        key: "user",
         tokens: { limit: 30_000, window: "1d" },
       };
       // Ahead of the unconditional rules, so the screen keeps the design's shape:

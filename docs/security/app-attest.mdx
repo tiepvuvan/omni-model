@@ -5,7 +5,7 @@ description: Hardware-backed iOS attestation for the self-hosted proxy — verif
 
 The two Apple verifiers attest that a request comes from a genuine, untampered
 build of your app running on real Apple hardware. Both apply to the
-**self-hosted HTTP proxy** (configured under `security.providers`).
+**self-hosted HTTP proxy** (configured under `security.appAuth.providers` — layer 2, the app).
 
 - **`apple-app-attest`** — the strongest option. Each device registers a Secure
   Enclave key once, then signs *every* API request. The proxy verifies the
@@ -148,14 +148,14 @@ DeviceCheck `.p8` key. Successful validations are cached in storage for
 `cacheTtl` so hot devices don't hit Apple on every request.
 
 ```sh
-export OMNI_SECURITY_PROVIDERS_JSON='[
+export OMNI_SECURITY_APP_AUTH_JSON='{"providers":[
   {
     "type":"apple-device-check",
     "teamId":"ABCDE12345",
     "keyId":"FGHIJ67890",
     "privateKey":"${APPLE_DEVICECHECK_KEY}"
   }
-]'
+]}'
 ```
 
 <ParamField path="teamId" type="string" required>

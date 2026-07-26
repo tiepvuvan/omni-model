@@ -108,7 +108,9 @@ function rawLogLevel(document: unknown, env: Record<string, string | undefined>)
 }
 
 function rawConsumesAppCheck(document: unknown): boolean {
-  const providers = rawRecord(rawRecord(document)?.security)?.providers;
+  // App Check is layer 2, so it lives under `security.appAuth.providers`.
+  const appAuth = rawRecord(rawRecord(rawRecord(document)?.security)?.appAuth);
+  const providers = appAuth?.providers;
   if (!Array.isArray(providers)) return false;
   return providers.some((entry) => {
     const provider = rawRecord(entry);

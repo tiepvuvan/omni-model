@@ -24,7 +24,7 @@ if (process.env.OMNI_REQUIRE_PG === "1" && !url) {
 const VALID = {
   version: 1,
   storage: { type: "postgres", url: "${OMNI_STORAGE_POSTGRES_URL}" },
-  security: { providers: [{ type: "jwt", secret: "a-long-shared-development-secret" }] },
+  security: { userAuth: { type: "jwt", secret: "a-long-shared-development-secret" } },
   routing: {
     rules: [{ id: "main", when: "true", target: { type: "openai", apiKey: "sk-test" } }],
   },
@@ -152,7 +152,7 @@ describe.skipIf(!url)("migrate and import-config (integration)", () => {
     }, 30_000);
 
     it("rejects a document with no verifier, which would be an open relay", async () => {
-      const file = await write("open.json", { ...VALID, security: { providers: [] } });
+      const file = await write("open.json", { ...VALID, security: {} });
       await expect(importConfig({ env, file, logger: silentLogger })).rejects.toThrow(/open relay/);
     }, 30_000);
 

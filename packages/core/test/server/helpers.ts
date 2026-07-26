@@ -257,6 +257,7 @@ export function createFakeProviderSetup(behaviors: Record<string, FakeProviderBe
 export function createAlwaysAuthenticatedFactory(): AuthVerifierFactory {
   return {
     type: "test-authenticated",
+    layer: "user",
     create() {
       return {
         type: "test-authenticated",
@@ -272,9 +273,34 @@ export function createAlwaysAuthenticatedFactory(): AuthVerifierFactory {
   };
 }
 
+/**
+ * A user verifier that accepts everything but names nobody.
+ *
+ * Layer 1 guarantees a *verifier*, not a subject: a token without the claim the
+ * verifier reads its user id from authenticates fine and produces no `userId`.
+ * That is the path the limiter's fallback chain exists for, and the only way to
+ * exercise it end to end.
+ */
+export function createAnonymousAuthenticatedFactory(): AuthVerifierFactory {
+  return {
+    type: "test-anonymous",
+    layer: "user",
+    create() {
+      return {
+        type: "test-anonymous",
+        name: "test-anonymous",
+        async verify(): Promise<AuthResult> {
+          return { ok: true, identity: { provider: "test-anonymous", claims: {} } };
+        },
+      };
+    },
+  };
+}
+
 export function createFakeAuthFactory(): AuthVerifierFactory {
   return {
     type: "fake-auth",
+    layer: "user",
     create(options) {
       const header = typeof options.header === "string" ? options.header : "x-test-user";
       const name = typeof options.name === "string" ? options.name : "fake-auth";
@@ -310,6 +336,38 @@ export function createFakeAuthFactory(): AuthVerifierFactory {
   };
 }
 
+/**
+ * The app-layer twin of `fake-auth`, for exercising layer 2.
+ *
+ * Same contract — header absent is `null`, the value "bad" is an explicit failure
+ * — but it produces a *device* identity and lives in the `app` layer, so it can
+ * only be configured under `security.appAuth`. Options: `header` (default
+ * `x-test-device`) and `name`.
+ */
+export function createFakeAppAuthFactory(): AuthVerifierFactory {
+  return {
+    type: "fake-app-auth",
+    layer: "app",
+    create(options) {
+      const header = typeof options.header === "string" ? options.header : "x-test-device";
+      const name = typeof options.name === "string" ? options.name : "fake-app-auth";
+      return {
+        type: "fake-app-auth",
+        name,
+        async verify(request): Promise<AuthResult | null> {
+          const value = request.headers.get(header);
+          if (value === null) return null;
+          if (value === "bad") return { ok: false, reason: `invalid attestation for ${name}` };
+          return {
+            ok: true,
+            identity: { provider: "fake-app-auth", deviceId: value, claims: { device: value } },
+          };
+        },
+      };
+    },
+  };
+}
+
 export interface TestAppOptions {
   yaml: string;
   behaviors?: Record<string, FakeProviderBehavior>;
@@ -319,12 +377,12 @@ export interface TestAppOptions {
   env?: Record<string, string | undefined>;
   initOverrides?: Partial<OmniAppInit>;
   /**
-   * The app refuses to start with no verifier, so a fixture that declares none
-   * gets the always-accepting `test-authenticated` verifier injected. Most
-   * suites here exercise routing/limits/streaming rather than auth and just
-   * need requests to arrive authenticated — this keeps an auth block out of
-   * every unrelated fixture while preserving the production invariant that a
-   * verifier always exists. Set false to assert the guard itself (auth.test.ts).
+   * The app refuses to start without a *user* verifier, so a fixture that declares
+   * none gets the always-accepting `test-authenticated` one injected. Most suites
+   * here exercise routing/limits/streaming rather than auth and just need requests
+   * to arrive authenticated — this keeps an auth block out of every unrelated
+   * fixture while preserving the production invariant that layer 1 always exists.
+   * Set false to assert the guard itself (auth.test.ts).
    */
   injectVerifier?: boolean;
 }
@@ -339,11 +397,13 @@ export async function createTestApp(options: TestAppOptions) {
   const { factory, instances } = createFakeProviderSetup(options.behaviors);
   registry.providers.set(factory.type, factory);
   registry.auth.set("fake-auth", createFakeAuthFactory());
+  registry.auth.set("fake-app-auth", createFakeAppAuthFactory());
   registry.auth.set("test-authenticated", createAlwaysAuthenticatedFactory());
+  registry.auth.set("test-anonymous", createAnonymousAuthenticatedFactory());
   const collector = createWaitUntilCollector();
   const config = parseConfigObject(parseYaml(options.yaml), options.env ?? {});
-  if (config.security.providers.length === 0 && (options.injectVerifier ?? true)) {
-    config.security.providers = [{ type: "test-authenticated" }];
+  if (config.security.userAuth === undefined && (options.injectVerifier ?? true)) {
+    config.security.userAuth = { type: "test-authenticated" };
   }
   const app = await createOmniApp({
     config,
@@ -373,13 +433,15 @@ export async function createTestProxy(options: TestProxyOptions = {}) {
   const { factory, instances } = createFakeProviderSetup(options.behaviors);
   registry.providers.set(factory.type, factory);
   registry.auth.set("fake-auth", createFakeAuthFactory());
+  registry.auth.set("fake-app-auth", createFakeAppAuthFactory());
   registry.auth.set("test-authenticated", createAlwaysAuthenticatedFactory());
+  registry.auth.set("test-anonymous", createAnonymousAuthenticatedFactory());
   const collector = createWaitUntilCollector();
 
   const toDocument = (yaml: string): Record<string, unknown> => {
     const config = parseConfigObject(parseYaml(yaml), options.env ?? {});
-    if (config.security.providers.length === 0 && (options.injectVerifier ?? true)) {
-      config.security.providers = [{ type: "test-authenticated" }];
+    if (config.security.userAuth === undefined && (options.injectVerifier ?? true)) {
+      config.security.userAuth = { type: "test-authenticated" };
     }
     return config as unknown as Record<string, unknown>;
   };

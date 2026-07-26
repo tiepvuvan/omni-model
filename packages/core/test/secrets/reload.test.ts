@@ -21,7 +21,7 @@ function configWithSecret(secretId: string): Record<string, unknown> {
   return {
     version: 1,
     storage: { type: "memory" },
-    security: { providers: [{ type: "test-authenticated" }] },
+    security: { userAuth: { type: "test-authenticated" } },
     routing: {
       rules: [
         { id: "main", when: "true", target: { type: "fake", apiKey: { $secret: secretId } } },
@@ -102,7 +102,7 @@ describe("secrets in a reload", () => {
 
     await proxy.reloadRaw(configWithSecret(id));
     // A valid secret, but a configuration that fails to build for another reason.
-    await proxy.reloadRaw({ ...configWithSecret(id), security: { providers: [] } });
+    await proxy.reloadRaw({ ...configWithSecret(id), security: {} });
     // A configuration whose provider type does not exist.
     await proxy.reloadRaw({
       ...configWithSecret(id),

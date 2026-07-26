@@ -105,7 +105,6 @@ const EMBED_YAML = `
 version: 1
 rateLimits:
   - name: daily-tokens
-    key: user
     tokens: { limit: 100000, window: 1h }
 routing:
   rules:
@@ -192,17 +191,18 @@ describe("POST /v1/embeddings", () => {
 version: 1
 rateLimits:
   - name: burst
-    key: user
-    requests: { limit: 1, window: 1m }
+    tokens: { limit: 5, window: 1m }
 routing:
   rules:
     - { id: fake, when: "true", target: { type: fake } }
 `;
-    const { app } = await createTestApp({
+    const { app, collector } = await createTestApp({
       yaml,
       behaviors: { fake: { embeddingsResult: { kind: "embeddings", response: EMBED_RESPONSE } } },
     });
+    // The canned embedding response reports 8 tokens, so one call spends the 5.
     expect((await app.fetch(embeddingsRequest({ model: "e", input: "x" }))).status).toBe(200);
+    await collector.flush();
     expect((await app.fetch(embeddingsRequest({ model: "e", input: "x" }))).status).toBe(429);
   });
 });

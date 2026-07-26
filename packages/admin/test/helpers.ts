@@ -32,9 +32,12 @@ export function baseConfig(overrides: Record<string, unknown> = {}): Record<stri
   return {
     storage: { type: "memory" },
     security: {
-      providers: [
-        { type: "jwt", issuer: "https://issuer.test", audience: "test", secret: "s".repeat(32) },
-      ],
+      userAuth: {
+        type: "jwt",
+        issuer: "https://issuer.test",
+        audience: "test",
+        secret: "s".repeat(32),
+      },
     },
     routing: {
       rules: [

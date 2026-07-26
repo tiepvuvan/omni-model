@@ -34,7 +34,7 @@ describe("resolveSecretRefs", () => {
     const resolved = await resolveSecretRefs(
       {
         providers: { openai: { apiKey: { $secret: id } } },
-        security: { providers: [{ type: "jwt", secret: { $secret: id } }] },
+        security: { userAuth: { type: "jwt", secret: { $secret: id } } },
         nested: [[{ deep: { $secret: id } }]],
       },
       store,
@@ -42,7 +42,7 @@ describe("resolveSecretRefs", () => {
 
     expect(resolved).toEqual({
       providers: { openai: { apiKey: CANARY } },
-      security: { providers: [{ type: "jwt", secret: CANARY }] },
+      security: { userAuth: { type: "jwt", secret: CANARY } },
       nested: [[{ deep: CANARY }]],
     });
   });

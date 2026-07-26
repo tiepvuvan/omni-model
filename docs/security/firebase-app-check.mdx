@@ -95,7 +95,7 @@ it out of the config document, set `OMNI_GCP_PROJECT_NUMBER` and omit the field:
 
 ```sh
 export OMNI_GCP_PROJECT_NUMBER=1234567890
-export OMNI_SECURITY_PROVIDERS_JSON='[{"type":"firebase-app-check"}]'
+export OMNI_SECURITY_APP_AUTH_JSON='{"providers":[{"type":"firebase-app-check"}]}'
 ```
 
 Explicit `projectNumber` always wins, which is how cross-project deployments

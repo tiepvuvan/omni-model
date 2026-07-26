@@ -16,7 +16,7 @@ A self-hosted proxy exposes standard OpenAI HTTP endpoints, so the official `ope
 unchanged — you only override the base URL and supply the caller's token as the API key.
 
 - Base URL: your proxy origin plus `/v1` (e.g. `https://proxy.example.com/v1`).
-- API key: the end user's JWT. How the proxy validates it is set by `security.providers` — see
+- API key: the end user's JWT. How the proxy validates it is set by `security.userAuth` — see
   [Custom JWT](/security/custom-jwt) and the other verifiers.
 
 The token is sent as `Authorization: Bearer <token>` for the `jwt`, `firebase-auth`, and

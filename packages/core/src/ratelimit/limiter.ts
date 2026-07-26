@@ -17,26 +17,20 @@ interface CompiledWindow {
   ttlSeconds: number;
 }
 
-type CompiledKey =
-  | { kind: "user" | "device" | "client" | "ip" | "global" }
-  | { kind: "expression"; expression: CompiledExpression };
-
 interface CompiledRule {
   /** Counter keyspace: `id ?? name`. */
   id: string;
   /** Display name, reported in decisions and headers: `name ?? id`. */
   name: string;
   when: CompiledExpression | null;
-  key: CompiledKey;
-  requests: CompiledWindow | null;
-  tokens: CompiledWindow | null;
+  tokens: CompiledWindow;
 }
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-/** Variables exposed to `when` and `keyExpression` evaluation. */
+/** Variables exposed to `when` evaluation. */
 function varsFrom(facts: RequestFacts): Record<string, unknown> {
   const { request, user, device, client, http, now } = facts;
   return { request, user, device, client, http, now };
@@ -50,12 +44,22 @@ function windowStartFor(nowMs: number, windowMs: number): number {
  * Counter keys are namespaced by the rule's stable `id` (not its display name),
  * so renaming a rule from a dashboard preserves its counters.
  */
-function requestKey(ruleId: string, limitKey: string, windowStart: number): string {
-  return `rl:req:${ruleId}:${limitKey}:${windowStart}`;
-}
-
 function tokenKey(ruleId: string, limitKey: string, windowStart: number): string {
   return `rl:tok:${ruleId}:${limitKey}:${windowStart}`;
+}
+
+/**
+ * Whose budget this request spends.
+ *
+ * Always the end user: a rate limit is a statement about a person's consumption,
+ * and layer 1 of authentication guarantees there is one. The fallbacks are
+ * defensive rather than configurable — a verifier that authenticates without
+ * producing a subject would otherwise put every caller in one bucket, so the
+ * device, then the IP, then a single shared bucket stand in. Each is *stricter*
+ * than a per-user budget, never looser.
+ */
+function limitKeyFor(facts: RequestFacts): string {
+  return facts.user.id ?? facts.device.id ?? facts.http.ip ?? "anonymous";
 }
 
 function compileExpression(
@@ -111,41 +115,29 @@ function identityOf(rule: RateLimitRuleConfig): { id: string; name: string } {
 
 function compileRule(rule: RateLimitRuleConfig, engine: ExpressionEngine): CompiledRule {
   const { id, name } = identityOf(rule);
-  let key: CompiledKey;
-  if (rule.key === "expression") {
-    // The schema refinement guarantees `keyExpression` here; guard for narrowing.
-    if (rule.keyExpression === undefined) {
-      throw new ConfigError(`rate limit rule "${name}": key "expression" needs keyExpression`);
-    }
-    key = {
-      kind: "expression",
-      expression: compileExpression(engine, rule.keyExpression, name, "keyExpression"),
-    };
-  } else {
-    key = { kind: rule.key };
-  }
   return {
     id,
     name,
     when: rule.when === undefined ? null : compileExpression(engine, rule.when, name, "when"),
-    key,
-    requests: rule.requests === undefined ? null : compileWindow(rule.requests, name, "requests"),
-    tokens: rule.tokens === undefined ? null : compileWindow(rule.tokens, name, "tokens"),
+    tokens: compileWindow(rule.tokens, name, "tokens"),
   };
 }
 
 /**
- * Create a fixed-window rate limiter over the storage adapter's counters.
+ * Create a fixed-window token limiter over the storage adapter's counters.
  *
  * Expressions and window durations are compiled/parsed eagerly so config
  * mistakes throw `ConfigError` at startup, never mid-request.
  *
  * Semantics:
- * - Token budgets are pre-checked (read-only) before any request counter is
- *   incremented, so a request rejected on an exhausted budget does not consume
- *   request-window slots.
- * - Rejected requests still consume request-window slots — attempts count by
- *   design, so hammering an exhausted limit never earns extra throughput.
+ * - One axis: prompt-plus-completion tokens, per user, per fixed window. Every
+ *   rule whose `when` matches is enforced, so budgets layer and the first one
+ *   exhausted is the one that rejects.
+ * - `check` is read-only. A request is admitted on the budget remaining *before*
+ *   it runs, and the tokens it goes on to spend are recorded afterwards by
+ *   `recordUsage`. So a single request can overshoot its budget — you cannot
+ *   know what a completion costs until it exists — and the overshoot is charged
+ *   to the window it landed in.
  * - Storage failures fail OPEN: a rule whose counter cannot be read or written
  *   is treated as passing (logged at error level). A database outage must not
  *   take the API down.
@@ -195,75 +187,18 @@ export function createRateLimiter(
     }
   };
 
-  /** Returns null when the key cannot be derived (rule skipped for this request). */
-  const deriveKey = (
-    rule: CompiledRule,
-    facts: RequestFacts,
-    vars: Record<string, unknown>,
-  ): string | null => {
-    switch (rule.key.kind) {
-      case "user":
-        return facts.user.id ?? facts.device.id ?? facts.http.ip ?? "anonymous";
-      case "device":
-        return facts.device.id ?? facts.http.ip ?? "anonymous";
-      case "client":
-        // A per-application budget. Falls back to the IP so a rule still means
-        // something when write keys are not required.
-        return facts.client.id ?? facts.http.ip ?? "anonymous";
-      case "ip":
-        return facts.http.ip ?? "unknown";
-      case "global":
-        return "global";
-      case "expression": {
-        try {
-          return String(rule.key.expression.evaluate(vars));
-        } catch (error) {
-          log.warn(`rate limit rule "${rule.name}": \`keyExpression\` threw; rule skipped`, {
-            rule: rule.name,
-            error: errorMessage(error),
-          });
-          return null;
-        }
-      }
-    }
-  };
-
-  /** Rules whose `when` matches this request, paired with their derived limit key. */
-  const applicableRules = (facts: RequestFacts): { rule: CompiledRule; limitKey: string }[] => {
+  /** Rules whose `when` matches this request. */
+  const applicableRules = (facts: RequestFacts): CompiledRule[] => {
     const vars = varsFrom(facts);
-    const result: { rule: CompiledRule; limitKey: string }[] = [];
-    for (const rule of compiled) {
-      if (!applies(rule, vars)) continue;
-      const limitKey = deriveKey(rule, facts, vars);
-      if (limitKey === null) continue;
-      result.push({ rule, limitKey });
-    }
-    return result;
+    return compiled.filter((rule) => applies(rule, vars));
   };
-
-  const violation = (
-    rule: CompiledRule,
-    kind: "requests" | "tokens",
-    window: CompiledWindow,
-    windowStart: number,
-    nowMs: number,
-  ): RateLimitDecision => ({
-    allowed: false,
-    rule: rule.name,
-    kind,
-    limit: window.limit,
-    retryAfterSeconds: Math.ceil((windowStart + window.windowMs - nowMs) / 1000),
-  });
 
   return {
     async check(facts: RequestFacts): Promise<RateLimitDecision> {
       const nowMs = deps.now();
-      const applicable = applicableRules(facts);
+      const limitKey = limitKeyFor(facts);
 
-      // Phase 1: token budgets, read-only. An exhausted budget rejects before
-      // any request counter is consumed.
-      for (const { rule, limitKey } of applicable) {
-        if (rule.tokens === null) continue;
+      for (const rule of applicableRules(facts)) {
         const windowStart = windowStartFor(nowMs, rule.tokens.windowMs);
         let used: number;
         try {
@@ -276,37 +211,17 @@ export function createRateLimiter(
           continue;
         }
         if (used >= rule.tokens.limit) {
-          return violation(rule, "tokens", rule.tokens, windowStart, nowMs);
+          return {
+            allowed: false,
+            rule: rule.name,
+            kind: "tokens",
+            limit: rule.tokens.limit,
+            retryAfterSeconds: Math.ceil((windowStart + rule.tokens.windowMs - nowMs) / 1000),
+          };
         }
       }
 
-      // Phase 2: request windows. Every applicable window is incremented even
-      // after an earlier rule rejected, so attempts count everywhere.
-      let rejected: RateLimitDecision | null = null;
-      for (const { rule, limitKey } of applicable) {
-        if (rule.requests === null) continue;
-        const windowStart = windowStartFor(nowMs, rule.requests.windowMs);
-        let count: number;
-        try {
-          count = await storage.increment(
-            requestKey(rule.id, limitKey, windowStart),
-            1,
-            rule.requests.ttlSeconds,
-          );
-        } catch (error) {
-          log.error(`rate limit storage write failed; rule "${rule.name}" fails open`, {
-            rule: rule.name,
-            error: errorMessage(error),
-          });
-          continue;
-        }
-        if (count > rule.requests.limit && rejected === null) {
-          rejected = violation(rule, "requests", rule.requests, windowStart, nowMs);
-        }
-      }
-      return (
-        rejected ?? { allowed: true, rule: null, kind: null, limit: null, retryAfterSeconds: null }
-      );
+      return { allowed: true, rule: null, kind: null, limit: null, retryAfterSeconds: null };
     },
 
     async recordUsage(facts: RequestFacts, usage: Usage): Promise<void> {
@@ -314,8 +229,8 @@ export function createRateLimiter(
         const total = usage.total_tokens;
         if (!Number.isFinite(total) || total <= 0) return;
         const nowMs = deps.now();
-        for (const { rule, limitKey } of applicableRules(facts)) {
-          if (rule.tokens === null) continue;
+        const limitKey = limitKeyFor(facts);
+        for (const rule of applicableRules(facts)) {
           const windowStart = windowStartFor(nowMs, rule.tokens.windowMs);
           try {
             await storage.increment(

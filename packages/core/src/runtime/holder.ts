@@ -154,7 +154,8 @@ export function createBundleHolder(deps: BundleHolderDeps): BundleHolder {
     log.info(previous === null ? "configuration loaded" : "configuration reloaded", {
       revision: next.revision,
       providers: next.providers.size,
-      verifiers: next.verifiers.length,
+      userAuth: next.userVerifier.type,
+      appAuth: next.appVerifiers.length,
       rateLimits: next.config.rateLimits.length,
     });
     return { ok: true, bundle: next };

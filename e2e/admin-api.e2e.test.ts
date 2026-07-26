@@ -158,7 +158,7 @@ describe.skipIf(!POSTGRES_URL)("E2E: the admin API from an empty database", () =
           storage: { type: "postgres", url: "${OMNI_STORAGE_POSTGRES_URL}" },
           security: {
             requireWriteKey: true,
-            providers: [{ type: "jwt", secret: JWT_SECRET, algorithms: ["HS256"] }],
+            userAuth: { type: "jwt", secret: JWT_SECRET, algorithms: ["HS256"] },
           },
           routing: {
             rules: [

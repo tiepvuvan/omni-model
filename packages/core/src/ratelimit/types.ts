@@ -5,7 +5,12 @@ export interface RateLimitDecision {
   allowed: boolean;
   /** Name of the first violated rule when `allowed` is false. */
   rule: string | null;
-  kind: "requests" | "tokens" | null;
+  /**
+   * What was exhausted. Only ever `"tokens"`: token budgets are the only kind of
+   * limit there is. Kept as a field because a 429 body and a log row report it,
+   * and a future second axis would otherwise be a breaking change to both.
+   */
+  kind: "tokens" | null;
   limit: number | null;
   /** Seconds until the current window resets (when not allowed). */
   retryAfterSeconds: number | null;
@@ -13,9 +18,10 @@ export interface RateLimitDecision {
 
 export interface RateLimiter {
   /**
-   * Evaluate every matching rule for this request: consume one request from
-   * each request window and reject when any request count or token budget is
-   * exhausted.
+   * Read every matching rule's counter and reject when one is exhausted.
+   *
+   * Read-only: a request is admitted on what was spent before it, and what it
+   * spends is recorded by `recordUsage` once the response exists.
    */
   check(facts: RequestFacts): Promise<RateLimitDecision>;
   /**

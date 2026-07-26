@@ -6,7 +6,7 @@ import vendorJwt from "../../assets/vendor-jwt.svg";
 import vendorSupabase from "../../assets/vendor-supabase.svg";
 import { ActionBar, CenteredPane, PaneTitle } from "../../components/chrome";
 import { mergeCredentials, type OptionValues, SchemaForm } from "../../components/schema-form";
-import { Callout, Card, Checkbox, SelectField } from "../../components/ui/primitives";
+import { Callout, Card, Checkbox, Radio, SelectField } from "../../components/ui/primitives";
 import {
   api,
   type ConfigResponse,
@@ -24,89 +24,82 @@ export const Route = createFileRoute("/_app/authentication")({
 });
 
 /**
- * The cards the design draws, in its order.
+ * How each verifier is drawn, keyed by type.
  *
- * A card is not always one verifier: the Firebase card owns `firebase-auth` and,
- * behind its own checkbox, `firebase-app-check`. That is the design's grouping —
- * an operator thinks "Firebase", not "two entries in a providers array" — and it
- * is only expressible by letting a card cover more than one type.
+ * The *set* of cards comes from `GET /meta`, and so does which layer each one
+ * belongs to — a verifier added to the registry appears in the right half with no
+ * change here. This table only supplies presentation: the design's title, its
+ * glyph, and the fields the file draws.
+ *
+ * `fields` is curated. Each verifier accepts more options than the design shows,
+ * and rendering all of them turns a two-control card into a form; `SchemaForm`
+ * appends anything *required* the list misses, so a curated card can never hide a
+ * field a save needs.
  */
-const CARDS: readonly {
-  key: string;
-  title: string;
-  icon: string;
-  /** The verifier this card's checkbox enables. */
-  type: string;
-  /**
-   * The fields the design draws, in its order.
-   *
-   * A curated list rather than the whole schema: each verifier accepts more
-   * options than the file shows, and rendering all of them turns a five-control
-   * card into a form. Anything *required* that this list misses is appended
-   * anyway, so a curated screen can never hide a field a save needs.
-   */
-  fields: readonly string[];
-  /** A second verifier, behind a nested checkbox. */
-  extra?: { type: string; label: string; fields: readonly string[] };
-}[] = [
-  {
-    key: "firebase",
-    title: "Firebase",
-    icon: vendorFirebase,
-    type: "firebase-auth",
-    fields: ["projectId"],
-    extra: {
-      type: "firebase-app-check",
-      label: "Enable App Check",
-      fields: ["projectNumber", "appIds", "consume"],
-    },
-  },
-  {
-    key: "supabase",
-    title: "Supabase Auth",
-    icon: vendorSupabase,
-    type: "supabase",
-    fields: ["baseUrl", "jwksUrl"],
-  },
-  {
-    key: "jwt",
+const PRESENTATION: Record<string, { title: string; icon: string; fields: readonly string[] }> = {
+  "firebase-auth": { title: "Firebase", icon: vendorFirebase, fields: ["projectId"] },
+  supabase: { title: "Supabase Auth", icon: vendorSupabase, fields: ["baseUrl", "jwksUrl"] },
+  jwt: {
     title: "Custom JWT",
     icon: vendorJwt,
-    type: "jwt",
     fields: ["publicKey", "secret", "issuer", "algorithms"],
   },
-  {
-    key: "app-attest",
-    title: "App Attest",
-    icon: vendorApple,
-    type: "apple-app-attest",
-    fields: ["teamId", "bundleId"],
+  "firebase-app-check": {
+    title: "Firebase App Check",
+    icon: vendorFirebase,
+    fields: ["projectNumber", "appIds", "consume"],
   },
-  {
-    key: "device-check",
+  "apple-app-attest": { title: "App Attest", icon: vendorApple, fields: ["teamId", "bundleId"] },
+  "apple-device-check": {
     title: "DeviceCheck",
     icon: vendorApple,
-    type: "apple-device-check",
     fields: ["teamId", "keyId", "privateKey"],
   },
+};
+
+/** The design's order within each layer; anything unlisted follows, alphabetically. */
+const ORDER = [
+  "firebase-auth",
+  "supabase",
+  "jwt",
+  "firebase-app-check",
+  "apple-app-attest",
+  "apple-device-check",
 ];
+
+function ordered(types: readonly string[]): string[] {
+  return [
+    ...ORDER.filter((type) => types.includes(type)),
+    ...types.filter((type) => !ORDER.includes(type)).sort(),
+  ];
+}
+
+const titleOf = (type: string): string => PRESENTATION[type]?.title ?? type;
+const fieldsOf = (type: string): readonly string[] => PRESENTATION[type]?.fields ?? [];
 
 function securityOf(config: ConfigResponse): SecurityBlock {
   const security = config.config?.security;
   return {
-    mode: security?.mode ?? "all",
+    userAuth: security?.userAuth ?? null,
+    appAuth: {
+      mode: security?.appAuth?.mode ?? "all",
+      providers: security?.appAuth?.providers ?? [],
+    },
     publicPaths: security?.publicPaths ?? [],
     requireWriteKey: security?.requireWriteKey ?? false,
-    providers: security?.providers ?? [],
   };
 }
 
-/** Options for one verifier type out of the block, minus the discriminator. */
-function optionsFor(providers: readonly VerifierEntry[], type: string): OptionValues | null {
-  const entry = providers.find((provider) => provider.type === type);
-  if (entry === undefined) return null;
+/** An entry's options, minus the discriminator a form must not render. */
+function optionsOf(entry: VerifierEntry | null | undefined): OptionValues {
+  if (entry === null || entry === undefined) return {};
   const { type: _type, ...options } = entry;
   return options;
+}
+
+/** One app-layer entry out of a block, by type. */
+function findApp(block: SecurityBlock, type: string): VerifierEntry | undefined {
+  return block.appAuth.providers.find((entry) => entry.type === type);
 }
 
 function AuthenticationScreen() {
@@ -114,39 +107,73 @@ function AuthenticationScreen() {
   const router = useRouter();
   const stored = securityOf(config);
 
+  const userTypes = ordered(
+    meta.authVerifiers.filter((entry) => entry.layer === "user").map((entry) => entry.type),
+  );
+  const appTypes = ordered(
+    meta.authVerifiers.filter((entry) => entry.layer === "app").map((entry) => entry.type),
+  );
+
   /**
    * The whole block is edited locally and committed by the action bar.
    *
-   * That is the design's model — a screen accumulates changes and one Save
-   * Changes writes them — and it is also the only shape that can express
-   * "enable Firebase *and* fill in its project id" as a single valid
-   * configuration. Saving per control would have to persist an enabled verifier
-   * with no options, which the API would rightly reject.
+   * That is the design's model — a screen accumulates changes and one Save Changes
+   * writes them — and it is also the only shape that can express "switch to
+   * Firebase *and* fill in its project id" as one valid configuration. Saving per
+   * control would have to persist a half-configured verifier, which the API would
+   * rightly reject.
    */
   const [draft, setDraft] = useState<SecurityBlock>(stored);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   const dirty = JSON.stringify(draft) !== JSON.stringify(stored);
+  const chosen = draft.userAuth?.type ?? null;
 
-  const enabled = (type: string): boolean =>
-    draft.providers.some((provider) => provider.type === type);
+  /**
+   * Switching the user method replaces it rather than merging.
+   *
+   * Options belong to a verifier type — a Firebase project id means nothing to the
+   * jwt verifier — so carrying them across would submit keys the new factory
+   * rejects. Coming back to a method starts from what is *stored* for it, so a
+   * switch away and back is not a way to lose a configuration.
+   */
+  const chooseUser = (type: string) => {
+    if (type === chosen) return;
+    const previous = stored.userAuth?.type === type ? optionsOf(stored.userAuth) : {};
+    setDraft((now) => ({ ...now, userAuth: { type, ...previous } }));
+  };
 
-  const toggle = (type: string, on: boolean) => {
+  const setUserOptions = (options: OptionValues) => {
+    setDraft((now) =>
+      now.userAuth === null ? now : { ...now, userAuth: { type: now.userAuth.type, ...options } },
+    );
+  };
+
+  const appEnabled = (type: string): boolean =>
+    draft.appAuth.providers.some((entry) => entry.type === type);
+
+  const toggleApp = (type: string, on: boolean) => {
     setDraft((now) => ({
       ...now,
-      providers: on
-        ? [...now.providers, { type }]
-        : now.providers.filter((provider) => provider.type !== type),
+      appAuth: {
+        ...now.appAuth,
+        providers: on
+          ? [...now.appAuth.providers, { type, ...optionsOf(findApp(stored, type)) }]
+          : now.appAuth.providers.filter((entry) => entry.type !== type),
+      },
     }));
   };
 
-  const setOptions = (type: string, options: OptionValues) => {
+  const setAppOptions = (type: string, options: OptionValues) => {
     setDraft((now) => ({
       ...now,
-      providers: now.providers.map((provider) =>
-        provider.type === type ? { type, ...options } : provider,
-      ),
+      appAuth: {
+        ...now.appAuth,
+        providers: now.appAuth.providers.map((entry) =>
+          entry.type === type ? { type, ...options } : entry,
+        ),
+      },
     }));
   };
 
@@ -156,13 +183,27 @@ function AuthenticationScreen() {
     try {
       // A blank credential box means "keep what is stored", and the only way to
       // say that is to send the existing reference back unchanged.
-      const providers = draft.providers.map((provider) => {
-        const previous = optionsFor(stored.providers, provider.type);
-        if (previous === null) return provider;
-        const { type, ...options } = provider;
-        return { type, ...mergeCredentials(options, previous) };
-      });
-      await api.putSecurity({ ...draft, providers }, "update client authentication");
+      const userAuth =
+        draft.userAuth === null
+          ? null
+          : {
+              type: draft.userAuth.type,
+              // Only merge against the *same* method's stored options: a jwt secret
+              // is not a Firebase credential, and carrying it across a switch would
+              // send the new factory a key it rejects.
+              ...mergeCredentials(
+                optionsOf(draft.userAuth),
+                draft.userAuth.type === stored.userAuth?.type ? optionsOf(stored.userAuth) : {},
+              ),
+            };
+      const providers = draft.appAuth.providers.map((entry) => ({
+        type: entry.type,
+        ...mergeCredentials(optionsOf(entry), optionsOf(findApp(stored, entry.type))),
+      }));
+      await api.putSecurity(
+        { ...draft, userAuth, appAuth: { ...draft.appAuth, providers } },
+        "update client authentication",
+      );
       await router.invalidate();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "The change could not be saved.");
@@ -179,93 +220,127 @@ function AuthenticationScreen() {
       <ActionBar dirty={dirty} busy={busy} onDiscard={() => setDraft(stored)} onSave={save} />
 
       <CenteredPane>
-        <PaneTitle>User Authentication</PaneTitle>
-
         {error !== null ? (
           <Callout tone="danger" title="The change was rejected" role="alert">
             <p className="mt-[4px]">{error}</p>
           </Callout>
         ) : null}
 
-        {draft.providers.length === 0 ? (
-          <Callout tone="danger" title="No verifier is enabled" role="alert">
+        <PaneTitle>User Authentication</PaneTitle>
+
+        <p className="type-label-12 w-full text-foreground-secondary">
+          Which user is calling. One method, and it is required: token budgets are counted per user,
+          so a request that does not say who it is has nothing to spend.
+        </p>
+
+        {draft.userAuth === null ? (
+          <Callout tone="danger" title="No user authentication is set" role="alert">
             <p className="mt-[4px]">
-              <span className="type-mono-12">/v1</span> is closed and returns 503 until at least one
-              is. That is deliberate: a proxy that authenticates nobody would spend your provider
-              credits for anyone who finds the URL.
+              <span className="type-mono-12">/v1</span> is closed and returns 503 until one is
+              chosen. That is deliberate: a proxy that authenticates nobody would spend your
+              provider credits for anyone who finds the URL.
             </p>
           </Callout>
         ) : null}
 
-        {/*
-         * The design labels this select "Project ID", which is a stray label in
-         * the file — its value and help text are both about how the enabled
-         * methods combine, and there is a real Project ID field inside the
-         * Firebase card below. Labelled for what it does.
-         */}
+        <div className="flex w-full flex-col gap-[12px]">
+          {userTypes.map((type) => (
+            <Card
+              key={type}
+              title={titleOf(type)}
+              icon={
+                <img
+                  src={PRESENTATION[type]?.icon ?? vendorJwt}
+                  alt=""
+                  aria-hidden
+                  className="size-[20px] shrink-0"
+                />
+              }
+              actions={
+                <Radio
+                  name="user-auth"
+                  label={`Use ${titleOf(type)}`}
+                  checked={chosen === type}
+                  onSelect={() => chooseUser(type)}
+                />
+              }
+            >
+              {chosen === type ? (
+                <SchemaForm
+                  schema={schemaFor(type)}
+                  values={optionsOf(draft.userAuth)}
+                  only={fieldsOf(type)}
+                  omit={["type", "name"]}
+                  componentType={type}
+                  idPrefix={`verifier-${type}`}
+                  onChange={setUserOptions}
+                />
+              ) : (
+                <p className="type-label-12 text-foreground-secondary">
+                  Not in use. Select it to configure it.
+                </p>
+              )}
+            </Card>
+          ))}
+        </div>
+
+        <PaneTitle>App Authentication</PaneTitle>
+
+        <p className="type-label-12 w-full text-foreground-secondary">
+          Which app the request came from, layered over the user. Optional, and any number of them —
+          one scheme per platform is normal. A valid user token sent from something that is not your
+          app is what these exist to stop.
+        </p>
+
         <SelectField
           className="w-[518px] max-w-full"
-          label="Match mode"
-          value={draft.mode}
+          label="When more than one is enabled"
+          value={draft.appAuth.mode}
           items={[
-            { value: "all", label: "Client must match all of following" },
-            { value: "any", label: "Client must match any of following" },
+            { value: "all", label: "Client must pass all of them" },
+            { value: "any", label: "Client must pass any one of them" },
           ]}
-          onValueChange={(mode) => setDraft((now) => ({ ...now, mode }))}
+          onValueChange={(mode) =>
+            setDraft((now) => ({ ...now, appAuth: { ...now.appAuth, mode } }))
+          }
           help={
-            draft.mode === "all"
-              ? "Client must pass all of these enabled authentication methods. See documentation for what token needs to be send from client."
-              : "The first enabled method that accepts wins. A presented-but-invalid credential still rejects the request; only absence falls through."
+            draft.appAuth.mode === "all"
+              ? "Every enabled scheme must accept. Right for one platform layering two schemes — and wrong for several, since a client can only satisfy its own."
+              : "The first enabled scheme that accepts wins. Right for several platforms. A presented-but-invalid credential still rejects; only absence falls through."
           }
         />
 
         <div className="flex w-full flex-col gap-[12px]">
-          {CARDS.map((card) => (
+          {appTypes.map((type) => (
             <Card
-              key={card.key}
-              title={card.title}
-              icon={<img src={card.icon} alt="" aria-hidden className="size-[20px] shrink-0" />}
+              key={type}
+              title={titleOf(type)}
+              icon={
+                <img
+                  src={PRESENTATION[type]?.icon ?? vendorApple}
+                  alt=""
+                  aria-hidden
+                  className="size-[20px] shrink-0"
+                />
+              }
               actions={
                 <Checkbox
-                  aria-label={`Enable ${card.title}`}
-                  checked={enabled(card.type)}
-                  onCheckedChange={(on) => toggle(card.type, on)}
+                  aria-label={`Enable ${titleOf(type)}`}
+                  checked={appEnabled(type)}
+                  onCheckedChange={(on) => toggleApp(type, on)}
                 />
               }
             >
-              {enabled(card.type) ? (
-                <>
-                  <SchemaForm
-                    schema={schemaFor(card.type)}
-                    values={optionsFor(draft.providers, card.type) ?? {}}
-                    only={card.fields}
-                    omit={["type", "name"]}
-                    componentType={card.type}
-                    idPrefix={`verifier-${card.type}`}
-                    onChange={(options) => setOptions(card.type, options)}
-                  />
-
-                  {card.extra !== undefined ? (
-                    <>
-                      <Checkbox
-                        label={card.extra.label}
-                        checked={enabled(card.extra.type)}
-                        onCheckedChange={(on) => toggle(card.extra?.type ?? "", on)}
-                      />
-                      {enabled(card.extra.type) ? (
-                        <SchemaForm
-                          schema={schemaFor(card.extra.type)}
-                          values={optionsFor(draft.providers, card.extra.type) ?? {}}
-                          only={card.extra.fields}
-                          omit={["type", "name"]}
-                          componentType={card.extra.type}
-                          idPrefix={`verifier-${card.extra.type}`}
-                          onChange={(options) => setOptions(card.extra?.type ?? "", options)}
-                        />
-                      ) : null}
-                    </>
-                  ) : null}
-                </>
+              {appEnabled(type) ? (
+                <SchemaForm
+                  schema={schemaFor(type)}
+                  values={optionsOf(findApp(draft, type))}
+                  only={fieldsOf(type)}
+                  omit={["type", "name"]}
+                  componentType={type}
+                  idPrefix={`verifier-${type}`}
+                  onChange={(options) => setAppOptions(type, options)}
+                />
               ) : (
                 <p className="type-label-12 text-foreground-secondary">
                   Not enabled. Tick the box to configure it.

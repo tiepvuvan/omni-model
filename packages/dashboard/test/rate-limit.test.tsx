@@ -19,16 +19,14 @@ const TIERED = {
     {
       id: "free-tier",
       when: 'has(user.claims.tier) && user.claims.tier == "free"',
-      key: "user",
       tokens: { limit: 30_000, window: "30d" },
     },
     {
       id: "pro-tier",
       when: 'has(user.claims.tier) && user.claims.tier == "pro"',
-      key: "user",
       tokens: { limit: 50_000, window: "14d" },
     },
-    { id: "baseline", key: "user", tokens: { limit: 50_000, window: "30d" } },
+    { id: "baseline", tokens: { limit: 50_000, window: "30d" } },
   ],
 };
 
@@ -40,8 +38,8 @@ beforeEach(() => {
 /**
  * Open a select inside one row and choose an option.
  *
- * Row-scoped because every row has a `Window` and a `Counted per` — the screen-wide
- * helper finds all of them. The popup itself is portalled, so the option comes from
+ * Row-scoped because every row has its own `Window` — the screen-wide helper finds
+ * all of them. The popup itself is portalled, so the option comes from
  * the document rather than the row, and `findByRole` because it mounts a frame
  * before it is styled open.
  */
@@ -171,7 +169,7 @@ describe("editing a budget", () => {
 
   it("keeps a window the select does not offer", async () => {
     fake = createFakeApi({
-      config: { rateLimits: [{ id: "odd", key: "user", requests: { limit: 5, window: "45m" } }] },
+      config: { rateLimits: [{ id: "odd", tokens: { limit: 5000, window: "45m" } }] },
     });
     fake.install();
     const user = userEvent.setup();
@@ -180,92 +178,25 @@ describe("editing a budget", () => {
     // Opening a screen must not rewrite a value nobody touched, so an unlisted
     // duration is offered alongside the presets rather than replaced by one.
     expect(screen.getByLabelText("Window")).toHaveTextContent("45m");
-    await user.clear(screen.getByLabelText("Number of requests"));
-    await user.type(screen.getByLabelText("Number of requests"), "6");
+    await user.clear(screen.getByLabelText("Number of tokens"));
+    await user.type(screen.getByLabelText("Number of tokens"), "6000");
     await save(user);
 
-    expect(lastSaved()[0]?.requests).toEqual({ limit: 6, window: "45m" });
+    expect(lastSaved()[0]?.tokens).toEqual({ limit: 6000, window: "45m" });
   });
 });
 
 describe("what the screen can express", () => {
-  it("shows a request rule as requests, not as an empty token budget", async () => {
-    fake = createFakeApi({
-      config: {
-        rateLimits: [{ name: "per-user-requests", requests: { limit: 30, window: "1h" } }],
-      },
-    });
-    fake.install();
+  it("draws only the two fields the model has", async () => {
     await renderAt("/rate-limit");
 
-    // The configuration a fresh deployment starts with limits requests. Rendering
-    // only tokens would show an empty box for a rule enforcing 30 an hour.
-    expect(screen.getByLabelText("Number of requests")).toHaveValue("30");
-    expect(screen.queryByLabelText("Number of tokens")).toBeNull();
-  });
-
-  it("adds the other budget kind to a rule that has one", async () => {
-    const user = userEvent.setup();
-    await renderAt("/rate-limit");
-
-    await user.click(within(row("free-tier")).getByRole("button", { name: "Add request limit" }));
-    await save(user);
-
-    expect(lastSaved()[0]).toMatchObject({
-      tokens: { limit: 30_000, window: "30d" },
-      requests: { limit: 30, window: "1h" },
-    });
-  });
-
-  it("cannot remove the only budget a rule has", async () => {
-    await renderAt("/rate-limit");
-
-    // A rule with neither budget is rejected by the schema, so the affordance to
-    // create one appears only once the other kind exists.
-    expect(
-      within(row("free-tier")).queryByRole("button", { name: "Remove token budget" }),
-    ).toBeNull();
-  });
-
-  it("changes what a budget is counted against", async () => {
-    const user = userEvent.setup();
-    await renderAt("/rate-limit");
-
-    await pick(user, row("free-tier"), /Counted per/, "Each IP address");
-    await save(user);
-
-    expect(lastSaved()[0]?.key).toBe("ip");
-  });
-
-  it("keeps a custom key expression, and drops it when the key stops using it", async () => {
-    fake = createFakeApi({
-      config: {
-        rateLimits: [
-          {
-            id: "per-tenant",
-            key: "expression",
-            keyExpression: "user.claims.tenant",
-            tokens: { limit: 100, window: "1h" },
-          },
-        ],
-      },
-    });
-    fake.install();
-    const user = userEvent.setup();
-    await renderAt("/rate-limit");
-
-    expect(screen.getByLabelText("Key expression")).toHaveValue("user.claims.tenant");
-
-    await pick(user, row("per-tenant"), /Counted per/, "Each user");
-    await save(user);
-
-    // Left behind, `keyExpression` is a field nothing reads — and a reader of the
-    // stored document would take it for the key still in use.
-    expect(lastSaved()[0]).toEqual({
-      id: "per-tenant",
-      key: "user",
-      tokens: { limit: 100, window: "1h" },
-    });
+    // One axis, one owner: tokens, per user. There is nothing else to configure,
+    // so there is nothing else on the card — no counter key, no request window.
+    const card = row("free-tier");
+    expect(within(card).getByLabelText("Number of tokens")).toBeInTheDocument();
+    expect(within(card).getByLabelText("Window")).toBeInTheDocument();
+    expect(within(card).queryByLabelText("Counted per")).toBeNull();
+    expect(within(card).queryByLabelText("Number of requests")).toBeNull();
   });
 });
 
@@ -293,7 +224,7 @@ describe("adding and removing rules", () => {
     await user.type(within(row("limit-4")).getByLabelText("Condition for limit-4"), "true");
     await save(user);
 
-    expect(lastSaved()[2]).toMatchObject({ id: "limit-4", when: "true", key: "user" });
+    expect(lastSaved()[2]).toMatchObject({ id: "limit-4", when: "true", tokens: { limit: 1000 } });
   });
 
   it("removes a rule from either card", async () => {
@@ -331,8 +262,8 @@ describe("an unconfigured deployment", () => {
 
     // An absent `rateLimits` block is not "no limits": the schema fills it in and
     // the proxy enforces it. An empty screen would report freedom that is not real.
-    expect(ruleIds()).toEqual(["per-user-requests", "per-user-daily-tokens"]);
-    expect(screen.getByLabelText("Number of requests")).toHaveValue("30");
+    expect(ruleIds()).toEqual(["per-user-daily-tokens"]);
+    expect(screen.getByLabelText("Number of tokens")).toHaveValue("30,000");
     // Nothing has changed yet, so there is nothing to save.
     expect(screen.getByRole("button", { name: "Save Changes" })).toBeDisabled();
   });

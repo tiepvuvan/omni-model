@@ -32,8 +32,8 @@ routing:
     const yaml = `
 version: 1
 security:
-  providers:
-    - type: nonexistent-auth
+  userAuth:
+    type: nonexistent-auth
 routing:
   rules:
     - { id: fake, when: "true", target: { type: fake } }
@@ -59,12 +59,12 @@ routing:
   });
 
   it("applies defaults to a minimal programmatic config", async () => {
-    // memory storage, empty providers/routing all defaulted in. Security is the
-    // one block with no safe default: a verifier is mandatory (see
-    // auth.test.ts), so even a minimal config must configure one.
+    // memory storage, empty routing and an empty app layer all defaulted in.
+    // `userAuth` is the one field with no safe default: layer 1 is mandatory (see
+    // auth.test.ts), so even a minimal config must name one.
     const config = {
       version: 1,
-      security: { providers: [{ type: "jwt", secret: "dev-secret", algorithms: ["HS256"] }] },
+      security: { userAuth: { type: "jwt", secret: "dev-secret", algorithms: ["HS256"] } },
     } as unknown as OmniConfig;
     const app = await createOmniApp({ config, logger: silentLogger, now: () => FIXED_NOW });
     const health = await app.fetch(new Request("http://local/healthz"));
@@ -103,9 +103,9 @@ describe("app basics", () => {
     const yaml = `
 version: 1
 security:
-  providers:
-    - type: fake-auth
-      challengeRoute: true
+  userAuth:
+    type: fake-auth
+    challengeRoute: true
 routing:
   rules:
     - { id: fake, when: "true", target: { type: fake } }
@@ -129,8 +129,8 @@ server:
     allowOrigins: ["https://app.example.com"]
     allowHeaders: ["authorization", "content-type"]
 security:
-  providers:
-    - type: fake-auth
+  userAuth:
+    type: fake-auth
 routing:
   rules:
     - { id: fake, when: "true", target: { type: fake } }

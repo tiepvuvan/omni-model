@@ -44,23 +44,32 @@ you get back in if you lose access.
 
 ## Client authentication
 
-Who may call `/v1`. Verifiers establish **who or what** is calling; a
-[write key](/reference/write-keys) says **which app**. The two are separate axes and are checked
-independently, so a request usually carries both.
+Two layers, in two sections.
 
-The screen renders each verifier's form from that verifier's own options schema, published by
-`GET /admin/api/meta`. All six built-in types — and any you register yourself — get a form that
-accepts exactly what the proxy accepts, rather than a hand-written one that can drift from it.
+**User authentication** answers *which user*. Pick exactly one — Firebase, Supabase, or a custom
+JWT — and it is required: token budgets are counted per user, so a request that does not say who it
+is has nothing to spend. Removing it is refused. A proxy that authenticates nobody is an open relay
+on your provider credits, so `/v1` answers 503 until one is chosen.
 
-Two settings on this screen are worth reading before you change them:
+**App authentication** answers *which app*, layered over the user. Optional, and any number of them:
+App Attest, DeviceCheck, App Check. A valid user token replayed from something that is not your app
+is exactly what these exist to stop. Which one a client can satisfy depends on its platform, so when
+you enable more than one, the mode matters:
 
-| Setting | What to know |
+| Mode | Use it when |
 | --- | --- |
-| **Verifier mode** | `all` requires every verifier to accept, which is right for an app attestation *plus* a user token. `any` takes the first that accepts. A presented-but-invalid credential rejects the request either way — only *absence* falls through. |
-| **Require a write key** | Turning this on locks out every client not already sending `x-omni-key`. Presented keys are validated regardless, so attribution works before you enable it; revocation only becomes binding after. |
+| **all** | One platform, layering two schemes — App Attest *and* App Check on the same iOS app. Every enabled scheme must accept. |
+| **any** | Several platforms. The first enabled scheme that accepts wins, because an iOS client can only ever satisfy the Apple one. A presented-but-invalid credential still rejects; only *absence* falls through. |
 
-Removing the last verifier is refused. A proxy that authenticates nobody is an open relay on your
-provider credits, so `/v1` answers 503 rather than serving anything until one exists.
+A [write key](/reference/write-keys) is a third, separate axis — it says which *installation* of your
+app called, for attribution and revocation. **Require a write key** locks out every client not
+already sending `x-omni-key`; presented keys are validated regardless, so attribution works before
+you enable it and revocation becomes binding after.
+
+Which section a method appears in comes from the API, not from the screen: each verifier declares its
+layer, and `GET /admin/api/meta` publishes it along with the verifier's own options schema. So a
+verifier you register yourself lands in the right half with a form that accepts exactly what the
+proxy accepts.
 
 ## Model routing
 
@@ -83,14 +92,15 @@ The dashboard adds three things over editing the document by hand:
 
 ## Rate limits
 
-The same paired layout as routing: a condition on the left, the budget it buys on the right. A rule
-carries a token budget, a request limit, or both, and each is a number over a fixed window.
+The same paired layout as routing: a condition on the left, the budget it buys on the right. A budget
+is a number of tokens over a fixed window, counted per user — one axis and one owner, so those are
+the only two fields on the card.
 
 Two things about the model are worth knowing before you edit it here.
 
 - **Rules stack; they do not fall through.** Every rule whose condition matches is enforced, so a
-  request matching a tier rule *and* a baseline is held to both and the first budget to run out is the
-  one that answers 429. This is what lets a per-IP flood cap coexist with a per-user token budget.
+  request matching a tier rule *and* a baseline is held to both, and the first budget to run out is
+  the one that answers 429.
 - **A rule with no condition is a baseline, not a fallback.** It applies to every request, and the
   screen draws it as the `Default` row — which is why that row has no condition to edit and no delete
   button.
@@ -99,9 +109,6 @@ Windows are fixed and clock-aligned: a `1d` budget resets at the day boundary, n
 first request. The `1 month` option is a 30-day window, since a calendar month is not a fixed length.
 A duration the select does not offer is kept and offered alongside the presets rather than replaced,
 so opening the screen never rewrites a window nobody touched.
-
-**Counted per** is the counter's owner — each user, device, client app, IP, or everyone together. It
-changes what the number means by orders of magnitude, so it is on the card rather than assumed.
 
 An absent `rateLimits` block is *not* an absence of limits: the schema fills it in and the proxy
 enforces it, so the screen shows those defaults rather than an empty list.

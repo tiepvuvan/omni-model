@@ -64,8 +64,15 @@ export interface RuntimeBundle {
   readonly limiter: RateLimiter;
   readonly log: Logger;
 
-  readonly verifiers: readonly AuthVerifier[];
-  readonly securityMode: "any" | "all";
+  /**
+   * Layer 1: who the user is. Exactly one, and always present — a bundle cannot
+   * be built without it, which is what keeps `/v1` closed rather than open.
+   */
+  readonly userVerifier: AuthVerifier;
+  /** Layer 2: which app or device. Any number, possibly none. */
+  readonly appVerifiers: readonly AuthVerifier[];
+  /** How the app layer combines when more than one scheme is configured. */
+  readonly appAuthMode: "any" | "all";
   readonly publicPaths: readonly string[];
   /** Whether `/v1/*` demands a write key. */
   readonly requireWriteKey: boolean;
@@ -133,25 +140,8 @@ export function buildBundle(input: BuildBundleInput): RuntimeBundle {
   const log = input.logger ?? createConsoleLogger(config.server.logLevel);
   const runtime: RuntimeContext = { ...input.runtime, log };
 
-  const verifiers = buildVerifiers(config, input.registry, runtime);
-  // A proxy with no verifier authenticates nobody: anyone who finds the URL
-  // spends your provider credits, and a caller gains nothing over calling the
-  // upstream API directly. There is deliberately no opt-out.
-  if (verifiers.length === 0) {
-    throw new ConfigError(
-      "security.providers is empty: /v1/* would accept unauthenticated requests, which is an " +
-        "open relay on your provider credits. Configure at least one verifier — firebase-auth, " +
-        "firebase-app-check, apple-app-attest, apple-device-check, supabase, or jwt. For local " +
-        "development, `jwt` with a shared secret needs no external service:\n" +
-        "  security:\n" +
-        "    providers:\n" +
-        "      - type: jwt\n" +
-        "        secret: <a long random value>\n" +
-        "        algorithms: [HS256]\n" +
-        "or, from the environment: OMNI_SECURITY_JWT_ENABLED=true, OMNI_SECURITY_JWT_SECRET=…, " +
-        'OMNI_SECURITY_JWT_ALGORITHMS=["HS256"]',
-    );
-  }
+  const userVerifier = buildUserVerifier(config, input.registry, runtime);
+  const appVerifiers = buildAppVerifiers(config, input.registry, runtime);
 
   const { rules, providers } = buildRoutingRules(config, input.registry, input.engine, runtime);
   // A smell, not an error: the configuration is valid and serves traffic, it just
@@ -175,11 +165,12 @@ export function buildBundle(input: BuildBundleInput): RuntimeBundle {
     router,
     limiter,
     log,
-    verifiers,
-    securityMode: config.security.mode,
+    userVerifier,
+    appVerifiers,
+    appAuthMode: config.security.appAuth.mode,
     publicPaths: config.security.publicPaths,
     requireWriteKey: config.security.requireWriteKey,
-    authRoutes: collectAuthRoutes(verifiers),
+    authRoutes: collectAuthRoutes([userVerifier, ...appVerifiers]),
     logging: config.logging,
     maxBodyBytes: config.server.maxBodyBytes,
     allowedModels: config.routing.allowedModels,
@@ -188,17 +179,81 @@ export function buildBundle(input: BuildBundleInput): RuntimeBundle {
   };
 }
 
-function buildVerifiers(
+/** Registered types belonging to one layer, for an error message that helps. */
+function typesInLayer(registry: OmniRegistry, layer: "user" | "app"): string {
+  const types = [...registry.auth.values()]
+    .filter((factory) => factory.layer === layer)
+    .map((factory) => factory.type)
+    .sort();
+  return types.length === 0 ? "none registered" : types.join(", ");
+}
+
+/**
+ * Layer 1. Required, and required to *be* a user verifier.
+ *
+ * A proxy that authenticates nobody is an open relay on your provider credits,
+ * and a caller gains nothing over calling the upstream API directly. There is
+ * deliberately no opt-out — the refusal is here rather than in the schema so the
+ * message can say what to do about it.
+ */
+function buildUserVerifier(
+  config: OmniConfig,
+  registry: OmniRegistry,
+  runtime: RuntimeContext,
+): AuthVerifier {
+  const entry = config.security.userAuth;
+  if (entry === undefined) {
+    throw new ConfigError(
+      "security.userAuth is not set: /v1/* would accept unauthenticated requests, which is an " +
+        `open relay on your provider credits. Choose one of: ${typesInLayer(registry, "user")}. ` +
+        "For local development, `jwt` with a shared secret needs no external service:\n" +
+        "  security:\n" +
+        "    userAuth:\n" +
+        "      type: jwt\n" +
+        "      secret: <a long random value>\n" +
+        "      algorithms: [HS256]\n" +
+        "or, from the environment: OMNI_SECURITY_JWT_ENABLED=true, OMNI_SECURITY_JWT_SECRET=…, " +
+        'OMNI_SECURITY_JWT_ALGORITHMS=["HS256"]',
+    );
+  }
+  const factory = registry.auth.get(entry.type);
+  if (factory === undefined) {
+    throw new ConfigError(
+      `security.userAuth: unknown auth type "${entry.type}" ` +
+        `(registered auth types: ${registeredTypes(registry.auth)})`,
+    );
+  }
+  // Naming the right home rather than just refusing: putting App Attest here is
+  // the obvious mistake, and it is one field away from being correct.
+  if (factory.layer !== "user") {
+    throw new ConfigError(
+      `security.userAuth: "${entry.type}" verifies an app or device, not a user, so it cannot be ` +
+        "the user authentication method. Move it to security.appAuth.providers and choose one of: " +
+        `${typesInLayer(registry, "user")}.`,
+    );
+  }
+  return factory.create(entry, runtime);
+}
+
+/** Layer 2. Any number, each of which must actually be an app verifier. */
+function buildAppVerifiers(
   config: OmniConfig,
   registry: OmniRegistry,
   runtime: RuntimeContext,
 ): AuthVerifier[] {
-  return config.security.providers.map((entry, index) => {
+  return config.security.appAuth.providers.map((entry, index) => {
     const factory = registry.auth.get(entry.type);
     if (factory === undefined) {
       throw new ConfigError(
-        `security.providers[${index}]: unknown auth type "${entry.type}" ` +
+        `security.appAuth.providers[${index}]: unknown auth type "${entry.type}" ` +
           `(registered auth types: ${registeredTypes(registry.auth)})`,
+      );
+    }
+    if (factory.layer !== "app") {
+      throw new ConfigError(
+        `security.appAuth.providers[${index}]: "${entry.type}" verifies a user, not an app, so it ` +
+          "cannot be layered here. Set it as security.userAuth instead, and choose from: " +
+          `${typesInLayer(registry, "app")}.`,
       );
     }
     return factory.create(entry, runtime);

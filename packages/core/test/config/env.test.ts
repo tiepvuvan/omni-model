@@ -15,17 +15,16 @@ const STARTER_ENV = {
   OMNI__SERVER__LOG_LEVEL: "silent",
   OMNI__SERVER__CORS__ALLOW_ORIGINS: '["https://app.example.com"]',
   OMNI__STORAGE__TYPE: "memory",
-  OMNI__SECURITY__PROVIDERS__0__TYPE: "jwt",
-  OMNI__SECURITY__PROVIDERS__0__SECRET: JWT_SECRET_REFERENCE,
-  OMNI__SECURITY__PROVIDERS__0__ALGORITHMS: '["HS256"]',
+  OMNI__SECURITY__USER_AUTH__TYPE: "jwt",
+  OMNI__SECURITY__USER_AUTH__SECRET: JWT_SECRET_REFERENCE,
+  OMNI__SECURITY__USER_AUTH__ALGORITHMS: '["HS256"]',
   OMNI__ROUTING__RULES__0__ID: "default",
   OMNI__ROUTING__RULES__0__WHEN: '"true"',
   OMNI__ROUTING__RULES__0__TARGET__TYPE: "openai",
   OMNI__ROUTING__RULES__0__TARGET__API_KEY: OPENAI_API_KEY_REFERENCE,
-  OMNI__RATE_LIMITS__0__NAME: "per-user-requests",
-  OMNI__RATE_LIMITS__0__KEY: "user",
-  OMNI__RATE_LIMITS__0__REQUESTS__LIMIT: "60",
-  OMNI__RATE_LIMITS__0__REQUESTS__WINDOW: "1m",
+  OMNI__RATE_LIMITS__0__NAME: "per-user-tokens",
+  OMNI__RATE_LIMITS__0__TOKENS__LIMIT: "60000",
+  OMNI__RATE_LIMITS__0__TOKENS__WINDOW: "1h",
 };
 
 describe("environment configuration", () => {
@@ -35,10 +34,8 @@ describe("environment configuration", () => {
     expect(config).toMatchObject({
       server: { logLevel: "silent", cors: { allowOrigins: ["https://app.example.com"] } },
       storage: { type: "memory" },
-      security: { providers: [{ type: "jwt", secret: "test-jwt-secret", algorithms: ["HS256"] }] },
-      rateLimits: [
-        { name: "per-user-requests", key: "user", requests: { limit: 60, window: "1m" } },
-      ],
+      security: { userAuth: { type: "jwt", secret: "test-jwt-secret", algorithms: ["HS256"] } },
+      rateLimits: [{ name: "per-user-tokens", tokens: { limit: 60_000, window: "1h" } }],
       routing: {
         rules: [{ id: "default", when: "true", target: { type: "openai", apiKey: "sk-test" } }],
       },
@@ -68,7 +65,7 @@ describe("environment configuration", () => {
       OMNI_CONFIG_JSON: JSON.stringify({
         version: 1,
         storage: { type: "memory" },
-        security: { providers: [{ type: "jwt", secret: "test", algorithms: ["HS256"] }] },
+        security: { userAuth: { type: "jwt", secret: "test", algorithms: ["HS256"] } },
         routing: {
           rules: [
             {
@@ -139,17 +136,21 @@ describe("environment configuration", () => {
         },
       ],
     });
+    // The two layers land in their own halves: Firebase Auth is who the user is,
+    // App Check is which app it came from.
     expect(config.security).toMatchObject({
-      mode: "all",
-      providers: [
-        { type: "firebase-auth", projectId: "my-firebase-project" },
-        {
-          type: "firebase-app-check",
-          projectNumber: "1234567890",
-          appIds: ["1:1234567890:ios:abc123"],
-          consume: true,
-        },
-      ],
+      userAuth: { type: "firebase-auth", projectId: "my-firebase-project" },
+      appAuth: {
+        mode: "all",
+        providers: [
+          {
+            type: "firebase-app-check",
+            projectNumber: "1234567890",
+            appIds: ["1:1234567890:ios:abc123"],
+            consume: true,
+          },
+        ],
+      },
     });
   });
 
@@ -164,7 +165,7 @@ describe("environment configuration", () => {
     );
   });
 
-  it("defaults multiple enabled security profiles to require every credential", () => {
+  it("defaults a layered app scheme to requiring every credential", () => {
     const config = parseEnvironmentConfig({
       OMNI_SECURITY_FIREBASE_AUTH_ENABLED: "true",
       OMNI_SECURITY_FIREBASE_AUTH_PROJECT_ID: "my-firebase-project",
@@ -172,26 +173,30 @@ describe("environment configuration", () => {
       OMNI_SECURITY_FIREBASE_APPCHECK_PROJECT_NUMBER: "1234567890",
     });
 
-    expect(config.security.mode).toBe("all");
+    expect(config.security.appAuth.mode).toBe("all");
   });
 
-  it("applies the default per-user request and token budgets when omitted", () => {
+  it("refuses two user authentication methods rather than picking one", () => {
+    // Whichever won would own `user.id`, and `user.id` is whose token budget a
+    // request spends — too consequential to decide by variable ordering.
+    expect(() =>
+      parseEnvironmentConfig({
+        OMNI_SECURITY_FIREBASE_AUTH_ENABLED: "true",
+        OMNI_SECURITY_FIREBASE_AUTH_PROJECT_ID: "my-firebase-project",
+        OMNI_SECURITY_JWT_ENABLED: "true",
+        OMNI_SECURITY_JWT_SECRET: "s".repeat(40),
+      }),
+    ).toThrow(/exactly one user authentication method/);
+  });
+
+  it("applies the default per-user token budget when omitted", () => {
     const config = parseEnvironmentConfig({
       OMNI_SECURITY_FIREBASE_AUTH_ENABLED: "true",
       OMNI_SECURITY_FIREBASE_AUTH_PROJECT_ID: "my-firebase-project",
     });
 
     expect(config.rateLimits).toEqual([
-      {
-        name: "per-user-requests",
-        key: "user",
-        requests: { limit: 30, window: "1h" },
-      },
-      {
-        name: "per-user-daily-tokens",
-        key: "user",
-        tokens: { limit: 30_000, window: "1d" },
-      },
+      { name: "per-user-daily-tokens", tokens: { limit: 30_000, window: "1d" } },
     ]);
   });
 
@@ -209,7 +214,7 @@ describe("environment configuration", () => {
       type: "openai-compatible",
       baseUrl: "https://gateway.example.com/v1",
     });
-    expect(config.security.providers).toEqual([
+    expect(config.security.appAuth.providers).toEqual([
       { type: "firebase-app-check", projectNumber: "1234567890" },
     ]);
   });

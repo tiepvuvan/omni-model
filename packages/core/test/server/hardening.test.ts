@@ -2,50 +2,65 @@ import { describe, expect, it } from "vitest";
 import { MemoryStorageAdapter } from "../../src/storage/memory.js";
 import { CHAT_BODY, chatRequest, createTestApp, FIXED_NOW } from "./helpers.js";
 
+/*
+ * Budgets are per user, and the IP is the last fallback when a request carries an
+ * authenticated caller with no subject. That fallback is the one an attacker can
+ * try to split by choosing a header value, so it gets the spoofing tests.
+ */
 const IP_LIMIT_YAML = `
 version: 1
 server:
   trustProxyHeaders: __TRUST__
+security:
+  userAuth:
+    type: test-anonymous
 rateLimits:
-  - name: per-ip
-    key: ip
-    requests: { limit: 1, window: 1m }
+  - name: per-caller
+    tokens: { limit: 10, window: 1m }
 routing:
   rules:
     - { id: fake, when: "true", target: { type: fake } }
 `;
 
-describe("IP-based rate limiting and header spoofing", () => {
-  it("does not let a spoofed x-forwarded-for evade an ip limit when proxy headers are untrusted", async () => {
+describe("rate-limit key derivation and header spoofing", () => {
+  const setup = (trust: "true" | "false") =>
+    createTestApp({
+      yaml: IP_LIMIT_YAML.replace("__TRUST__", trust),
+      storage: new MemoryStorageAdapter(() => FIXED_NOW),
+      injectVerifier: false,
+    });
+
+  it("does not let a spoofed x-forwarded-for split the bucket when proxy headers are untrusted", async () => {
     // trustProxyHeaders defaults to false: the two requests carry different
     // (attacker-chosen) x-forwarded-for values but must share one bucket.
-    const storage = new MemoryStorageAdapter(() => FIXED_NOW);
-    const { app } = await createTestApp({
-      yaml: IP_LIMIT_YAML.replace("__TRUST__", "false"),
-      storage,
-    });
+    const { app, collector } = await setup("false");
 
-    const first = await app.fetch(chatRequest(CHAT_BODY, { "x-forwarded-for": "1.1.1.1" }));
-    expect(first.status).toBe(200);
-    const second = await app.fetch(chatRequest(CHAT_BODY, { "x-forwarded-for": "2.2.2.2" }));
-    expect(second.status).toBe(429);
+    expect((await app.fetch(chatRequest(CHAT_BODY, { "x-forwarded-for": "1.1.1.1" }))).status).toBe(
+      200,
+    );
+    await collector.flush();
+
+    expect((await app.fetch(chatRequest(CHAT_BODY, { "x-forwarded-for": "2.2.2.2" }))).status).toBe(
+      429,
+    );
   });
 
-  it("honors x-forwarded-for as the ip key only when proxy headers are trusted", async () => {
-    const storage = new MemoryStorageAdapter(() => FIXED_NOW);
-    const { app } = await createTestApp({
-      yaml: IP_LIMIT_YAML.replace("__TRUST__", "true"),
-      storage,
-    });
+  it("honors x-forwarded-for as the key only when proxy headers are trusted", async () => {
+    const { app, collector } = await setup("true");
 
-    const first = await app.fetch(chatRequest(CHAT_BODY, { "x-forwarded-for": "1.1.1.1" }));
-    expect(first.status).toBe(200);
-    // Distinct trusted IP -> distinct bucket -> not rate limited.
-    const second = await app.fetch(chatRequest(CHAT_BODY, { "x-forwarded-for": "2.2.2.2" }));
-    expect(second.status).toBe(200);
-    // Same IP as the first request -> shares its (now-exhausted) bucket.
-    const third = await app.fetch(chatRequest(CHAT_BODY, { "x-forwarded-for": "1.1.1.1" }));
-    expect(third.status).toBe(429);
+    expect((await app.fetch(chatRequest(CHAT_BODY, { "x-forwarded-for": "1.1.1.1" }))).status).toBe(
+      200,
+    );
+    await collector.flush();
+
+    // Distinct trusted IP -> distinct bucket -> not limited.
+    expect((await app.fetch(chatRequest(CHAT_BODY, { "x-forwarded-for": "2.2.2.2" }))).status).toBe(
+      200,
+    );
+    // Same IP as the first request -> shares its now-spent bucket.
+    expect((await app.fetch(chatRequest(CHAT_BODY, { "x-forwarded-for": "1.1.1.1" }))).status).toBe(
+      429,
+    );
   });
 });
 
