@@ -1,3 +1,5 @@
+import type { ChatProvider } from "../providers/types.js";
+
 /** A compiled, reusable expression. */
 export interface CompiledExpression {
   /** Evaluate against the given variables; may throw on runtime errors. */
@@ -62,18 +64,24 @@ export interface RequestFacts {
 }
 
 export interface RouteDecision {
-  providerId: string;
-  /** Final upstream model (route override or the client-requested model). */
+  /**
+   * Where to send it. The rule owns its upstream, so a matched rule always has
+   * one — there is no id to look up and therefore no "provider not found".
+   */
+  provider: ChatProvider;
+  /** Provider type, recorded per request for usage attribution. */
+  providerType: string;
+  /** Final upstream model (the rule's override, or the client-requested model). */
   model: string;
-  /** Matched route / model-rule name; null when the default provider was used. */
-  routeName: string | null;
+  /** Which rule matched. Always set: nothing serves a request implicitly. */
+  routeName: string;
 }
 
 /** What one rule did when evaluated against a set of facts. */
 export interface RuleEvaluation {
-  /** Route name, or `model-rule[n]` for a model rule. */
+  /** The rule's name, else its id. */
   rule: string;
-  providerId: string;
+  providerType: string;
   /** `"match"` wins; the others are why it did not. */
   outcome: "match" | "no-match" | "error" | "non-boolean";
   /** Why it threw, for `"error"`. */

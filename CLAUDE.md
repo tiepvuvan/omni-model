@@ -101,6 +101,9 @@ docs/                      Mintlify docs site (docs.json + MDX): installation,
    storage URL, say — must `interpolateDeep` first.
    `bundle.config` is the *resolved* document and therefore contains plaintext: never serialize it
    to a client, a log, or an admin response. Return the stored revision instead.
+   A dashboard sends a credential as plaintext, so the admin save path seals it
+   (`sealCredentials`, field names in `CREDENTIAL_FIELDS`) *before* validating and persisting. An
+   existing reference passes through untouched — sealing it again would mint a row per save.
 9. **Cryptography lives in exactly one place, and is not ours.** `secrets/envelope.ts` is a thin
    wrapper over jose's JWE (`dir` + `A256GCM`); a backend implements `SecretRowStore` and moves one
    opaque string. Never hand-roll a second sealing format, and never store the key id in a column —
@@ -141,7 +144,12 @@ docs/                      Mintlify docs site (docs.json + MDX): installation,
     window is the whole point. Shutdown refuses new work, keeps listening (a closed socket makes
     `/readyz` unreachable, and an unreachable probe drains nothing), waits, then closes. Bounded by
     `OMNI_SHUTDOWN_DRAIN_MS`: one client holding a stream open must not stall a deploy.
-20. **The Drizzle schema is the source of truth; drizzle-kit is a generator, not the migrator.**
+20. **An upstream belongs to the rule that routes to it.** `routing.rules[].target` carries the
+    provider type, its credentials and the model; there is no `providers` block, no name to
+    reference, and therefore no dangling reference to validate. Rules are ordered and the first match
+    wins — a catch-all is `when: "true"`, and no match is a 404. `RouteDecision` returns the provider
+    itself, so a matched rule cannot fail to find where it pointed.
+21. **The Drizzle schema is the source of truth; drizzle-kit is a generator, not the migrator.**
     Ours takes `pg_advisory_xact_lock` over the whole set in one transaction, so concurrent boots
     cannot half-apply; drizzle-kit's does not. Generated SQL is embedded, never read from files, and
     its `"public".` qualifiers must be stripped — they pin the schema and break per-schema isolation.

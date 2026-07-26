@@ -1,86 +1,23 @@
 import { describe, expect, it } from "vitest";
 import type { EmbeddingsResponse, ModelInfo, ModelList } from "../../src/openai/types.js";
 import { MemoryStorageAdapter } from "../../src/storage/memory.js";
-import {
-  createRecordingLogger,
-  createTestApp,
-  embeddingsRequest,
-  FIXED_NOW,
-  tokenCounterKey,
-} from "./helpers.js";
+import { createTestApp, embeddingsRequest, FIXED_NOW, tokenCounterKey } from "./helpers.js";
 
 function model(id: string, ownedBy: string): ModelInfo {
   return { id, object: "model", created: 1, owned_by: ownedBy };
 }
 
 describe("GET /v1/models", () => {
-  it("merges provider lists, dedupes by id (first wins) and skips failures", async () => {
+  it("lists the client-facing allowlist, not the upstream catalogue", async () => {
+    // The proxy owns the names a client may ask for. A rule can forward "smart"
+    // to gpt-4o-mini, so advertising the upstream's catalogue would name models
+    // the proxy does not answer to and omit the ones it does.
     const yaml = `
 version: 1
-providers:
-  alpha:
-    type: fake
-  beta:
-    type: fake
-  gamma:
-    type: fake
-  delta:
-    type: fake
-routing:
-  defaultProvider: alpha
-`;
-    const { logger, entries } = createRecordingLogger();
-    const { app } = await createTestApp({
-      yaml,
-      logger,
-      behaviors: {
-        alpha: { models: [model("m1", "alpha"), model("m2", "alpha")] },
-        beta: { models: [model("m2", "beta"), model("m3", "beta")] },
-        gamma: { listModelsError: "upstream down" },
-        // delta has no listModels at all and is silently skipped.
-      },
-    });
-
-    const response = await app.fetch(new Request("http://local/v1/models"));
-    expect(response.status).toBe(200);
-    const body = (await response.json()) as ModelList;
-    expect(body.object).toBe("list");
-    expect(body.data.map((m) => m.id)).toEqual(["m1", "m2", "m3"]);
-    // Provider ownership is deliberately hidden from clients.
-    expect(body.data.find((m) => m.id === "m2")?.owned_by).toBe("omni-model");
-
-    const warning = entries.find(
-      (entry) => entry.level === "warn" && entry.message.includes("listModels"),
-    );
-    expect(warning?.fields?.provider).toBe("gamma");
-    expect(warning?.fields?.error).toBe("upstream down");
-  });
-
-  it("returns an empty list when no provider can list models", async () => {
-    const yaml = `
-version: 1
-providers:
-  fake:
-    type: fake
-routing:
-  defaultProvider: fake
-`;
-    const { app } = await createTestApp({ yaml });
-    const body = (await (
-      await app.fetch(new Request("http://local/v1/models"))
-    ).json()) as ModelList;
-    expect(body).toEqual({ object: "list", data: [] });
-  });
-
-  it("returns the configured client model allowlist instead of upstream model names", async () => {
-    const yaml = `
-version: 1
-providers:
-  fake:
-    type: fake
 routing:
   allowedModels: [smart, fast]
-  defaultProvider: fake
+  rules:
+    - { id: fake, when: "true", target: { type: fake, model: gpt-4o-mini } }
 `;
     const { app } = await createTestApp({
       yaml,
@@ -97,6 +34,63 @@ routing:
         { id: "fast", object: "model", created: 0, owned_by: "omni-model" },
       ],
     });
+    // Never the upstream's own names, and never which upstream served them.
+    expect(JSON.stringify(body)).not.toContain("upstream-secret");
+  });
+
+  it("falls back to the models the rules forward to, deduped", async () => {
+    // With no allowlist the client-facing surface is not enumerable in general —
+    // a rule may match a pattern — so this is the closest honest answer.
+    const yaml = `
+version: 1
+routing:
+  rules:
+    - { id: a, when: 'request.model == "x"', target: { type: fake, model: gpt-4o } }
+    - { id: b, when: 'request.model == "y"', target: { type: fake, model: claude-sonnet } }
+    - { id: c, when: "true", target: { type: fake, model: gpt-4o } }
+`;
+    const { app } = await createTestApp({ yaml });
+    const body = (await (
+      await app.fetch(new Request("http://local/v1/models"))
+    ).json()) as ModelList;
+    expect(body.data.map((entry) => entry.id)).toEqual(["gpt-4o", "claude-sonnet"]);
+    expect(body.data.every((entry) => entry.owned_by === "omni-model")).toBe(true);
+  });
+
+  it("returns an empty list when no rule names a model", async () => {
+    // Every rule forwards whatever the client asked for, so there is nothing to
+    // enumerate. `allowedModels` is how a deployment publishes a catalogue.
+    const yaml = `
+version: 1
+routing:
+  rules:
+    - { id: fake, when: "true", target: { type: fake } }
+`;
+    const { app } = await createTestApp({ yaml });
+    const body = (await (
+      await app.fetch(new Request("http://local/v1/models"))
+    ).json()) as ModelList;
+    expect(body).toEqual({ object: "list", data: [] });
+  });
+
+  it("does not contact any upstream to answer", async () => {
+    // It used to query every provider's catalogue concurrently. Nothing about the
+    // client-facing surface needs a network call, and a slow or broken upstream
+    // should not make listing models slow or broken.
+    const yaml = `
+version: 1
+routing:
+  allowedModels: [smart]
+  rules:
+    - { id: fake, when: "true", target: { type: fake } }
+`;
+    const { app } = await createTestApp({
+      yaml,
+      behaviors: { fake: { listModelsError: "upstream down" } },
+    });
+    const response = await app.fetch(new Request("http://local/v1/models"));
+    expect(response.status).toBe(200);
+    expect(((await response.json()) as ModelList).data.map((entry) => entry.id)).toEqual(["smart"]);
   });
 });
 
@@ -113,15 +107,9 @@ rateLimits:
   - name: daily-tokens
     key: user
     tokens: { limit: 100000, window: 1h }
-providers:
-  fake:
-    type: fake
 routing:
-  routes:
-    - name: embeddings
-      when: 'request.model == "embed"'
-      provider: fake
-      model: embed-large
+  rules:
+    - { id: embeddings, name: embeddings, when: 'request.model == "embed"', target: { type: fake, model: embed-large } }
 `;
 
 describe("POST /v1/embeddings", () => {
@@ -130,7 +118,9 @@ describe("POST /v1/embeddings", () => {
     const { app, providers, collector } = await createTestApp({
       yaml: EMBED_YAML,
       storage,
-      behaviors: { fake: { embeddingsResult: { kind: "embeddings", response: EMBED_RESPONSE } } },
+      behaviors: {
+        embeddings: { embeddingsResult: { kind: "embeddings", response: EMBED_RESPONSE } },
+      },
     });
 
     const response = await app.fetch(embeddingsRequest({ model: "embed", input: "hello" }));
@@ -141,7 +131,7 @@ describe("POST /v1/embeddings", () => {
       model: "embed",
     });
     // The route's model override reached the provider.
-    expect(providers.get("fake")?.embeddingsCalls[0]?.model).toBe("embed-large");
+    expect(providers.get("embeddings")?.embeddingsCalls[0]?.model).toBe("embed-large");
 
     await collector.flush();
     const counter = await storage.getCounter(
@@ -181,7 +171,9 @@ describe("POST /v1/embeddings", () => {
     };
     const { app } = await createTestApp({
       yaml: EMBED_YAML,
-      behaviors: { fake: { embeddingsResult: { kind: "error", status: 400, body: errorBody } } },
+      behaviors: {
+        embeddings: { embeddingsResult: { kind: "error", status: 400, body: errorBody } },
+      },
     });
     const response = await app.fetch(embeddingsRequest({ model: "embed", input: "x" }));
     expect(response.status).toBe(400);
@@ -202,11 +194,9 @@ rateLimits:
   - name: burst
     key: user
     requests: { limit: 1, window: 1m }
-providers:
-  fake:
-    type: fake
 routing:
-  defaultProvider: fake
+  rules:
+    - { id: fake, when: "true", target: { type: fake } }
 `;
     const { app } = await createTestApp({
       yaml,

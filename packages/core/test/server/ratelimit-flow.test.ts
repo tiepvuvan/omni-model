@@ -10,11 +10,9 @@ rateLimits:
   - name: burst
     key: user
     requests: { limit: 2, window: 1m }
-providers:
-  fake:
-    type: fake
 routing:
-  defaultProvider: fake
+  rules:
+    - { id: fake, when: "true", target: { type: fake } }
 `;
     const storage = new MemoryStorageAdapter(() => FIXED_NOW);
     const { app } = await createTestApp({ yaml, storage });
@@ -44,11 +42,9 @@ rateLimits:
   - name: tiny-budget
     key: user
     tokens: { limit: 10, window: 1h }
-providers:
-  fake:
-    type: fake
 routing:
-  defaultProvider: fake
+  rules:
+    - { id: fake, when: "true", target: { type: fake } }
 `;
     const storage = new MemoryStorageAdapter(() => FIXED_NOW);
     const { app, collector } = await createTestApp({ yaml, storage });
@@ -77,11 +73,9 @@ rateLimits:
   - name: per-user
     key: user
     requests: { limit: 1, window: 1m }
-providers:
-  fake:
-    type: fake
 routing:
-  defaultProvider: fake
+  rules:
+    - { id: fake, when: "true", target: { type: fake } }
 `;
     const storage = new MemoryStorageAdapter(() => FIXED_NOW);
     const { app } = await createTestApp({ yaml, storage });
@@ -103,11 +97,9 @@ rateLimits:
     when: 'user.claims.tier == "free"'
     key: user
     requests: { limit: 1, window: 1m }
-providers:
-  fake:
-    type: fake
 routing:
-  defaultProvider: fake
+  rules:
+    - { id: fake, when: "true", target: { type: fake } }
 `;
     const storage = new MemoryStorageAdapter(() => FIXED_NOW);
     const { app } = await createTestApp({ yaml, storage });

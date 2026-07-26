@@ -93,17 +93,36 @@ tell that their login is fine.
 | `GET /admin/api/config/revisions/:n` | One revision. |
 | `POST /admin/api/config/revisions/:n/rollback` | Re-apply an old document as a **new** revision. |
 | `PUT /admin/api/security` · `/rate-limits` · `/routing` · `/logging` | Replace one block: `{ "value": {...} }`. |
-| `PUT`/`DELETE /admin/api/providers/:id` | Add, replace or remove one provider. |
-| `POST /admin/api/providers/:id/test` | Probe the live upstream. |
+| `PUT`/`DELETE /admin/api/routing/rules/:id` | Add, replace or remove one routing rule. |
+| `POST /admin/api/routing/rules/:id/test` | Probe the upstream that rule points at. |
 
 A save is **validated, then stored, then applied** — in that order. Applying first would leave the
 replica that handled the request running a configuration no other replica has, if the write then
 failed. Other replicas pick the revision up from the database.
 
 ```sh
-curl -b cookies.txt -X PUT https://your-proxy/admin/api/providers/frontier \
+curl -b cookies.txt -X PUT https://your-proxy/admin/api/routing/rules/frontier \
   -H 'content-type: application/json' \
-  -d '{"value":{"type":"anthropic","apiKey":{"$secret":"<id>"}},"note":"add Claude"}'
+  -d '{"value":{"when":"request.model == \"smart\"","target":{"type":"anthropic","apiKey":"sk-ant-…","model":"claude-sonnet-5"}},"note":"add Claude"}'
+```
+
+A rule owns its upstream — provider type, credentials and model all live on its
+`target`. There is no separate providers block to keep in sync, and no name that
+can dangle.
+
+The `apiKey` above is plaintext: the API seals it before the revision is stored
+(see [Secrets](#secrets)). Replacing a rule keeps its position, because order is
+meaning — the first matching rule wins. Reordering is `PUT /routing` with the
+whole list, which is the only request that can express it.
+
+A save returns `warnings` for a rule list that is valid but self-defeating — most
+usefully, a rule appended *after* a catch-all, which can never fire:
+
+```json
+{
+  "revision": 3,
+  "warnings": ["rule \"premium\" can never match: \"default\" earlier in the list matches everything …"]
+}
 ```
 
 An invalid change is a `400` carrying the same message startup would have printed, and the previous
@@ -112,7 +131,7 @@ configuration keeps serving:
 ```json
 {
   "error": {
-    "message": "providers.nope: unknown provider type \"nope\" (registered: anthropic, google, openai, openai-compatible)",
+    "message": "routing.rules[0].target: unknown provider type \"nope\" (registered provider types: anthropic, google, openai, openai-compatible)",
     "type": "invalid_request_error",
     "param": "config",
     "code": "invalid_config"
@@ -133,9 +152,11 @@ It validates through the identical path and saves a revision, so no admin sessio
 deploy a configuration change. See [the container guide](/installation/docker#commands).
 
 <Note>
-  `POST /providers/:id/test` reports the upstream's own answer, including `status: 401` for a rejected
-  API key. It is deliberately not derived from whether the model listing succeeded — that call falls
-  back to the configured model list on failure, which would report a dead credential as healthy.
+  `POST /routing/rules/:id/test` reports the upstream's own answer, including `status: 401` for a
+  rejected API key. It is deliberately not derived from whether the model listing succeeded — that
+  call falls back to the configured model list on failure, which would report a dead credential as
+  healthy. Addressed by rule because credentials belong to a rule: two rules can point at the same
+  provider with different keys.
 </Note>
 
 ## Write keys

@@ -160,15 +160,20 @@ describe.skipIf(!POSTGRES_URL)("E2E: the admin API from an empty database", () =
             requireWriteKey: true,
             providers: [{ type: "jwt", secret: JWT_SECRET, algorithms: ["HS256"] }],
           },
-          providers: {
-            main: {
-              type: "openai-compatible",
-              baseUrl: "https://upstream.invalid/v1",
-              apiKey: { $secret: secretId },
-              models: ["mock-model"],
-            },
+          routing: {
+            rules: [
+              {
+                id: "main",
+                when: "true",
+                target: {
+                  type: "openai-compatible",
+                  baseUrl: "https://upstream.invalid/v1",
+                  apiKey: { $secret: secretId },
+                  models: ["mock-model"],
+                },
+              },
+            ],
           },
-          routing: { defaultProvider: "main" },
           logging: { requests: true, content: true },
         },
       }),
@@ -189,7 +194,7 @@ describe.skipIf(!POSTGRES_URL)("E2E: the admin API from an empty database", () =
   }, 30_000);
 
   it("step 4: the live provider probes green through the decrypted credential", async () => {
-    const probe = await admin("/admin/api/providers/main/test", { method: "POST" });
+    const probe = await admin("/admin/api/routing/rules/main/test", { method: "POST" });
     expect(probe.status).toBe(200);
     expect(await probe.json()).toMatchObject({ ok: true, status: 200 });
   });
@@ -255,7 +260,10 @@ describe.skipIf(!POSTGRES_URL)("E2E: the admin API from an empty database", () =
     expect(log.log).toMatchObject({
       status: 200,
       modelRequested: "mock-model",
-      providerId: "main",
+      // The provider *type*, not a rule id: a log row wants to say "this went to
+      // an OpenAI-compatible upstream". Which rule matched is `routeName`.
+      providerId: "openai-compatible",
+      routeName: "main",
       userId: "user-e2e",
       totalTokens: 14,
     });

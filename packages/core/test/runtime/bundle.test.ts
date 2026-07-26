@@ -64,8 +64,7 @@ const MINIMAL = {
   version: 1,
   storage: { type: "memory" },
   security: { providers: [{ type: "test-authenticated" }] },
-  providers: { main: { type: "fake" } },
-  routing: { defaultProvider: "main" },
+  routing: { rules: [{ id: "main", when: "true", target: { type: "fake" } }] },
 };
 
 describe("buildBundle", () => {
@@ -112,9 +111,12 @@ describe("buildBundle", () => {
   });
 
   it("names the unknown type and what is registered", () => {
-    expect(() => build({ ...MINIMAL, providers: { main: { type: "nope" } } })).toThrow(
-      /providers\.main.*"nope".*fake/s,
-    );
+    expect(() =>
+      build({
+        ...MINIMAL,
+        routing: { rules: [{ id: "main", when: "true", target: { type: "nope" } }] },
+      }),
+    ).toThrow(/routing\.rules\[0\]\.target.*"nope".*fake/s);
     expect(() => build({ ...MINIMAL, security: { providers: [{ type: "nope" }] } })).toThrow(
       /security\.providers\[0\].*"nope"/s,
     );
@@ -131,7 +133,14 @@ describe("buildBundle", () => {
     registry.auth.set("test-authenticated", createAlwaysAuthenticatedFactory());
 
     const bundle = buildBundle({
-      config: { ...MINIMAL, providers: { main: { type: "fake", apiKey: "$" + "{SECRET_KEY}" } } },
+      config: {
+        ...MINIMAL,
+        routing: {
+          rules: [
+            { id: "main", when: "true", target: { type: "fake", apiKey: "$" + "{SECRET_KEY}" } },
+          ],
+        },
+      },
       registry,
       storage: new MemoryStorageAdapter(),
       engine: new CelExpressionEngine(),
@@ -139,7 +148,7 @@ describe("buildBundle", () => {
       logger: silentLogger,
     });
 
-    expect(bundle.config.providers.main).toMatchObject({ apiKey: "sk-resolved" });
+    expect(bundle.config.routing.rules[0]?.target).toMatchObject({ apiKey: "sk-resolved" });
     expect(instances.get("main")).toBeDefined();
   });
 
@@ -147,8 +156,57 @@ describe("buildBundle", () => {
     // Better than silently constructing a provider with a literal "${VAR}" key
     // and failing on the first upstream call.
     expect(() =>
-      build({ ...MINIMAL, providers: { main: { type: "fake", apiKey: "$" + "{NOT_SET}" } } }),
+      build({
+        ...MINIMAL,
+        routing: {
+          rules: [
+            { id: "main", when: "true", target: { type: "fake", apiKey: "$" + "{NOT_SET}" } },
+          ],
+        },
+      }),
     ).toThrow(/NOT_SET/);
+  });
+
+  it("keeps a target's model out of the provider's options", () => {
+    // Regression, caught on a container rather than here: `model` is the rule's
+    // choice of what to forward as, and every real factory validates with
+    // `strictObject`, so passing the whole target through was rejected as an
+    // unrecognized key. Uses a *real* provider type on purpose — the `fake` one
+    // has a permissive schema and cannot catch this.
+    const bundle = build({
+      ...MINIMAL,
+      routing: {
+        rules: [
+          {
+            id: "real",
+            when: "true",
+            target: {
+              type: "openai-compatible",
+              baseUrl: "https://upstream.test/v1",
+              apiKey: "sk-test",
+              model: "gpt-4o-mini",
+            },
+          },
+        ],
+      },
+    });
+    expect(bundle.providers.get("real")?.type).toBe("openai-compatible");
+    // And the rule still forwards as that model.
+    expect(bundle.config.routing.rules[0]?.target.model).toBe("gpt-4o-mini");
+  });
+
+  it("rejects a duplicate rule id, which logs and the admin API address by", () => {
+    expect(() =>
+      build({
+        ...MINIMAL,
+        routing: {
+          rules: [
+            { id: "same", when: "true", target: { type: "fake" } },
+            { id: "same", when: "true", target: { type: "fake" } },
+          ],
+        },
+      }),
+    ).toThrow(/duplicate rule id "same"/);
   });
 
   it("rejects invalid configuration with the same message shape as everywhere else", () => {

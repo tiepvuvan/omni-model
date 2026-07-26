@@ -41,8 +41,15 @@ const CONFIG = {
   server: { logLevel: "silent" },
   storage: { type: "memory" },
   security: { providers: [{ type: "jwt", secret: "a-test-shared-secret-value" }] },
-  providers: { main: { type: "openai", apiKey: "sk-test", baseUrl: "https://upstream.test/v1" } },
-  routing: { defaultProvider: "main" },
+  routing: {
+    rules: [
+      {
+        id: "main",
+        when: "true",
+        target: { type: "openai", apiKey: "sk-test", baseUrl: "https://upstream.test/v1" },
+      },
+    ],
+  },
   // Nothing is asserted about logs here; keeping them on proves the flush on
   // shutdown does not throw.
   logging: { requests: true },

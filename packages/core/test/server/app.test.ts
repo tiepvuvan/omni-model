@@ -9,11 +9,9 @@ import { CHAT_BODY, chatRequest, createTestApp, FIXED_NOW } from "./helpers.js";
 
 const MINIMAL_YAML = `
 version: 1
-providers:
-  fake:
-    type: fake
 routing:
-  defaultProvider: fake
+  rules:
+    - { id: fake, when: "true", target: { type: fake } }
 `;
 
 describe("createOmniApp startup validation", () => {
@@ -22,11 +20,9 @@ describe("createOmniApp startup validation", () => {
 version: 1
 storage:
   type: bogus-store
-providers:
-  fake:
-    type: fake
 routing:
-  defaultProvider: fake
+  rules:
+    - { id: fake, when: "true", target: { type: fake } }
 `;
     await expect(createTestApp({ yaml })).rejects.toThrowError(ConfigError);
     await expect(createTestApp({ yaml })).rejects.toThrowError(/bogus-store.*memory/s);
@@ -38,11 +34,9 @@ version: 1
 security:
   providers:
     - type: nonexistent-auth
-providers:
-  fake:
-    type: fake
 routing:
-  defaultProvider: fake
+  rules:
+    - { id: fake, when: "true", target: { type: fake } }
 `;
     await expect(createTestApp({ yaml })).rejects.toThrowError(/nonexistent-auth.*fake-auth/s);
   });
@@ -50,11 +44,9 @@ routing:
   it("rejects an unknown model provider type, listing registered types", async () => {
     const yaml = `
 version: 1
-providers:
-  main:
-    type: no-such-provider
 routing:
-  defaultProvider: main
+  rules:
+    - { id: main, when: "true", target: { type: no-such-provider } }
 `;
     await expect(createTestApp({ yaml })).rejects.toThrowError(/no-such-provider.*fake/s);
   });
@@ -114,11 +106,9 @@ security:
   providers:
     - type: fake-auth
       challengeRoute: true
-providers:
-  fake:
-    type: fake
 routing:
-  defaultProvider: fake
+  rules:
+    - { id: fake, when: "true", target: { type: fake } }
 `;
     const storage = new MemoryStorageAdapter(() => FIXED_NOW);
     const { app } = await createTestApp({ yaml, storage });
@@ -141,11 +131,9 @@ server:
 security:
   providers:
     - type: fake-auth
-providers:
-  fake:
-    type: fake
 routing:
-  defaultProvider: fake
+  rules:
+    - { id: fake, when: "true", target: { type: fake } }
 `;
     const { app } = await createTestApp({ yaml });
     const response = await app.fetch(
@@ -171,11 +159,9 @@ version: 1
 server:
   cors:
     allowOrigins: ["*"]
-providers:
-  fake:
-    type: fake
 routing:
-  defaultProvider: fake
+  rules:
+    - { id: fake, when: "true", target: { type: fake } }
 `;
     const { app } = await createTestApp({ yaml });
     const response = await app.fetch(

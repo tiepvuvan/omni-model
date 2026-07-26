@@ -26,6 +26,7 @@ export * from "./routing/types.js";
 export * from "./runtime/bundle.js";
 export * from "./runtime/holder.js";
 export * from "./schema-shape.js";
+export * from "./secrets/credentials.js";
 export * from "./secrets/envelope.js";
 export * from "./secrets/keyring.js";
 export * from "./secrets/resolver.js";

@@ -126,22 +126,41 @@ function defaultRateLimits() {
   ];
 }
 
-export const providerConfigSchema = z.looseObject({ type: z.string().min(1) });
-
-export const routeConfigSchema = z.strictObject({
-  name: z.string().min(1),
-  /** CEL expression; the first route whose `when` is true wins. */
-  when: z.string(),
-  provider: z.string().min(1),
-  /** Upstream model override; omit to keep the client-requested model. */
+/**
+ * Where a matched request is sent: which upstream, with which credentials, as
+ * which model.
+ *
+ * `type` is the only field pinned here; the rest are the provider factory's own
+ * options and are validated by its `optionsSchema` when the bundle is built —
+ * the same two-step validation every other pluggable component gets.
+ *
+ * A target is part of the rule that owns it rather than a shared, named provider
+ * referenced from elsewhere. That is deliberate: a reference can dangle, and
+ * "which credentials does this rule actually use" stopped being answerable by
+ * reading the rule.
+ */
+export const routeTargetSchema = z.looseObject({
+  type: z.string().min(1),
+  /**
+   * Upstream model name. Omit to forward whatever the client asked for, which is
+   * what a rule matching on `request.model` usually wants.
+   */
   model: z.string().optional(),
 });
 
-export const modelRuleSchema = z.strictObject({
-  /** CEL expression, e.g. `request.model.startsWith("claude-")`. */
-  match: z.string(),
-  provider: z.string().min(1),
-  model: z.string().optional(),
+export const routingRuleSchema = z.strictObject({
+  /**
+   * Stable identity, referenced by logs and by the admin API. Defaults to the
+   * rule's position, so a hand-written configuration need not invent one — but
+   * anything that edits rules programmatically should set it, since a positional
+   * id changes meaning when rules are reordered.
+   */
+  id: z.string().min(1).optional(),
+  /** Human label, shown as the route name in request logs. */
+  name: z.string().min(1).optional(),
+  /** CEL expression; the first rule whose `when` is true wins. */
+  when: z.string(),
+  target: routeTargetSchema,
 });
 
 export const routingConfigSchema = z.strictObject({
@@ -150,12 +169,15 @@ export const routingConfigSchema = z.strictObject({
    * preserves the default: every model name is eligible for routing.
    */
   allowedModels: z.array(z.string().min(1)).default([]),
-  /** Evaluated in order against every request; first match wins. */
-  routes: z.array(routeConfigSchema).default([]),
-  /** Fallback mapping from client-requested model to provider. */
-  modelRules: z.array(modelRuleSchema).default([]),
-  /** Last resort when no route or model rule matches. */
-  defaultProvider: z.string().optional(),
+  /**
+   * Evaluated in order against every request; the first match wins and nothing
+   * else runs.
+   *
+   * There is no separate default: a catch-all is a last rule with `when: "true"`.
+   * With no rule matching, the request is a 404 — the same answer an unroutable
+   * model has always produced, and one concept instead of two.
+   */
+  rules: z.array(routingRuleSchema).default([]),
 });
 
 export const loggingConfigSchema = z.strictObject({
@@ -197,7 +219,9 @@ export const omniConfigSchema = z.strictObject({
   storage: storageConfigSchema,
   security: securityConfigSchema.prefault({}),
   rateLimits: z.array(rateLimitRuleSchema).default(defaultRateLimits),
-  providers: z.record(z.string().min(1), providerConfigSchema).default({}),
+  // No `providers` block: an upstream is described by the rule that routes to it
+  // (`routing.rules[].target`), so there is no name to reference and nothing to
+  // leave dangling.
   routing: routingConfigSchema.prefault({}),
   logging: loggingConfigSchema.prefault({}),
 });
@@ -208,9 +232,8 @@ export type StorageConfig = z.output<typeof storageConfigSchema>;
 export type SecurityProviderConfig = z.output<typeof securityProviderConfigSchema>;
 export type SecurityConfig = z.output<typeof securityConfigSchema>;
 export type RateLimitRuleConfig = z.output<typeof rateLimitRuleSchema>;
-export type ProviderConfig = z.output<typeof providerConfigSchema>;
-export type RouteConfig = z.output<typeof routeConfigSchema>;
-export type ModelRuleConfig = z.output<typeof modelRuleSchema>;
+export type RouteTargetConfig = z.output<typeof routeTargetSchema>;
+export type RoutingRuleConfig = z.output<typeof routingRuleSchema>;
 export type RoutingConfig = z.output<typeof routingConfigSchema>;
 export type LoggingConfig = z.output<typeof loggingConfigSchema>;
 export type OmniConfig = z.output<typeof omniConfigSchema>;

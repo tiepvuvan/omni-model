@@ -29,8 +29,8 @@ docker run -p 8787:8787 \
   -e OMNI_SECURITY_JWT_ENABLED=true \
   -e 'OMNI_SECURITY_JWT_SECRET=${OMNI_JWT_SECRET}' \
   -e 'OMNI_SECURITY_JWT_ALGORITHMS=["HS256"]' \
-  -e OMNI_PROVIDERS_DEFAULT_TYPE=openai \
-  -e 'OMNI_PROVIDERS_DEFAULT_API_KEY=${OPENAI_API_KEY}' \
+  -e OMNI_TARGET_TYPE=openai \
+  -e 'OMNI_TARGET_API_KEY=${OPENAI_API_KEY}' \
   ghcr.io/tiepvuvan/omni-model:latest
 ```
 
@@ -74,8 +74,8 @@ OMNI_STORAGE_POSTGRES_URL=${DATABASE_URL}
 OMNI_SECURITY_JWT_ENABLED=true
 OMNI_SECURITY_JWT_SECRET=${OMNI_JWT_SECRET}
 OMNI_SECURITY_JWT_ALGORITHMS=["HS256"]
-OMNI_PROVIDERS_DEFAULT_TYPE=openai
-OMNI_PROVIDERS_DEFAULT_API_KEY=${OPENAI_API_KEY}
+OMNI_TARGET_TYPE=openai
+OMNI_TARGET_API_KEY=${OPENAI_API_KEY}
 OMNI_RATE_LIMITS_JSON=[{"name":"per-user-requests","key":"user","requests":{"limit":30,"window":"1h"}}]
 ```
 
@@ -111,8 +111,8 @@ services:
       OMNI_SECURITY_JWT_ENABLED: "true"
       OMNI_SECURITY_JWT_SECRET: ${OMNI_JWT_SECRET}
       OMNI_SECURITY_JWT_ALGORITHMS: '["HS256"]'
-      OMNI_PROVIDERS_DEFAULT_TYPE: openai
-      OMNI_PROVIDERS_DEFAULT_API_KEY: ${OPENAI_API_KEY}
+      OMNI_TARGET_TYPE: openai
+      OMNI_TARGET_API_KEY: ${OPENAI_API_KEY}
 ```
 
 ## Configuration lives in the database
@@ -171,11 +171,17 @@ docker exec omni-model omni-model migrate
 
 ## Credentials managed from the dashboard
 
-`${VAR}` works when you control the environment. For credentials an admin adds at runtime, omni-model
-stores them **encrypted in the database** and configuration refers to them by id:
+`${VAR}` works when you control the environment. For credentials an operator types into the dashboard,
+omni-model stores them **encrypted in the database** and configuration refers to them by id:
 
 ```json
-{ "providers": { "openai": { "type": "openai", "apiKey": { "$secret": "3f7c…" } } } }
+{
+  "routing": {
+    "rules": [
+      { "id": "default", "when": "true", "target": { "type": "openai", "apiKey": { "$secret": "3f7c…" } } }
+    ]
+  }
+}
 ```
 
 Set a 32-byte master key to enable this:

@@ -12,8 +12,9 @@ const CONFIG = {
   server: { logLevel: "silent" },
   storage: { type: "memory" },
   security: { providers: [{ type: "jwt", secret: "test-shared-secret" }] },
-  providers: { main: { type: "openai", apiKey: "sk-test" } },
-  routing: { defaultProvider: "main" },
+  routing: {
+    rules: [{ id: "main", when: "true", target: { type: "openai", apiKey: "sk-test" } }],
+  },
 };
 
 const APP_CHECK_WITHOUT_PROJECT_NUMBER = {
@@ -21,8 +22,9 @@ const APP_CHECK_WITHOUT_PROJECT_NUMBER = {
   server: { logLevel: "silent" },
   storage: { type: "memory" },
   security: { providers: [{ type: "firebase-app-check" }] },
-  providers: { main: { type: "openai", apiKey: "sk-test" } },
-  routing: { defaultProvider: "main" },
+  routing: {
+    rules: [{ id: "main", when: "true", target: { type: "openai", apiKey: "sk-test" } }],
+  },
 };
 
 const CONSUMING_APP_CHECK_CONFIG = {
@@ -168,8 +170,9 @@ describe("startServer", () => {
         server: { logLevel: "silent" },
         storage: { type: "no-such-storage" },
         security: { providers: [{ type: "jwt", secret: "test-shared-secret" }] },
-        providers: { main: { type: "openai", apiKey: "sk-test" } },
-        routing: { defaultProvider: "main" },
+        routing: {
+          rules: [{ id: "main", when: "true", target: { type: "openai", apiKey: "sk-test" } }],
+        },
       },
       port: 0,
       hostname: "127.0.0.1",

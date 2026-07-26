@@ -80,8 +80,10 @@ The calling application appears in routing and rate-limit expressions as `client
 | `client.authenticated` | bool | Whether a valid key was presented. |
 
 ```sh
-OMNI_ROUTING_JSON='{"defaultProvider":"cheap","routes":[
-  {"name":"internal-tools","when":"client.name == \"admin-dashboard\"","provider":"frontier"}
+OMNI_ROUTING_JSON='{"rules":[
+  {"id":"internal-tools","when":"client.name == \"admin-dashboard\"",
+   "target":{"type":"anthropic","apiKey":"${ANTHROPIC_API_KEY}"}},
+  {"id":"everyone-else","when":"true","target":{"type":"openai","apiKey":"${OPENAI_API_KEY}"}}
 ]}'
 ```
 

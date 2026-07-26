@@ -22,8 +22,11 @@ function configWithSecret(secretId: string): Record<string, unknown> {
     version: 1,
     storage: { type: "memory" },
     security: { providers: [{ type: "test-authenticated" }] },
-    providers: { main: { type: "fake", apiKey: { $secret: secretId } } },
-    routing: { defaultProvider: "main" },
+    routing: {
+      rules: [
+        { id: "main", when: "true", target: { type: "fake", apiKey: { $secret: secretId } } },
+      ],
+    },
     rateLimits: [],
   };
 }
@@ -37,7 +40,9 @@ describe("secrets in a reload", () => {
 
     expect(result.ok).toBe(true);
     // The live bundle has the plaintext; the document we handed in never did.
-    expect(proxy.holder.current()?.config.providers.main).toMatchObject({ apiKey: CANARY });
+    expect(proxy.holder.current()?.config.routing.rules[0]?.target).toMatchObject({
+      apiKey: CANARY,
+    });
     expect(JSON.stringify(configWithSecret(id))).not.toContain(CANARY);
   });
 
@@ -53,7 +58,7 @@ describe("secrets in a reload", () => {
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.kind).toBe("unresolved_secret");
-      expect(result.error).toContain("$.providers.main.apiKey");
+      expect(result.error).toContain("$.routing.rules[0].target.apiKey");
     }
     // Identity unchanged: the previous configuration is still the live one.
     expect(proxy.holder.current()).toBe(before);
@@ -76,12 +81,14 @@ describe("secrets in a reload", () => {
     const { store, id } = await secretStore();
     const proxy = await createTestProxy({ initOverrides: { secrets: store } });
     await proxy.reloadRaw(configWithSecret(id));
-    expect(proxy.holder.current()?.config.providers.main).toMatchObject({ apiKey: CANARY });
+    expect(proxy.holder.current()?.config.routing.rules[0]?.target).toMatchObject({
+      apiKey: CANARY,
+    });
 
     await store.put("upstream", "sk-rotated-value");
     await proxy.reloadRaw(configWithSecret(id));
 
-    expect(proxy.holder.current()?.config.providers.main).toMatchObject({
+    expect(proxy.holder.current()?.config.routing.rules[0]?.target).toMatchObject({
       apiKey: "sk-rotated-value",
     });
   });
@@ -99,7 +106,9 @@ describe("secrets in a reload", () => {
     // A configuration whose provider type does not exist.
     await proxy.reloadRaw({
       ...configWithSecret(id),
-      providers: { main: { type: "nope", apiKey: { $secret: id } } },
+      routing: {
+        rules: [{ id: "main", when: "true", target: { type: "nope", apiKey: { $secret: id } } }],
+      },
     });
     await store.delete(id);
     await proxy.reloadRaw(configWithSecret(id));

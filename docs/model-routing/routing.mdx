@@ -1,160 +1,185 @@
 ---
 title: Model routing
-description: How omni-model decides which provider and upstream model serves each request.
+description: How omni-model decides which upstream, with which credentials, serves each request.
 ---
 
-Routing turns an incoming request into a `(provider, model)` decision. It lets you expose stable,
-client-facing model names — a `"smart"` alias, a `"claude-*"` family — and map them to concrete
-upstreams by user tier, request shape, headers, or time, without ever shipping that logic in your
-app. The rules live in the `routing` block of your config and are evaluated by
+Routing turns an incoming request into a decision: **which upstream, with which credentials, as which
+model**. It lets you expose stable client-facing names — a `"smart"` alias, a `"claude-*"` family —
+and map them to concrete upstreams by user tier, request shape, headers or time, without shipping any
+of that logic in your app.
+
+The rules live in the `routing` block and are evaluated by
 `packages/core/src/routing/router.ts`.
 
-Every `when`/`match` field is a [CEL expression](/model-routing/expressions). Read that page first
-if you have not — the missing-key gotcha bites here too.
+Every `when` field is a [CEL expression](/model-routing/expressions). Read that page first if you
+have not — the missing-key gotcha bites here too.
 
-## How a decision is made
+## One list, first match wins
 
-For each request the router walks three stages in order and stops at the **first** rule whose
-condition is exactly boolean `true`:
-
-<Steps>
-  <Step title="routes">
-    `routes[]` are evaluated top to bottom. The first route whose `when` is `true` wins. Its
-    `provider` is used, and `model` (if set) overrides the upstream model — omit `model` to pass
-    the client's requested model through unchanged.
-  </Step>
-  <Step title="modelRules">
-    If no route matched, `modelRules[]` are evaluated top to bottom with the same mechanics, using
-    `match` instead of `when`. These are the fallback "who owns this model name" mappings.
-  </Step>
-  <Step title="defaultProvider">
-    If still nothing matched and `defaultProvider` is set, it serves the request with the
-    client-requested model verbatim.
-  </Step>
-</Steps>
-
-If none of the three produce a decision, the request fails with an OpenAI-style **404
-`model_not_found`** error.
-
-### Restrict the client-visible model names
-
-Use `allowedModels` when the proxy should expose only a deliberate set of aliases or model names.
-It is an exact-match allowlist: requests for any other name fail with `404 model_not_found` before
-reaching an upstream. When set, `/v1/models` returns precisely this list rather than the upstream
-inventory.
-
-```sh
-export OMNI_ROUTING_ALLOWED_MODELS='["smart","fast","embed"]'
+```json
+{
+  "routing": {
+    "rules": [
+      {
+        "id": "pro-users",
+        "when": "request.model == \"smart\" && has(user.claims.tier) && user.claims.tier == \"pro\"",
+        "target": {
+          "type": "anthropic",
+          "apiKey": "${ANTHROPIC_API_KEY}",
+          "model": "claude-sonnet-5"
+        }
+      },
+      {
+        "id": "everyone-else",
+        "when": "true",
+        "target": { "type": "openai", "apiKey": "${OPENAI_API_KEY}", "model": "gpt-4o-mini" }
+      }
+    ]
+  }
+}
 ```
 
-An omitted or empty `allowedModels` list permits every client model name, as before.
+Rules are evaluated top to bottom. The first one whose condition is exactly boolean `true` wins, and
+nothing after it runs.
 
-<Note>
-  Provider references (`provider` / `defaultProvider`) must be keys of your
-  [`providers`](/reference/configuration) map. Unknown references are caught at startup and throw
-  a `ConfigError`, never a mid-request failure.
-</Note>
+There is no separate default stage: **a catch-all is a last rule with `when: "true"`.** If no rule
+matches, the request is a 404 `model_not_found` — which is what you want for a name nothing is
+configured to serve.
 
-### The failure policy is forgiving
+## The target owns its credentials
 
-A condition that **throws** at evaluation time (for example an unguarded missing claim key) or
-returns a **non-boolean** counts as *no match* — evaluation simply moves to the next rule. One bad
-expression can never take the proxy down. A non-boolean result additionally logs a warning once
-per rule as a config smell, so watch your logs if a route silently never fires.
+A rule's `target` carries the provider type, its credentials and the upstream model. There is no
+separate providers block and no name to reference.
 
-## A full routing block
+That is deliberate. A reference can dangle, and with providers defined elsewhere, "which key does
+this rule actually use" stopped being answerable by reading the rule. Two rules can point at the same
+provider type with different keys — a cheap account for free users, a production account for paying
+ones — and each says so on its face.
 
-```sh
-export OMNI_ROUTING_JSON='{
-  "routes":[
-    {"name":"smart-for-pro","when":"request.model == \"smart\" && has(user.claims.tier) && user.claims.tier == \"pro\"","provider":"anthropic","model":"claude-sonnet-4-5"},
-    {"name":"smart-default","when":"request.model == \"smart\"","provider":"openai","model":"gpt-4o-mini"}
-  ],
-  "modelRules":[
-    {"match":"request.model.startsWith(\"claude-\")","provider":"anthropic"},
-    {"match":"request.model.startsWith(\"gemini-\")","provider":"google"}
-  ],
-  "defaultProvider":"openai"
-}'
+```json
+{
+  "id": "free-tier",
+  "when": "!has(user.claims.tier)",
+  "target": {
+    "type": "openai-compatible",
+    "baseUrl": "https://api.groq.com/openai/v1",
+    "apiKey": "${GROQ_API_KEY}",
+    "model": "llama-3.3-70b-versatile"
+  }
+}
 ```
 
-This config says: a Pro user asking for `"smart"` gets Anthropic's Sonnet; everyone else asking
-for `"smart"` gets GPT-4o mini; any `claude-*` or `gemini-*` model name is forwarded to Anthropic
-or Google under its own name; anything else falls through to OpenAI.
+`model` is the upstream name to forward as. **Omit it to pass the client's model through
+unchanged** — which is what a rule dispatching a family of real model names wants:
 
-## Worked examples
+```json
+{
+  "id": "anthropic-family",
+  "when": "request.model.startsWith(\"claude-\")",
+  "target": { "type": "anthropic", "apiKey": "${ANTHROPIC_API_KEY}" }
+}
+```
 
-### Alias one name to a provider + model by tier
+Set it when you are inventing an alias; leave it off when the client already knows the real name.
 
-`routes` shine when a single client-facing name should resolve to different upstreams for
-different users. The client always sends `"model": "smart"`; the tier lives in the auth token's
-claims.
+See the [configuration reference](/reference/configuration#target-fields) for each provider type's
+fields, or ask a running deployment: `GET /admin/api/meta` publishes them as JSON Schema.
+
+## What clients may ask for
+
+`allowedModels` is the client-facing catalogue. A request for anything else is a 404 **before any
+rule runs**, and `GET /v1/models` lists exactly these names.
+
+```json
+{ "routing": { "allowedModels": ["smart", "fast"], "rules": [] } }
+```
+
+Leave it empty and every name is eligible for routing. `/v1/models` then falls back to the distinct
+models the rules forward to, because a rule matching a pattern cannot be enumerated.
+
+Client-facing names never have to match upstream names — that is what a target's `model` is for. A
+write key can narrow the list further; see [write keys](/reference/write-keys).
+
+## Two silent failures, and how to see them
+
+CEL has two behaviours that make a broken rule invisible rather than loud:
+
+- Reading a **missing map key throws**. An unguarded `user.claims.tier == "pro"` throws for any user
+  without that claim, and the router treats a throw as "no match".
+- **Only a literal `true` matches.** A truthy string or number does not.
+
+Both are correct for serving traffic — one bad expression must not 500 every request — and both mean
+the rule simply never fires. `POST /admin/api/routing/simulate` is how you see it:
 
 ```sh
-export OMNI_ROUTING_JSON='{
-  "routes":[
-    {"name":"smart-pro","when":"request.model == \"smart\" && has(user.claims.tier) && user.claims.tier == \"pro\"","provider":"anthropic","model":"claude-sonnet-4-5"},
-    {"name":"smart-free","when":"request.model == \"smart\"","provider":"openai","model":"gpt-4o-mini"}
+curl -b cookies.txt -X POST https://your-proxy/admin/api/routing/simulate \
+  -H 'content-type: application/json' \
+  -d '{"model":"smart","claims":{"tier":"pro"}}'
+```
+
+```json
+{
+  "matched": true,
+  "route": "everyone-else",
+  "rules": [{ "rule": "pro-users", "outcome": "error", "error": "no such key: tier" }],
+  "warnings": ["rule \"pro-users\" throws for this request and can therefore never match: …"]
+}
+```
+
+Guard optional fields with `has()`:
+
+```json
+{ "when": "has(user.claims.tier) && user.claims.tier == \"pro\"" }
+```
+
+## Order is meaning
+
+Adding a rule to a list that already ends in a catch-all appends it **after** that
+catch-all — where first-match-wins makes it dead on arrival. The proxy keeps
+answering normally from the earlier rule, so nothing about a request reveals it.
+
+Saving through the admin API says so:
+
+```json
+{
+  "revision": 3,
+  "warnings": [
+    "rule \"premium\" can never match: \"default\" earlier in the list matches everything (when: \"true\"). Move \"premium\" above it — rules are evaluated in order and the first match wins."
   ]
-}'
+}
 ```
 
-Order matters: the more specific `smart-pro` route comes first, because the first `true` wins. The
-`has(user.claims.tier)` guard is mandatory — without it, a user whose token has no `tier` claim
-would make the expression throw, and the route would silently be skipped.
+The proxy also logs it at boot. Keep the catch-all last, and put specific rules above
+it. Reordering is `PUT /routing` with the whole list — the only request that can
+express a new order.
 
-### Per-model family fallback
+## Rule fields
 
-`modelRules` map whole families of model names to the provider that owns them, keeping the client's
-exact model name. Pair this with a `defaultProvider` so unmatched names still resolve.
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `when` | string | yes | CEL expression. Only a literal `true` counts as a match. |
+| `target` | object | yes | Where a match goes: `type` plus that provider's options, and an optional `model`. |
+| `id` | string | no | Stable identity, used by request logs and the admin API. Defaults to the rule's position — set it explicitly if anything edits rules programmatically, since a positional id changes meaning when rules are reordered. |
+| `name` | string | no | Human label, shown as the route name in request logs. Defaults to `id`. |
 
-```sh
-export OMNI_ROUTING_JSON='{
-  "modelRules":[
-    {"match":"request.model.startsWith(\"claude-\")","provider":"anthropic"},
-    {"match":"request.model.startsWith(\"gemini-\")","provider":"google"}
-  ],
-  "defaultProvider":"openai"
-}'
-```
+| `routing` field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `allowedModels` | string array | no (default `[]`) | Client-facing catalogue. Empty means no restriction. |
+| `rules` | array | no (default `[]`) | Evaluated in order; first match wins. |
 
-Here `claude-opus-4-1` goes to the `anthropic` provider under that exact name, `gemini-2.0-flash`
-to `google`, and any other name (`gpt-4o`, `o3-mini`, ...) to `openai`.
+## What ends up in the logs
 
-<Tip>
-  `routes` override the client's model with `model:`; `modelRules` typically keep it. Reach for
-  `routes` when you are inventing an alias, and `modelRules` when you are dispatching real model
-  names to their owning provider.
-</Tip>
+Every request records the rule that served it and the provider type it went to, so
+`GET /admin/api/logs` answers "where did this go and what did it cost" per request. See
+[logging](/reference/logging).
 
-## Reference
+## Related
 
 <CardGroup cols={2}>
-  <Card title="CEL expressions" icon="code" href="/model-routing/expressions">
-    The full context reference, operators, and the missing-key guard idiom.
+  <Card title="Write the conditions" icon="code" href="/model-routing/expressions">
+    CEL syntax, the variables a request exposes, and the two gotchas.
   </Card>
-  <Card title="Configuration reference" icon="book" href="/reference/configuration">
-    Every `routing`, `providers`, and `rateLimits` field with defaults and constraints.
+  <Card title="Edit rules over HTTP" icon="sliders" href="/reference/admin-api">
+    The endpoints a dashboard drives, including per-rule updates and probes.
   </Card>
 </CardGroup>
-
-### Field summary
-
-| `routes[]` | Type | Required | Description |
-| --- | --- | --- | --- |
-| `name` | string | yes | Route name, shown in logs. |
-| `when` | CEL expression | yes | Must evaluate to exactly `true` to match. |
-| `provider` | string | yes | A key of `providers`. Checked at startup. |
-| `model` | string | no | Upstream model override; omit to keep the client's model. |
-
-| `modelRules[]` | Type | Required | Description |
-| --- | --- | --- | --- |
-| `match` | CEL expression | yes | Must evaluate to exactly `true` to match. |
-| `provider` | string | yes | A key of `providers`. Checked at startup. |
-| `model` | string | no | Upstream model override; omit to keep the client's model. |
-
-| `routing` | Type | Required | Description |
-| --- | --- | --- | --- |
-| `routes` | array | no (default `[]`) | Evaluated first, in order. |
-| `modelRules` | array | no (default `[]`) | Evaluated after routes, in order. |
-| `defaultProvider` | string | no | Last-resort provider; a 404 `model_not_found` results if unset and nothing matched. |

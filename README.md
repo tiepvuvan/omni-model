@@ -74,8 +74,8 @@ OMNI_JWT_SECRET=dev-secret \
 OMNI_STORAGE_TYPE=memory \
 OMNI_SECURITY_JWT_ENABLED=true \
 OMNI_SECURITY_JWT_SECRET='${OMNI_JWT_SECRET}' \
-OMNI_PROVIDERS_DEFAULT_TYPE=openai \
-OMNI_PROVIDERS_DEFAULT_API_KEY='${OPENAI_API_KEY}' \
+OMNI_TARGET_TYPE=openai \
+OMNI_TARGET_API_KEY='${OPENAI_API_KEY}' \
 node packages/node/dist/cli.js
 ```
 
@@ -98,12 +98,12 @@ docker run -p 8787:8787 \
   -e OMNI_STORAGE_TYPE=memory \
   -e OMNI_SECURITY_JWT_ENABLED=true \
   -e 'OMNI_SECURITY_JWT_SECRET=${OMNI_JWT_SECRET}' \
-  -e OMNI_PROVIDERS_DEFAULT_TYPE=openai \
-  -e 'OMNI_PROVIDERS_DEFAULT_API_KEY=${OPENAI_API_KEY}' \
+  -e OMNI_TARGET_TYPE=openai \
+  -e 'OMNI_TARGET_API_KEY=${OPENAI_API_KEY}' \
   ghcr.io/tiepvuvan/omni-model:latest
 ```
 
-Use the named `OMNI_STORAGE_*`, `OMNI_PROVIDERS_DEFAULT_*`, and `OMNI_SECURITY_*` variables for a
+Use the named `OMNI_STORAGE_*`, `OMNI_TARGET_*`, and `OMNI_SECURITY_*` variables for a
 one-provider deployment. The [configuration reference](docs/reference/configuration.mdx) maps every
 available setting. `OMNI_CONFIG_JSON`, named JSON blocks, and `OMNI__...` paths cover complex
 multi-provider routing.
@@ -141,18 +141,21 @@ OMNI_RATE_LIMITS_JSON='[
   {"name":"per-device-requests","key":"device","requests":{"limit":30,"window":"1m"}},
   {"name":"per-device-daily-tokens","key":"device","tokens":{"limit":150000,"window":"1d"}}
 ]'
-OMNI_PROVIDERS_JSON='{
-  "openai":{"type":"openai","apiKey":"${OPENAI_API_KEY}"},
-  "anthropic":{"type":"anthropic","apiKey":"${ANTHROPIC_API_KEY}"}
-}'
 OMNI_ROUTING_JSON='{
-  "routes":[{"name":"smart","when":"request.model == \"smart\"","provider":"anthropic","model":"claude-sonnet-4-5"}],
-  "modelRules":[{"match":"request.model.startsWith(\"gpt-\")","provider":"openai"}],
-  "defaultProvider":"openai"
+  "rules":[
+    {"id":"smart","when":"request.model == \"smart\"",
+     "target":{"type":"anthropic","apiKey":"${ANTHROPIC_API_KEY}","model":"claude-sonnet-4-5"}},
+    {"id":"gpt-family","when":"request.model.startsWith(\"gpt-\")",
+     "target":{"type":"openai","apiKey":"${OPENAI_API_KEY}"}},
+    {"id":"everything-else","when":"true",
+     "target":{"type":"openai","apiKey":"${OPENAI_API_KEY}"}}
+  ]
 }'
 ```
 
-Swap which model backs `"smart"` by updating an environment variable—no app release required.
+Each rule carries its own upstream — provider type, credentials and model — and the first match wins.
+Swap which model backs `"smart"` from the dashboard or an environment variable; no app release
+required.
 Every option is documented in [docs/reference/configuration.mdx](docs/reference/configuration.mdx).
 
 ## Using it from your app

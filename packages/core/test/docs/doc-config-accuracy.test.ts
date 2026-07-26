@@ -77,17 +77,23 @@ describe("environment configuration examples", () => {
           requests: { limit: 60, window: "1m" },
         },
       ],
-      providers: { openai: { type: "openai", apiKey: "$" + "{OPENAI_API_KEY}" } },
       routing: {
-        routes: [
+        rules: [
           {
-            name: "smart",
+            id: "smart",
             when: 'request.model == "smart"',
-            provider: "openai",
-            model: "gpt-4o-mini",
+            target: {
+              type: "openai",
+              apiKey: "$" + "{OPENAI_API_KEY}",
+              model: "gpt-4o-mini",
+            },
+          },
+          {
+            id: "default",
+            when: "true",
+            target: { type: "openai", apiKey: "$" + "{OPENAI_API_KEY}" },
           },
         ],
-        defaultProvider: "openai",
       },
     }),
   });
@@ -102,8 +108,7 @@ describe("environment configuration examples", () => {
       if (rule.when !== undefined) expressions.push(rule.when);
       if (rule.keyExpression !== undefined) expressions.push(rule.keyExpression);
     }
-    for (const route of config.routing.routes) expressions.push(route.when);
-    for (const rule of config.routing.modelRules) expressions.push(rule.match);
+    for (const rule of config.routing.rules) expressions.push(rule.when);
 
     expect(expressions.length).toBeGreaterThan(0);
     for (const expr of expressions) {
@@ -158,14 +163,12 @@ describe("full config examples in the reference page parse", () => {
       "OMNI_SECURITY_JSON",
       "OMNI_SECURITY_PROVIDERS_JSON",
       "OMNI_RATE_LIMITS_JSON",
-      "OMNI_PROVIDERS_JSON",
       "OMNI_ROUTING_JSON",
       "OMNI_STORAGE_POSTGRES_URL",
-      "OMNI_PROVIDERS_DEFAULT_TYPE",
+      "OMNI_TARGET_TYPE",
       "OMNI_SECURITY_FIREBASE_AUTH_ENABLED",
       "OMNI_SECURITY_FIREBASE_APPCHECK_ENABLED",
       "OMNI_SECURITY_FIREBASE_APPCHECK_CONSUME",
-      "OMNI_ROUTING_DEFAULT_PROVIDER",
       "OMNI_ROUTING_ALLOWED_MODELS",
       "OMNI__",
     ]) {
@@ -191,8 +194,8 @@ describe("the documented container production configuration", () => {
       OMNI_SECURITY_JWT_ENABLED: "true",
       OMNI_SECURITY_JWT_SECRET: "$" + "{OMNI_JWT_SECRET}",
       OMNI_SECURITY_JWT_ALGORITHMS: '["HS256"]',
-      OMNI_PROVIDERS_DEFAULT_TYPE: "openai",
-      OMNI_PROVIDERS_DEFAULT_API_KEY: "$" + "{OPENAI_API_KEY}",
+      OMNI_TARGET_TYPE: "openai",
+      OMNI_TARGET_API_KEY: "$" + "{OPENAI_API_KEY}",
       OMNI_RATE_LIMITS_JSON:
         '[{"name":"per-user-requests","key":"user","requests":{"limit":30,"window":"1h"}}]',
     });
@@ -201,5 +204,9 @@ describe("the documented container production configuration", () => {
       url: "postgres://localhost/omni",
     });
     expect(config.security.providers).toMatchObject([{ type: "jwt" }]);
+    // The shortcuts seed one catch-all rule, which is the whole point of them.
+    expect(config.routing.rules).toMatchObject([
+      { id: "default", when: "true", target: { type: "openai" } },
+    ]);
   });
 });

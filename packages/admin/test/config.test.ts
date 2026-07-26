@@ -23,7 +23,12 @@ describe("configuration read and write", () => {
 
   it("saves a revision, applies it, and attributes it to the operator", async () => {
     const { call, holder } = await createTestAdmin({ config: baseConfig() });
-    const next = baseConfig({ routing: { defaultProvider: "default", allowedModels: ["gpt-4o"] } });
+    const next = baseConfig({
+      routing: {
+        allowedModels: ["gpt-4o"],
+        rules: [{ id: "default", when: "true", target: { type: "openai", apiKey: "sk-test" } }],
+      },
+    });
     const response = await call("/admin/api/config", {
       method: "PUT",
       body: JSON.stringify({ config: next, note: "restrict models" }),
@@ -42,12 +47,16 @@ describe("configuration read and write", () => {
     const { call, holder, configStore } = await createTestAdmin({ config: baseConfig() });
     const response = await call("/admin/api/config", {
       method: "PUT",
-      body: JSON.stringify({ config: baseConfig({ providers: { default: { type: "nope" } } }) }),
+      body: JSON.stringify({
+        config: baseConfig({
+          routing: { rules: [{ id: "default", when: "true", target: { type: "nope" } }] },
+        }),
+      }),
     });
     expect(response.status).toBe(400);
     const error = await errorOf(response);
     expect(error.code).toBe("invalid_config");
-    expect(error.message).toMatch(/providers\.default/);
+    expect(error.message).toMatch(/routing\.rules\[0\]\.target/);
     expect(error.message).toMatch(/"nope"/);
     // The previous configuration is still live, and nothing was persisted.
     expect(holder.status().revision).toBe(1);
@@ -103,35 +112,75 @@ describe("block-level updates", () => {
     expect([...(holder.current()?.providers.keys() ?? [])]).toEqual(["default"]);
   });
 
-  it("adds and removes a provider", async () => {
+  it("adds and removes a routing rule", async () => {
     const { call, holder } = await createTestAdmin({ config: baseConfig() });
-    const added = await call("/admin/api/providers/backup", {
+    const added = await call("/admin/api/routing/rules/backup", {
       method: "PUT",
       body: JSON.stringify({
-        value: { type: "anthropic", apiKey: "sk-ant", baseUrl: "https://anthropic.test" },
+        value: {
+          when: 'request.model.startsWith("claude-")',
+          target: { type: "anthropic", apiKey: "sk-ant" },
+        },
       }),
     });
     expect(added.status).toBe(200);
-    expect([...(holder.current()?.providers.keys() ?? [])].sort()).toEqual(["backup", "default"]);
+    // Appended, not prepended: order is meaning, and a new rule must not silently
+    // take precedence over the ones already there.
+    expect(holder.current()?.config.routing.rules.map((rule) => rule.id)).toEqual([
+      "default",
+      "backup",
+    ]);
 
-    const removed = await call("/admin/api/providers/backup", { method: "DELETE" });
+    const removed = await call("/admin/api/routing/rules/backup", { method: "DELETE" });
     expect(removed.status).toBe(200);
-    expect([...(holder.current()?.providers.keys() ?? [])]).toEqual(["default"]);
+    expect(holder.current()?.config.routing.rules.map((rule) => rule.id)).toEqual(["default"]);
   });
 
-  it("404s when removing a provider that is not configured", async () => {
-    const { call } = await createTestAdmin({ config: baseConfig() });
-    const response = await call("/admin/api/providers/ghost", { method: "DELETE" });
-    expect(response.status).toBe(404);
-  });
-
-  it("refuses to remove the provider routing depends on", async () => {
+  it("replaces a rule in place, keeping its position", async () => {
     const { call, holder } = await createTestAdmin({ config: baseConfig() });
-    const response = await call("/admin/api/providers/default", { method: "DELETE" });
-    // Rejected by the same validation startup uses, not by a special case here.
+    await call("/admin/api/routing/rules/second", {
+      method: "PUT",
+      body: JSON.stringify({
+        value: { when: "true", target: { type: "openai", apiKey: "sk-2" } },
+      }),
+    });
+    await call("/admin/api/routing/rules/default", {
+      method: "PUT",
+      body: JSON.stringify({
+        value: { when: "true", target: { type: "anthropic", apiKey: "sk-ant" } },
+      }),
+    });
+
+    const rules = holder.current()?.config.routing.rules ?? [];
+    expect(rules.map((rule) => rule.id)).toEqual(["default", "second"]);
+    expect(rules[0]?.target.type).toBe("anthropic");
+  });
+
+  it("404s when removing a rule that does not exist", async () => {
+    const { call } = await createTestAdmin({ config: baseConfig() });
+    expect((await call("/admin/api/routing/rules/ghost", { method: "DELETE" })).status).toBe(404);
+  });
+
+  it("rejects a rule that is not an object", async () => {
+    const { call } = await createTestAdmin({ config: baseConfig() });
+    const response = await call("/admin/api/routing/rules/bad", {
+      method: "PUT",
+      body: JSON.stringify({ value: "not an object" }),
+    });
+    expect(response.status).toBe(400);
+  });
+
+  it("rejects a rule whose target names an unknown provider", async () => {
+    // Validated by the same two-step schema a boot uses, so the API refuses
+    // exactly what startup would have refused.
+    const { call, holder } = await createTestAdmin({ config: baseConfig() });
+    const response = await call("/admin/api/routing/rules/broken", {
+      method: "PUT",
+      body: JSON.stringify({ value: { when: "true", target: { type: "no-such-provider" } } }),
+    });
     expect(response.status).toBe(400);
     expect((await errorOf(response)).code).toBe("invalid_config");
-    expect(holder.current()?.providers.has("default")).toBe(true);
+    expect(holder.current()?.config.routing.rules).toHaveLength(1);
   });
 });
 
@@ -153,7 +202,12 @@ describe("revision history and rollback", () => {
     const { call, holder, configStore } = await createTestAdmin({ config: baseConfig() });
     await call("/admin/api/routing", {
       method: "PUT",
-      body: JSON.stringify({ value: { defaultProvider: "default", allowedModels: ["only-this"] } }),
+      body: JSON.stringify({
+        value: {
+          allowedModels: ["only-this"],
+          rules: [{ id: "default", when: "true", target: { type: "openai", apiKey: "sk-test" } }],
+        },
+      }),
     });
     expect(holder.current()?.allowedModels).toEqual(["only-this"]);
 
@@ -184,7 +238,7 @@ describe("revision history and rollback", () => {
 describe("provider probe", () => {
   it("reports a reachable upstream", async () => {
     const { call } = await createTestAdmin({ config: baseConfig() });
-    const response = await call("/admin/api/providers/default/test", { method: "POST" });
+    const response = await call("/admin/api/routing/rules/default/test", { method: "POST" });
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({ ok: true, status: 200 });
   });
@@ -196,7 +250,7 @@ describe("provider probe", () => {
         throw new Error("ECONNREFUSED upstream.test");
       },
     });
-    const response = await call("/admin/api/providers/default/test", { method: "POST" });
+    const response = await call("/admin/api/routing/rules/default/test", { method: "POST" });
     // 200: "the upstream is down" is a successful answer to "is it up".
     expect(response.status).toBe(200);
     const body = (await response.json()) as { ok: boolean; error: string };
@@ -217,18 +271,67 @@ describe("provider probe", () => {
           headers: { "content-type": "application/json" },
         }),
     });
-    const response = await call("/admin/api/providers/default/test", { method: "POST" });
+    const response = await call("/admin/api/routing/rules/default/test", { method: "POST" });
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({ ok: false, status: 401 });
   });
 
-  it("404s for a provider that is not configured", async () => {
+  it("404s for a rule that is not configured", async () => {
     const { call } = await createTestAdmin({ config: baseConfig() });
-    expect((await call("/admin/api/providers/ghost/test", { method: "POST" })).status).toBe(404);
+    expect((await call("/admin/api/routing/rules/ghost/test", { method: "POST" })).status).toBe(
+      404,
+    );
   });
 
   it("503s when nothing is applied yet", async () => {
     const { call } = await createTestAdmin();
-    expect((await call("/admin/api/providers/default/test", { method: "POST" })).status).toBe(503);
+    expect((await call("/admin/api/routing/rules/default/test", { method: "POST" })).status).toBe(
+      503,
+    );
+  });
+});
+
+describe("warnings about rules that can never fire", () => {
+  it("warns when a rule is appended after a catch-all", async () => {
+    // Found by using the API: `PUT /routing/rules/:id` appends, and the seeded
+    // configuration ends in `when: "true"` — so the new rule was dead on arrival
+    // and the proxy kept answering normally from the earlier one.
+    const { call } = await createTestAdmin({ config: baseConfig() });
+    const response = await call("/admin/api/routing/rules/premium", {
+      method: "PUT",
+      body: JSON.stringify({
+        value: {
+          when: 'has(user.claims.tier) && user.claims.tier == "pro"',
+          target: { type: "openai", apiKey: "sk-pro" },
+        },
+      }),
+    });
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { warnings: string[] };
+    expect(body.warnings).toHaveLength(1);
+    expect(body.warnings[0]).toMatch(/"premium" can never match/);
+    expect(body.warnings[0]).toMatch(/Move "premium" above it/);
+  });
+
+  it("says nothing when the catch-all is last", async () => {
+    const { call } = await createTestAdmin({
+      config: baseConfig({
+        routing: {
+          rules: [
+            {
+              id: "premium",
+              when: 'has(user.claims.tier) && user.claims.tier == "pro"',
+              target: { type: "openai", apiKey: "sk-pro" },
+            },
+            { id: "default", when: "true", target: { type: "openai", apiKey: "sk" } },
+          ],
+        },
+      }),
+    });
+    const response = await call("/admin/api/logging", {
+      method: "PUT",
+      body: JSON.stringify({ value: { requests: true } }),
+    });
+    expect((await response.json()).warnings).toEqual([]);
   });
 });

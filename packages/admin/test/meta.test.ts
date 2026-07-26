@@ -68,15 +68,18 @@ describe("component metadata", () => {
 describe("routing simulation", () => {
   /** Two routes: one that only fires for a named client, one catch-all. */
   const routed = baseConfig({
-    providers: {
-      default: { type: "openai", apiKey: "sk-a", baseUrl: "https://a.test/v1" },
-      premium: { type: "openai", apiKey: "sk-b", baseUrl: "https://b.test/v1" },
-    },
     routing: {
-      defaultProvider: "default",
-      routes: [
-        { name: "premium-clients", when: 'client.name == "ios app"', provider: "premium" },
-        { name: "everything-else", when: "true", provider: "default" },
+      rules: [
+        {
+          id: "premium-clients",
+          when: 'client.name == "ios app"',
+          target: { type: "openai", apiKey: "sk-b", baseUrl: "https://b.test/v1" },
+        },
+        {
+          id: "everything-else",
+          when: "true",
+          target: { type: "openai", apiKey: "sk-a", baseUrl: "https://a.test/v1" },
+        },
       ],
     },
   });
@@ -91,7 +94,7 @@ describe("routing simulation", () => {
     const body = (await response.json()) as { matched: boolean; route: string; provider: string };
     expect(body.matched).toBe(true);
     expect(body.route).toBe("premium-clients");
-    expect(body.provider).toBe("premium");
+    expect(body.provider).toBe("openai");
   });
 
   it("falls through to the catch-all for a different client", async () => {
@@ -102,7 +105,7 @@ describe("routing simulation", () => {
     });
     const body = (await response.json()) as { route: string; provider: string };
     expect(body.route).toBe("everything-else");
-    expect(body.provider).toBe("default");
+    expect(body.provider).toBe("openai");
   });
 
   it("returns the facts the rules were evaluated against", async () => {
@@ -136,7 +139,10 @@ describe("routing simulation", () => {
   it("reports a model nothing would serve as an unmatched simulation, not an error", async () => {
     const { call } = await createTestAdmin({
       config: baseConfig({
-        routing: { defaultProvider: "default", allowedModels: ["gpt-4o"] },
+        routing: {
+          allowedModels: ["gpt-4o"],
+          rules: [{ id: "default", when: "true", target: { type: "openai", apiKey: "sk" } }],
+        },
       }),
     });
     const response = await call("/admin/api/routing/simulate", {
@@ -156,8 +162,14 @@ describe("routing simulation", () => {
     const { call } = await createTestAdmin({
       config: baseConfig({
         routing: {
-          defaultProvider: "default",
-          routes: [{ name: "pro-only", when: 'user.claims.plan == "pro"', provider: "default" }],
+          rules: [
+            {
+              id: "pro-only",
+              when: 'user.claims.plan == "pro"',
+              target: { type: "openai", apiKey: "sk" },
+            },
+            { id: "catch-all", when: "true", target: { type: "openai", apiKey: "sk" } },
+          ],
         },
       }),
     });
@@ -172,11 +184,14 @@ describe("routing simulation", () => {
       rules: Array<{ rule: string; outcome: string; error?: string }>;
       warnings: string[];
     };
-    // Served by the default provider, so the request itself would succeed...
+    // Served by the catch-all, so the request itself would succeed...
     expect(body.matched).toBe(true);
-    expect(body.route).toBeNull();
+    expect(body.route).toBe("catch-all");
     // ...while the rule the operator wrote never fires, and they are told so.
-    expect(body.rules).toEqual([expect.objectContaining({ rule: "pro-only", outcome: "error" })]);
+    expect(body.rules).toEqual([
+      expect.objectContaining({ rule: "pro-only", outcome: "error" }),
+      expect.objectContaining({ rule: "catch-all", outcome: "match" }),
+    ]);
     expect(body.warnings).toHaveLength(1);
     expect(body.warnings[0]).toMatch(/never match/);
     expect(body.warnings[0]).toMatch(/has\(/);
@@ -186,13 +201,13 @@ describe("routing simulation", () => {
     const { call } = await createTestAdmin({
       config: baseConfig({
         routing: {
-          defaultProvider: "default",
-          routes: [
+          rules: [
             {
-              name: "pro-only",
+              id: "pro-only",
               when: 'has(user.claims.plan) && user.claims.plan == "pro"',
-              provider: "default",
+              target: { type: "openai", apiKey: "sk" },
             },
+            { id: "catch-all", when: "true", target: { type: "openai", apiKey: "sk" } },
           ],
         },
       }),

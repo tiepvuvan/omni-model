@@ -8,13 +8,21 @@ import { CHAT_BODY, chatRequest, createTestProxy, FIXED_NOW } from "../server/he
  * Fixtures are assembled from named blocks rather than string-appended, because
  * appending to a YAML document silently produces a different document.
  */
-function fixture(parts: { security?: string; routing?: string; rateLimits?: string } = {}): string {
+function fixture(
+  parts: {
+    security?: string;
+    /** Rules inserted *before* the catch-all, which is where a specific rule goes. */
+    routing?: string;
+    allowedModels?: string;
+    rateLimits?: string;
+  } = {},
+): string {
   return [
     "version: 1",
     "storage: { type: memory }",
-    "providers:",
-    "  main: { type: fake }",
-    `routing:\n  defaultProvider: main${parts.routing ?? ""}`,
+    `routing:${parts.allowedModels === undefined ? "" : `\n  allowedModels: ${parts.allowedModels}`}` +
+      `\n  rules:${parts.routing ?? ""}` +
+      '\n    - { id: main, when: "true", target: { type: fake } }',
     parts.rateLimits ?? "rateLimits: []",
     parts.security === undefined ? "" : `security:${parts.security}`,
   ]
@@ -146,35 +154,41 @@ describe("write key attribution", () => {
     const { app, providers, writeKeys } = await setup(
       fixture({
         routing:
-          "\n  routes:\n    - name: by-client\n      when: 'client.name == \"ios-app\"'\n" +
-          "      provider: main\n      model: routed-for-ios",
+          "\n    - { id: by-client, when: 'client.name == \"ios-app\"', " +
+          "target: { type: fake, model: routed-for-ios } }",
       }),
     );
     const { secret } = await writeKeys.create({ name: "ios-app" });
     const other = await writeKeys.create({ name: "android-app" });
 
+    // Each rule owns its upstream now, so *which* provider was called is itself
+    // the assertion that the right rule matched.
     await app.fetch(chatRequest(CHAT_BODY, { [WRITE_KEY_HEADER]: secret }));
-    expect(providers.get("main")?.chatCalls.at(-1)?.request.model).toBe("routed-for-ios");
+    expect(providers.get("by-client")?.chatCalls.at(-1)?.request.model).toBe("routed-for-ios");
+    expect(providers.get("main")?.chatCalls).toHaveLength(0);
 
     await app.fetch(chatRequest(CHAT_BODY, { [WRITE_KEY_HEADER]: other.secret }));
     expect(providers.get("main")?.chatCalls.at(-1)?.request.model).toBe("smart");
+    expect(providers.get("by-client")?.chatCalls).toHaveLength(1);
   });
 
   it("routes on whether a client is known, and falls through without a key", async () => {
     const { app, providers, writeKeys } = await setup(
       fixture({
         routing:
-          "\n  routes:\n    - name: known-clients\n      when: 'client.authenticated'\n" +
-          "      provider: main\n      model: for-known-clients",
+          "\n    - { id: known-clients, when: 'client.authenticated', " +
+          "target: { type: fake, model: for-known-clients } }",
       }),
     );
     const { secret } = await writeKeys.create({ name: "ios-app" });
 
     await app.fetch(chatRequest(CHAT_BODY, { [WRITE_KEY_HEADER]: secret }));
-    expect(providers.get("main")?.chatCalls.at(-1)?.request.model).toBe("for-known-clients");
+    expect(providers.get("known-clients")?.chatCalls.at(-1)?.request.model).toBe(
+      "for-known-clients",
+    );
 
     await app.fetch(chatRequest(CHAT_BODY));
-    // No key: the route does not apply and the default provider keeps the alias.
+    // No key: that rule does not apply and the catch-all keeps the alias.
     expect(providers.get("main")?.chatCalls.at(-1)?.request.model).toBe("smart");
   });
 
@@ -224,7 +238,7 @@ describe("per-key model allowlist", () => {
     const { app, writeKeys } = await setup(
       fixture({
         security: "\n  requireWriteKey: true",
-        routing: "\n  allowedModels: [cheap, expensive]",
+        allowedModels: "[cheap, expensive]",
       }),
     );
     const { secret } = await writeKeys.create({ name: "cheap-only", allowedModels: ["cheap"] });

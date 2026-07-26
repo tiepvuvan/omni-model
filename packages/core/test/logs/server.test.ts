@@ -10,9 +10,7 @@ function fixture(parts: { logging?: string; rateLimits?: string; security?: stri
   return [
     "version: 1",
     "storage: { type: memory }",
-    "providers:",
-    "  main: { type: fake }",
-    "routing:\n  defaultProvider: main",
+    'routing:\n  rules:\n    - { id: main, when: "true", target: { type: fake } }',
     parts.rateLimits ?? "rateLimits: []",
     parts.logging === undefined ? "" : `logging:${parts.logging}`,
     parts.security === undefined ? "" : `security:${parts.security}`,
@@ -56,7 +54,7 @@ describe("request logging", () => {
       status: 200,
       modelRequested: "smart",
       modelRouted: "smart",
-      providerId: "main",
+      providerId: "fake",
       stream: false,
       errorCode: null,
     });
@@ -220,8 +218,7 @@ describe("request logging", () => {
       [
         "version: 1",
         "storage: { type: memory }",
-        "providers:\n  main: { type: fake }",
-        "routing:\n  defaultProvider: main\n  allowedModels: [cheap]",
+        'routing:\n  allowedModels: [cheap]\n  rules:\n    - { id: main, when: "true", target: { type: fake } }',
       ].join("\n"),
     );
     expect((await app.fetch(chatRequest(CHAT_BODY))).status).toBe(404);

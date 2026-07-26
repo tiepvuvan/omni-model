@@ -25,8 +25,9 @@ const VALID = {
   version: 1,
   storage: { type: "postgres", url: "${OMNI_STORAGE_POSTGRES_URL}" },
   security: { providers: [{ type: "jwt", secret: "a-long-shared-development-secret" }] },
-  providers: { main: { type: "openai", apiKey: "sk-test" } },
-  routing: { defaultProvider: "main" },
+  routing: {
+    rules: [{ id: "main", when: "true", target: { type: "openai", apiKey: "sk-test" } }],
+  },
 };
 
 describe.skipIf(!url)("migrate and import-config (integration)", () => {
@@ -117,7 +118,10 @@ describe.skipIf(!url)("migrate and import-config (integration)", () => {
     it("appends a revision rather than replacing one", async () => {
       const file = await write("second.json", {
         ...VALID,
-        routing: { defaultProvider: "main", allowedModels: ["gpt-4o"] },
+        routing: {
+          allowedModels: ["gpt-4o"],
+          rules: [{ id: "main", when: "true", target: { type: "openai", apiKey: "sk-test" } }],
+        },
       });
       const saved = await importConfig({ env, file, logger: silentLogger });
       expect(saved.revision).toBe(2);
@@ -133,10 +137,12 @@ describe.skipIf(!url)("migrate and import-config (integration)", () => {
       // database ending up with a broken active revision.
       const file = await write("broken.json", {
         ...VALID,
-        providers: { main: { type: "no-such-provider" } },
+        routing: {
+          rules: [{ id: "main", when: "true", target: { type: "no-such-provider" } }],
+        },
       });
       await expect(importConfig({ env, file, logger: silentLogger })).rejects.toThrow(
-        /providers\.main/,
+        /routing\.rules\[0\]\.target/,
       );
 
       const rows = await owner.query(
@@ -167,7 +173,11 @@ describe.skipIf(!url)("migrate and import-config (integration)", () => {
       const secretId = "11111111-2222-3333-4444-555555555555";
       const file = await write("secret.json", {
         ...VALID,
-        providers: { main: { type: "openai", apiKey: { $secret: secretId } } },
+        routing: {
+          rules: [
+            { id: "main", when: "true", target: { type: "openai", apiKey: { $secret: secretId } } },
+          ],
+        },
       });
 
       // No master key configured: the resolver says so, naming the variable.
@@ -188,7 +198,7 @@ describe.skipIf(!url)("migrate and import-config (integration)", () => {
         () => new Error("expected the import to be rejected"),
         (error: unknown) => error as Error,
       );
-      expect(failure.message).toMatch(/providers\.main\.apiKey/);
+      expect(failure.message).toMatch(/routing\.rules\[0\]\.target\.apiKey/);
       expect(failure.message).not.toMatch(/OMNI_ENCRYPTION_KEY/);
     }, 30_000);
   });

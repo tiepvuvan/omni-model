@@ -10,11 +10,9 @@ rateLimits:
   - name: per-ip
     key: ip
     requests: { limit: 1, window: 1m }
-providers:
-  fake:
-    type: fake
 routing:
-  defaultProvider: fake
+  rules:
+    - { id: fake, when: "true", target: { type: fake } }
 `;
 
 describe("IP-based rate limiting and header spoofing", () => {
@@ -56,11 +54,9 @@ describe("request body size limit", () => {
 version: 1
 server:
   maxBodyBytes: 200
-providers:
-  fake:
-    type: fake
 routing:
-  defaultProvider: fake
+  rules:
+    - { id: fake, when: "true", target: { type: fake } }
 `;
 
   it("rejects a body larger than server.maxBodyBytes with a 413", async () => {
@@ -80,11 +76,9 @@ routing:
   it("defaults to a 128 KiB limit when server.maxBodyBytes is omitted", async () => {
     const defaultYaml = `
 version: 1
-providers:
-  fake:
-    type: fake
 routing:
-  defaultProvider: fake
+  rules:
+    - { id: fake, when: "true", target: { type: fake } }
 `;
     const { app } = await createTestApp({ yaml: defaultYaml });
     const body = { ...CHAT_BODY, messages: [{ role: "user", content: "x".repeat(128 * 1024) }] };

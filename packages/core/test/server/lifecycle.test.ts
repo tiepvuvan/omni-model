@@ -182,6 +182,5 @@ describe("non-streamed responses", () => {
 const MINIMAL = [
   "version: 1",
   "storage: { type: memory }",
-  "providers:\n  main: { type: fake }",
-  "routing:\n  defaultProvider: main",
+  'routing:\n  rules:\n    - { id: main, when: "true", target: { type: fake } }',
 ].join("\n");

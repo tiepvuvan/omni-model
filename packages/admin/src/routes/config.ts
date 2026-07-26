@@ -1,9 +1,13 @@
 import {
   badRequest,
+  CREDENTIAL_FIELDS,
+  isSecretRef,
   notFound,
   type OmniError,
   OmniError as OmniErrorClass,
   type RuntimeContext,
+  sealCredentials,
+  unreachableRules,
 } from "@omni-model/core";
 import { type Context, Hono } from "hono";
 import { z } from "zod";
@@ -31,6 +35,63 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+/**
+ * Paths holding a plaintext credential, so a refusal can name them.
+ *
+ * Paths only, never values: the point of refusing is that this value must not be
+ * stored, and echoing it into an error message would store it in a log instead.
+ */
+function findCredentialPaths(node: unknown, path = "", found: string[] = []): string[] {
+  if (isSecretRef(node) || node === null || typeof node !== "object") return found;
+  if (Array.isArray(node)) {
+    node.forEach((item, index) => {
+      findCredentialPaths(item, `${path}[${index}]`, found);
+    });
+    return found;
+  }
+  for (const [field, value] of Object.entries(node)) {
+    const child = path === "" ? field : `${path}.${field}`;
+    // A `${VAR}` reference is resolved from the environment and was never stored.
+    const isEnvReference = typeof value === "string" && /^\$\{[^}]+\}$/.test(value.trim());
+    if (CREDENTIAL_FIELDS.includes(field) && typeof value === "string" && value !== "") {
+      if (!isEnvReference) found.push(child);
+      continue;
+    }
+    findCredentialPaths(value, child, found);
+  }
+  return found;
+}
+
+/** Read a dotted/indexed path like `routing.rules[0].target.apiKey`. */
+function valueAtPath(node: unknown, path: string): unknown {
+  let current: unknown = node;
+  for (const step of path.split(".")) {
+    const match = /^([^[]*)((?:\[\d+\])*)$/.exec(step);
+    if (match === null) return undefined;
+    const [, field, indexes] = match;
+    if (field !== undefined && field !== "") {
+      if (!isRecord(current)) return undefined;
+      current = current[field];
+    }
+    for (const [, index] of (indexes ?? "").matchAll(/\[(\d+)\]/g)) {
+      if (!Array.isArray(current) || index === undefined) return undefined;
+      current = current[Number(index)];
+    }
+  }
+  return current;
+}
+
+/** Human-readable warnings about a rule list that is valid but self-defeating. */
+function routingWarnings(
+  rules: ReadonlyArray<{ when: string; id?: string | undefined; name?: string | undefined }>,
+): string[] {
+  return unreachableRules(rules).map(
+    ({ rule, shadowedBy }) =>
+      `rule "${rule}" can never match: "${shadowedBy}" earlier in the list matches everything ` +
+      `(when: "true"). Move "${rule}" above it — rules are evaluated in order and the first match wins.`,
+  );
+}
+
 export function createConfigRoutes(deps: AdminDeps): Hono<AdminEnv> {
   const app = new Hono<AdminEnv>();
 
@@ -41,7 +102,54 @@ export function createConfigRoutes(deps: AdminDeps): Hono<AdminEnv> {
   };
 
   /**
-   * Validate, persist, then apply — in that order.
+   * Turn any plaintext credential in an inbound document into a reference.
+   *
+   * The dashboard types an API key directly into a routing rule, so this is the
+   * boundary where that value stops being plaintext. Existing references pass
+   * through untouched, so reading a configuration and saving it back does not
+   * mint a secret per save.
+   */
+  const sealInbound = async (c: Context<AdminEnv>, document: unknown): Promise<unknown> => {
+    if (deps.secrets === null) {
+      // Without a keyring there is nowhere to put a credential, and storing it
+      // inline would break the guarantee that a revision never holds one.
+      //
+      // Only *new* plaintext is refused, though. A deployment configured from the
+      // environment has plaintext in its seeded revision already, and every
+      // block-level write reads that document back — so refusing on its mere
+      // presence would make an unrelated change (logging, a rate limit) impossible
+      // to save. What matters is that this request does not introduce one.
+      const stored = await storedDocument();
+      const introduced = findCredentialPaths(document).filter(
+        (path) => valueAtPath(document, path) !== valueAtPath(stored, path),
+      );
+      if (introduced.length === 0) return document;
+      throw badRequest(
+        `this configuration introduces credentials (${introduced.join(", ")}) but encrypted ` +
+          "storage is unavailable: set OMNI_ENCRYPTION_KEY so they can be sealed, or replace them " +
+          "with ${VAR} references resolved from the environment",
+        { code: "secrets_unavailable" },
+      );
+    }
+    const result = await sealCredentials(document, deps.secrets);
+    if (result.sealed.length > 0) {
+      // Paths only. A log line must never carry the value that was just sealed.
+      deps.logger?.info("sealed credentials from an admin write", {
+        paths: result.sealed,
+        by: actorOf(c).email,
+      });
+    }
+    return result.document;
+  };
+
+  /**
+   * Seal, validate, persist, then apply — in that order.
+   *
+   * Sealing comes first because it is what the *stored* document must contain: a
+   * dashboard sends an API key as plaintext, and the revision may only ever hold
+   * a reference to it. Validation then runs on the sealed document, which is the
+   * one that will be replayed on every future boot — validating the plaintext
+   * instead would pass here and fail later if the reference could not resolve.
    *
    * Applying before persisting would leave this replica running a configuration
    * no other replica has if the write then failed. Other replicas pick the
@@ -49,13 +157,15 @@ export function createConfigRoutes(deps: AdminDeps): Hono<AdminEnv> {
    */
   const save = async (
     c: Context<AdminEnv>,
-    document: unknown,
+    input: unknown,
     note: string | undefined,
   ): Promise<Response> => {
+    const actor = actorOf(c);
+    const document = await sealInbound(c, input);
+
     const check = await deps.holder.validate(document);
     if (!check.ok) throw rejected(check.error);
 
-    const actor = actorOf(c);
     const saved = await deps.configStore.save(document, {
       createdBy: actor.email,
       ...(note === undefined ? {} : { note }),
@@ -72,6 +182,11 @@ export function createConfigRoutes(deps: AdminDeps): Hono<AdminEnv> {
       createdBy: saved.createdBy,
       note: saved.note,
       config: saved.document,
+      // Valid but probably not what was meant. Adding a rule to a list that ends
+      // in a catch-all appends it *after* that catch-all, where it can never fire
+      // — and the proxy keeps answering normally from the earlier rule, so
+      // nothing else would tell them.
+      warnings: routingWarnings(deps.holder.current()?.config.routing.rules ?? []),
     });
   };
 
@@ -143,45 +258,79 @@ export function createConfigRoutes(deps: AdminDeps): Hono<AdminEnv> {
   patchBlock("routing");
   patchBlock("logging");
 
-  app.put("/providers/:id", async (c) => {
+  /** The rules array out of the stored document, as raw JSON. */
+  const storedRules = async (): Promise<{
+    document: Record<string, unknown>;
+    routing: Record<string, unknown>;
+    rules: Record<string, unknown>[];
+  }> => {
+    const document = await storedDocument();
+    const routing = isRecord(document.routing) ? { ...document.routing } : {};
+    const rules = Array.isArray(routing.rules) ? [...(routing.rules as unknown[])] : [];
+    return { document, routing, rules: rules.filter(isRecord).map((rule) => ({ ...rule })) };
+  };
+
+  const ruleIdOf = (rule: Record<string, unknown>, index: number): string =>
+    typeof rule.id === "string" ? rule.id : `rules[${index}]`;
+
+  /**
+   * Insert or replace one rule, matched by its id.
+   *
+   * Order is meaning here — the first matching rule wins — so a replacement keeps
+   * its position and a new rule is appended. Reordering is `PUT /routing` with
+   * the whole list, which is the only operation that can express it.
+   */
+  app.put("/routing/rules/:id", async (c) => {
     const id = c.req.param("id");
     const body = patchSchema.parse(await c.req.json());
-    const document = await storedDocument();
-    const providers = isRecord(document.providers) ? { ...document.providers } : {};
-    providers[id] = body.value;
-    document.providers = providers;
-    return save(c, document, body.note ?? `update provider ${id}`);
+    if (!isRecord(body.value)) throw badRequest("a rule must be an object", { param: "value" });
+
+    const { document, routing, rules } = await storedRules();
+    const rule = { ...body.value, id };
+    const at = rules.findIndex((existing, index) => ruleIdOf(existing, index) === id);
+    if (at === -1) rules.push(rule);
+    else rules[at] = rule;
+
+    routing.rules = rules;
+    document.routing = routing;
+    return save(c, document, body.note ?? `${at === -1 ? "add" : "update"} routing rule ${id}`);
   });
 
-  app.delete("/providers/:id", async (c) => {
+  app.delete("/routing/rules/:id", async (c) => {
     const id = c.req.param("id");
-    const document = await storedDocument();
-    const providers = isRecord(document.providers) ? { ...document.providers } : {};
-    if (!(id in providers)) throw notFound(`provider "${id}" does not exist`);
-    delete providers[id];
-    document.providers = providers;
-    return save(c, document, `remove provider ${id}`);
+    const { document, routing, rules } = await storedRules();
+    const remaining = rules.filter((rule, index) => ruleIdOf(rule, index) !== id);
+    if (remaining.length === rules.length) throw notFound(`routing rule "${id}" does not exist`);
+
+    routing.rules = remaining;
+    document.routing = routing;
+    return save(c, document, `remove routing rule ${id}`);
   });
 
   /**
-   * Probe a live provider.
+   * Probe the upstream one rule points at.
    *
    * Runs against the *applied* bundle rather than a candidate document, so the
    * answer is about what is actually serving traffic — which is the question an
-   * operator is asking when a client reports failures.
+   * operator is asking when a client reports failures. Addressed by rule, because
+   * credentials now belong to a rule: "is this rule's upstream reachable" is the
+   * question, and two rules can point at different keys for the same provider.
    *
    * The verdict comes from watching the upstream call, not from whether
    * `listModels` resolved: that method deliberately falls back to the configured
-   * model list on any failure, because `/v1/models` should keep working when a
-   * provider has no discovery endpoint. Trusting its return value here would
-   * report a rejected API key as a healthy provider.
+   * model list on any failure, because a provider need not have a discovery
+   * endpoint. Trusting its return value would report a rejected API key as a
+   * healthy upstream.
    */
-  app.post("/providers/:id/test", async (c) => {
+  app.post("/routing/rules/:id/test", async (c) => {
     const id = c.req.param("id");
     const bundle = deps.holder.current();
     if (bundle === null) throw new OmniErrorClass(503, "no configuration is applied");
+
+    // Resolved through the applied configuration, so the probe uses the same
+    // decrypted credential a request would.
     const provider = bundle.providers.get(id);
-    if (provider === undefined) throw notFound(`provider "${id}" is not configured`);
+    if (provider === undefined) throw notFound(`routing rule "${id}" is not configured`);
     if (provider.listModels === undefined) {
       return c.json({ ok: null, reason: "this provider type cannot be probed" });
     }

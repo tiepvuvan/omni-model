@@ -172,7 +172,9 @@ export function observerFor(draft: RequestLogDraft | undefined): PipelineObserve
   return {
     routed: (decision) => {
       draft.modelRouted = decision.model;
-      draft.providerId = decision.providerId;
+      // The provider *type*, not an instance identity: a log row wants to say
+      // "this went to OpenAI", and there are no provider ids to record now.
+      draft.providerId = decision.providerType;
       draft.routeName = decision.routeName;
     },
     rateLimited: (rule) => {

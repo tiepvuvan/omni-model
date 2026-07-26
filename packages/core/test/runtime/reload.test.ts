@@ -13,10 +13,9 @@ import { CHAT_BODY, chatRequest, createTestProxy, FIXED_NOW } from "../server/he
 const BASE = `
 version: 1
 storage: { type: memory }
-providers:
-  main: { type: fake }
 routing:
-  defaultProvider: main
+  rules:
+    - { id: main, when: "true", target: { type: fake } }
 `;
 
 describe("reloading configuration", () => {

@@ -12,7 +12,6 @@ const JSON_BLOCKS: ReadonlyArray<readonly [name: string, path: readonly string[]
   ["OMNI_SECURITY_JSON", ["security"]],
   ["OMNI_SECURITY_PROVIDERS_JSON", ["security", "providers"]],
   ["OMNI_RATE_LIMITS_JSON", ["rateLimits"]],
-  ["OMNI_PROVIDERS_JSON", ["providers"]],
   ["OMNI_ROUTING_JSON", ["routing"]],
   ["OMNI_LOGGING_JSON", ["logging"]],
 ];
@@ -30,11 +29,8 @@ const SIMPLE_VALUES: ReadonlyArray<readonly [name: string, path: readonly string
   ["OMNI_STORAGE_TYPE", ["storage", "type"]],
   ["OMNI_SECURITY_MODE", ["security", "mode"]],
   ["OMNI_SECURITY_PUBLIC_PATHS", ["security", "publicPaths"]],
-  ["OMNI_DEFAULT_PROVIDER", ["routing", "defaultProvider"]],
-  ["OMNI_ROUTING_DEFAULT_PROVIDER", ["routing", "defaultProvider"]],
   ["OMNI_ROUTING_ALLOWED_MODELS", ["routing", "allowedModels"]],
-  ["OMNI_ROUTING_ROUTES", ["routing", "routes"]],
-  ["OMNI_ROUTING_MODEL_RULES", ["routing", "modelRules"]],
+  ["OMNI_ROUTING_RULES", ["routing", "rules"]],
   ["OMNI_RATE_LIMITS", ["rateLimits"]],
 ];
 
@@ -44,17 +40,26 @@ const STORAGE_VALUES: ReadonlyArray<readonly [name: string, field: string]> = [
   ["OMNI_STORAGE_POSTGRES_MIGRATE", "migrate"],
 ];
 
-/** Shortcuts for the provider whose stable routing ID is `default`. */
-const DEFAULT_PROVIDER_VALUES: ReadonlyArray<readonly [name: string, field: string]> = [
-  ["OMNI_PROVIDERS_DEFAULT_TYPE", "type"],
-  ["OMNI_PROVIDERS_DEFAULT_API_KEY", "apiKey"],
-  ["OMNI_PROVIDERS_DEFAULT_BASE_URL", "baseUrl"],
-  ["OMNI_PROVIDERS_DEFAULT_ORGANIZATION", "organization"],
-  ["OMNI_PROVIDERS_DEFAULT_HEADERS", "headers"],
-  ["OMNI_PROVIDERS_DEFAULT_MODELS", "models"],
-  ["OMNI_PROVIDERS_DEFAULT_INCLUDE_STREAM_USAGE", "includeStreamUsage"],
-  ["OMNI_PROVIDERS_DEFAULT_ANTHROPIC_VERSION", "version"],
-  ["OMNI_PROVIDERS_DEFAULT_ANTHROPIC_MAX_TOKENS_DEFAULT", "maxTokensDefault"],
+/**
+ * Shortcuts for the single-upstream deployment, seeding one catch-all rule.
+ *
+ * The overwhelmingly common first boot is "one provider, one key, send everything
+ * there". Expressing that as `OMNI_ROUTING_RULES='[{...}]'` would make the
+ * simplest case the ugliest, so these build the rule instead: `when: "true"` with
+ * one target. Anything more — several upstreams, conditions on claims — is
+ * `OMNI_ROUTING_RULES`, or the admin API.
+ */
+const TARGET_VALUES: ReadonlyArray<readonly [name: string, field: string]> = [
+  ["OMNI_TARGET_TYPE", "type"],
+  ["OMNI_TARGET_MODEL", "model"],
+  ["OMNI_TARGET_API_KEY", "apiKey"],
+  ["OMNI_TARGET_BASE_URL", "baseUrl"],
+  ["OMNI_TARGET_ORGANIZATION", "organization"],
+  ["OMNI_TARGET_HEADERS", "headers"],
+  ["OMNI_TARGET_MODELS", "models"],
+  ["OMNI_TARGET_INCLUDE_STREAM_USAGE", "includeStreamUsage"],
+  ["OMNI_TARGET_ANTHROPIC_VERSION", "version"],
+  ["OMNI_TARGET_ANTHROPIC_MAX_TOKENS_DEFAULT", "maxTokensDefault"],
 ];
 
 interface SecurityProfile {
@@ -399,51 +404,72 @@ function applyStorageValues(
   applyObjectValues(storage, env, STORAGE_VALUES);
 }
 
-function providerDocument(root: Record<string, unknown>, id: string): Record<string, unknown> {
-  const existingProviders = root.providers;
-  let providers: Record<string, unknown>;
-  if (existingProviders === undefined) {
-    providers = {};
-    root.providers = providers;
-  } else if (isObject(existingProviders)) {
-    providers = existingProviders;
+/**
+ * The catch-all rule the target shortcuts fill in, created on first use.
+ *
+ * Reuses an existing `routing.rules[0]` when one is already there, so a JSON
+ * block plus a shortcut compose the way every other shortcut in this file does.
+ */
+function catchAllTarget(root: Record<string, unknown>): Record<string, unknown> {
+  const existingRouting = root.routing;
+  let routing: Record<string, unknown>;
+  if (existingRouting === undefined) {
+    routing = {};
+    root.routing = routing;
+  } else if (isObject(existingRouting)) {
+    routing = existingRouting;
   } else {
-    throw new ConfigError(
-      "default provider shortcuts conflict with a non-object providers configuration",
-    );
+    throw new ConfigError("OMNI_TARGET_* conflicts with a non-object routing configuration");
   }
 
-  const existingProvider = providers[id];
-  if (existingProvider === undefined) {
-    const provider: Record<string, unknown> = {};
-    providers[id] = provider;
-    return provider;
+  const existingRules = routing.rules;
+  let rules: unknown[];
+  if (existingRules === undefined) {
+    rules = [];
+    routing.rules = rules;
+  } else if (Array.isArray(existingRules)) {
+    rules = existingRules;
+  } else {
+    throw new ConfigError("OMNI_TARGET_* conflicts with a non-array routing.rules");
   }
-  if (isObject(existingProvider) === false) {
-    throw new ConfigError(`default provider shortcuts conflict with providers.${id}`);
+
+  if (rules.length === 0) {
+    const target: Record<string, unknown> = {};
+    rules.push({ id: "default", when: "true", target });
+    return target;
   }
-  return existingProvider;
+  const first = rules[0];
+  if (isObject(first) === false) {
+    throw new ConfigError("OMNI_TARGET_* conflicts with routing.rules[0]");
+  }
+  const existingTarget = first.target;
+  if (existingTarget === undefined) {
+    const target: Record<string, unknown> = {};
+    first.target = target;
+    return target;
+  }
+  if (isObject(existingTarget) === false) {
+    throw new ConfigError("OMNI_TARGET_* conflicts with routing.rules[0].target");
+  }
+  return existingTarget;
 }
 
-function applyDefaultProviderValues(
+function applyTargetValues(
   root: Record<string, unknown>,
   env: Record<string, string | undefined>,
 ): void {
-  const hasDefaultProviderValue = DEFAULT_PROVIDER_VALUES.some(([name]) => env[name] !== undefined);
-  if (hasDefaultProviderValue === false) return;
+  if (TARGET_VALUES.some(([name]) => env[name] !== undefined) === false) return;
 
-  const provider = providerDocument(root, "default");
-  for (const [name, field] of DEFAULT_PROVIDER_VALUES) {
+  const target = catchAllTarget(root);
+  for (const [name, field] of TARGET_VALUES) {
     const value = env[name];
-    // Cloud Run Button submits an empty optional form field as an environment
-    // value. An empty compatible-provider API key means "no API key", rather
-    // than an invalid empty credential.
-    if (value === undefined || (name === "OMNI_PROVIDERS_DEFAULT_API_KEY" && value.trim() === "")) {
+    // An empty compatible-provider API key means "no API key" rather than an
+    // invalid empty credential; a platform's optional form field submits "".
+    if (value === undefined || (name === "OMNI_TARGET_API_KEY" && value.trim() === "")) {
       continue;
     }
-    provider[field] = shortcutValue(value, name);
+    target[field] = shortcutValue(value, name);
   }
-  setPath(root, ["routing", "defaultProvider"], "default", "OMNI_PROVIDERS_DEFAULT_*", true);
 }
 
 function requiredBoolean(value: string, key: string): boolean {
@@ -519,7 +545,7 @@ function isEnvironmentConfigKey(key: string): boolean {
     JSON_BLOCKS.some(([name]) => name === key) ||
     SIMPLE_VALUES.some(([name]) => name === key) ||
     STORAGE_VALUES.some(([name]) => name === key) ||
-    DEFAULT_PROVIDER_VALUES.some(([name]) => name === key) ||
+    TARGET_VALUES.some(([name]) => name === key) ||
     SECURITY_PROFILES.some(
       (profile) =>
         profile.enabled === key ||
@@ -574,7 +600,7 @@ export function environmentConfigDocument(
     }
   }
   applyStorageValues(document, env);
-  applyDefaultProviderValues(document, env);
+  applyTargetValues(document, env);
   applySecurityProfiles(document, env);
   for (const [name, path] of SIMPLE_VALUES) {
     const value = env[name];

@@ -14,8 +14,8 @@ describe("resolveConfigSource", () => {
       env: {
         OMNI_CONFIG_JSON: '{"storage":{"type":"memory"},"security":{"providers":[]}}',
         OMNI_SECURITY_PROVIDERS_JSON: '[{"type":"jwt","secret":"test-jwt-secret"}]',
-        OMNI_PROVIDERS_JSON: '{"main":{"type":"openai","apiKey":"sk-test"}}',
-        OMNI_DEFAULT_PROVIDER: "main",
+        OMNI_ROUTING_JSON:
+          '{"rules":[{"id":"main","when":"true","target":{"type":"openai","apiKey":"sk-test"}}]}',
         OMNI__SERVER__LOG_LEVEL: "silent",
       },
     });
@@ -24,8 +24,9 @@ describe("resolveConfigSource", () => {
     expect(result.config).toMatchObject({
       storage: { type: "memory" },
       security: { providers: [{ type: "jwt" }] },
-      providers: { main: { type: "openai" } },
-      routing: { defaultProvider: "main" },
+      routing: {
+        rules: [{ id: "main", when: "true", target: { type: "openai" } }],
+      },
       server: { logLevel: "silent" },
     });
   });
@@ -64,12 +65,12 @@ describe("container starter configuration", () => {
     OMNI_SECURITY_FIREBASE_APPCHECK_ENABLED: "true",
     OMNI_SECURITY_FIREBASE_APPCHECK_PROJECT_NUMBER: "1234567890",
     OMNI_SECURITY_MODE: "any",
-    OMNI_PROVIDERS_DEFAULT_TYPE: "openai-compatible",
-    OMNI_PROVIDERS_DEFAULT_BASE_URL: "https://api.openai.com/v1",
-    OMNI_PROVIDERS_DEFAULT_API_KEY: "sk-test",
+    OMNI_TARGET_TYPE: "openai-compatible",
+    OMNI_TARGET_BASE_URL: "https://api.openai.com/v1",
+    OMNI_TARGET_API_KEY: "sk-test",
   });
 
-  it("composes storage, providers and both verifiers from environment shortcuts", () => {
+  it("composes storage, a catch-all rule and both verifiers from shortcuts", () => {
     const env = starterEnv();
     const config = parseConfigObject(resolveConfigSource({ env }).config, env);
 
@@ -83,12 +84,12 @@ describe("container starter configuration", () => {
         expect.objectContaining({ type: "firebase-app-check" }),
       ]),
     );
-    expect(config.providers.default).toEqual({
+    expect(config.routing.rules[0]?.target).toEqual({
       type: "openai-compatible",
       baseUrl: "https://api.openai.com/v1",
       apiKey: "sk-test",
     });
-    expect(config.routing.defaultProvider).toBe("default");
+    expect(config.routing.rules[0]?.id).toBe("default");
   });
 
   it("boots an app that serves /healthz", async () => {

@@ -86,12 +86,18 @@ describe("deleting a referenced secret", () => {
   /** A configuration whose provider key is a `$secret` reference. */
   const referencing = (id: string): Record<string, unknown> =>
     baseConfig({
-      providers: {
-        default: {
-          type: "openai",
-          apiKey: { $secret: id },
-          baseUrl: "https://upstream.test/v1",
-        },
+      routing: {
+        rules: [
+          {
+            id: "default",
+            when: "true",
+            target: {
+              type: "openai",
+              apiKey: { $secret: id },
+              baseUrl: "https://upstream.test/v1",
+            },
+          },
+        ],
       },
     });
 
@@ -151,12 +157,18 @@ describe("secret references reach the provider", () => {
       method: "PUT",
       body: JSON.stringify({
         config: baseConfig({
-          providers: {
-            default: {
-              type: "openai",
-              apiKey: { $secret: description.id },
-              baseUrl: "https://upstream.test/v1",
-            },
+          routing: {
+            rules: [
+              {
+                id: "default",
+                when: "true",
+                target: {
+                  type: "openai",
+                  apiKey: { $secret: description.id },
+                  baseUrl: "https://upstream.test/v1",
+                },
+              },
+            ],
           },
         }),
       }),
@@ -173,18 +185,24 @@ describe("secret references reach the provider", () => {
       method: "PUT",
       body: JSON.stringify({
         config: baseConfig({
-          providers: {
-            default: {
-              type: "openai",
-              apiKey: { $secret: "00000000-0000-0000-0000-000000000000" },
-              baseUrl: "https://upstream.test/v1",
-            },
+          routing: {
+            rules: [
+              {
+                id: "default",
+                when: "true",
+                target: {
+                  type: "openai",
+                  apiKey: { $secret: "00000000-0000-0000-0000-000000000000" },
+                  baseUrl: "https://upstream.test/v1",
+                },
+              },
+            ],
           },
         }),
       }),
     });
     expect(response.status).toBe(400);
-    expect((await errorOf(response)).message).toMatch(/providers\.default\.apiKey/);
+    expect((await errorOf(response)).message).toMatch(/routing\.rules\[0\]\.target\.apiKey/);
     expect(holder.status().revision).toBe(1);
   });
 });

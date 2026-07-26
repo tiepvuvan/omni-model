@@ -1,4 +1,4 @@
-import { notFound, OmniError, rateLimited } from "../errors.js";
+import { notFound, type OmniError, rateLimited } from "../errors.js";
 import type { ChatCompletionRequest, EmbeddingsRequest, Usage } from "../openai/types.js";
 import type {
   ChatProvider,
@@ -50,15 +50,6 @@ export async function enforceRateLimit(
   }
 }
 
-/** Look up the resolved provider; the router already validated the id exists. */
-export function requireProvider(deps: PipelineDeps, providerId: string): ChatProvider {
-  const provider = deps.providers.get(providerId);
-  if (provider === undefined) {
-    throw new OmniError(500, `provider "${providerId}" is not configured`);
-  }
-  return provider;
-}
-
 /**
  * Optional hooks for a caller that needs to record what the pipeline decided.
  *
@@ -88,12 +79,11 @@ export async function executeChat(
   const decision = deps.router.resolve(facts);
   observer?.routed?.(decision);
   deps.log.info("request routed", {
-    provider: decision.providerId,
+    provider: decision.providerType,
     model: decision.model,
     route: decision.routeName,
   });
-  const provider = requireProvider(deps, decision.providerId);
-  return provider.chat({ ...request, model: decision.model }, runtime, options);
+  return decision.provider.chat({ ...request, model: decision.model }, runtime, options);
 }
 
 /**
@@ -112,11 +102,11 @@ export async function executeEmbeddings(
   const decision = deps.router.resolve(facts);
   observer?.routed?.(decision);
   deps.log.info("request routed", {
-    provider: decision.providerId,
+    provider: decision.providerType,
     model: decision.model,
     route: decision.routeName,
   });
-  const provider = requireProvider(deps, decision.providerId);
+  const provider = decision.provider;
   const embed = provider.embeddings?.bind(provider);
   if (embed === undefined) {
     throw notFound(`provider "${provider.id}" does not support embeddings`, {

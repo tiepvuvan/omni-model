@@ -28,15 +28,20 @@ function config(overrides: Record<string, unknown> = {}): Record<string, unknown
     server: { logLevel: "silent" },
     storage: { type: "postgres", url: "${OMNI_E2E_DATABASE_URL}" },
     security: { providers: [{ type: "jwt", secret: JWT_SECRET, algorithms: ["HS256"] }] },
-    providers: {
-      main: {
-        type: "openai-compatible",
-        baseUrl: "https://upstream.invalid/v1",
-        apiKey: "sk-e2e",
-        models: ["mock-model"],
-      },
+    routing: {
+      rules: [
+        {
+          id: "main",
+          when: "true",
+          target: {
+            type: "openai-compatible",
+            baseUrl: "https://upstream.invalid/v1",
+            apiKey: "sk-e2e",
+            models: ["mock-model"],
+          },
+        },
+      ],
     },
-    routing: { defaultProvider: "main" },
     ...overrides,
   };
 }
@@ -138,7 +143,23 @@ describe.skipIf(!POSTGRES_URL)("E2E: two instances over one database", () => {
     // Restrict the models through A, exactly as the admin API would.
     const revision = await saveOn(
       a,
-      config({ routing: { defaultProvider: "main", allowedModels: ["only-this"] } }),
+      config({
+        routing: {
+          allowedModels: ["only-this"],
+          rules: [
+            {
+              id: "main",
+              when: "true",
+              target: {
+                type: "openai-compatible",
+                baseUrl: "https://upstream.invalid/v1",
+                apiKey: "sk-e2e",
+                models: ["mock-model"],
+              },
+            },
+          ],
+        },
+      }),
       "restrict models",
     );
     expect(revision).toBe(2);
@@ -160,7 +181,9 @@ describe.skipIf(!POSTGRES_URL)("E2E: two instances over one database", () => {
     // the admin API refuses to do, and therefore the only way a bad document is
     // already in the store when a replica reads it. Everything else is valid, so
     // the unknown provider is what fails rather than a missing verifier.
-    const broken = config({ providers: { main: { type: "no-such-provider" } } });
+    const broken = config({
+      routing: { rules: [{ id: "main", when: "true", target: { type: "no-such-provider" } }] },
+    });
     const saved = await a.configStore.save(broken, {
       createdBy: "e2e",
       note: "deliberately broken",
@@ -173,7 +196,7 @@ describe.skipIf(!POSTGRES_URL)("E2E: two instances over one database", () => {
 
     // Still serving, still on the old revision, and the reason is recorded.
     expect(b.holder.status().revision).toBe(before);
-    expect(b.holder.status().lastError).toMatch(/providers\.main/);
+    expect(b.holder.status().lastError).toMatch(/routing\.rules\[0\]\.target/);
     expect(b.holder.status().configured).toBe(true);
     expect((await chat(baseB, token)).status).toBe(404);
 
@@ -193,7 +216,23 @@ describe.skipIf(!POSTGRES_URL)("E2E: two instances over one database", () => {
 
     await saveOn(
       a,
-      config({ routing: { defaultProvider: "main", allowedModels: ["something-else"] } }),
+      config({
+        routing: {
+          allowedModels: ["something-else"],
+          rules: [
+            {
+              id: "main",
+              when: "true",
+              target: {
+                type: "openai-compatible",
+                baseUrl: "https://upstream.invalid/v1",
+                apiKey: "sk-e2e",
+                models: ["mock-model"],
+              },
+            },
+          ],
+        },
+      }),
       "swap mid-stream",
     );
     await eventually(

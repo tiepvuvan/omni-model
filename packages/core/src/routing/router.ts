@@ -1,5 +1,5 @@
-import type { RoutingConfig } from "../config/schema.js";
 import { ConfigError, OmniError } from "../errors.js";
+import type { ChatProvider } from "../providers/types.js";
 import type { Logger } from "../types.js";
 import type {
   CompiledExpression,
@@ -10,18 +10,64 @@ import type {
   RuleEvaluation,
 } from "./types.js";
 
-/** A route or model rule with its `when`/`match` expression compiled. */
-interface CompiledRule {
+/**
+ * One rule, ready to evaluate: its condition compiled and its upstream built.
+ *
+ * The provider instance is *in* the rule rather than looked up by name when the
+ * rule matches. That is what removes the "unknown provider" error class — there
+ * is no name, so there is nothing to dangle — and it means a matched rule cannot
+ * fail to find where it was pointing.
+ */
+export interface CompiledRoutingRule {
   when: CompiledExpression;
-  providerId: string;
-  /** Upstream model override; undefined keeps the client-requested model. */
-  model: string | undefined;
+  /** Label for logs; the rule's `name`, else its id. */
   routeName: string;
+  provider: ChatProvider;
+  /** Provider type, recorded per request for usage attribution. */
+  providerType: string;
+  /** Upstream model override; undefined forwards the client-requested model. */
+  model: string | undefined;
   /** The non-boolean-result warning fires once per rule, not once per request. */
   warnedNonBoolean: boolean;
 }
 
-function compileRule(engine: ExpressionEngine, source: string, where: string): CompiledExpression {
+export interface CreateRouterOptions {
+  /** Client-facing names that may be requested. Empty means no restriction. */
+  allowedModels?: readonly string[];
+  log?: Logger;
+}
+
+/**
+ * Rules that can never fire because an earlier one matches everything.
+ *
+ * Adding a rule to a list that already ends in a catch-all appends it *after*
+ * that catch-all, where first-match-wins means it is dead on arrival. Nothing
+ * about the request reveals this — the proxy answers normally, from the wrong
+ * rule — so it has to be pointed out statically.
+ *
+ * Only a literal `true` counts as a catch-all. A condition that happens to be
+ * true for every real request is not detectable here, and guessing would produce
+ * false warnings about rules that are working.
+ */
+export function unreachableRules(
+  rules: ReadonlyArray<{ when: string; id?: string | undefined; name?: string | undefined }>,
+): { rule: string; shadowedBy: string }[] {
+  const label = (rule: { id?: string | undefined; name?: string | undefined }, index: number) =>
+    rule.name ?? rule.id ?? `rules[${index}]`;
+  const catchAll = rules.findIndex((rule) => rule.when.trim() === "true");
+  if (catchAll === -1) return [];
+  return rules.slice(catchAll + 1).map((rule, offset) => ({
+    rule: label(rule, catchAll + 1 + offset),
+    shadowedBy: label(rules[catchAll] as { id?: string; name?: string }, catchAll),
+  }));
+}
+
+/** Compile one `when` expression, naming where it came from on failure. */
+export function compileRoutingExpression(
+  engine: ExpressionEngine,
+  source: string,
+  where: string,
+): CompiledExpression {
   try {
     return engine.compile(source);
   } catch (error) {
@@ -32,66 +78,24 @@ function compileRule(engine: ExpressionEngine, source: string, where: string): C
   }
 }
 
-function assertKnownProvider(
-  providerId: string,
-  providerIds: ReadonlySet<string>,
-  where: string,
-): void {
-  if (providerIds.has(providerId)) return;
-  const known = providerIds.size === 0 ? "none are configured" : [...providerIds].sort().join(", ");
-  throw new ConfigError(
-    `${where} references unknown provider "${providerId}" (known providers: ${known})`,
-  );
-}
-
 /**
- * Build the request router from validated routing config. All `when`/`match`
- * expressions are compiled and all provider references are checked up front,
- * so config mistakes throw `ConfigError` at startup rather than mid-request.
+ * Build the request router from rules whose upstreams are already constructed.
  *
- * `resolve` evaluates rules in order — `routes`, then `modelRules`, then
- * `defaultProvider` — and picks the first whose condition is exactly `true`.
- * A condition that throws (e.g. a missing claim key in CEL) or yields a
- * non-boolean is treated as no match, so one bad expression cannot take the
+ * `resolve` evaluates rules in order and picks the first whose condition is
+ * exactly `true`. A condition that throws (a missing claim key, in CEL) or
+ * yields a non-boolean counts as no match, so one bad expression cannot take the
  * proxy down; non-boolean results are logged once per rule as a config smell.
+ * `explain` is how an operator sees those otherwise-silent failures.
+ *
+ * With no rule matching, the request is a 404: there is no implicit default, and
+ * a catch-all is a last rule with `when: "true"`.
  */
 export function createRouter(
-  config: RoutingConfig,
-  providerIds: ReadonlySet<string>,
-  engine: ExpressionEngine,
-  log?: Logger,
+  rules: readonly CompiledRoutingRule[],
+  options: CreateRouterOptions = {},
 ): Router {
-  const rules: CompiledRule[] = [];
-  const allowedModels = new Set(config.allowedModels);
-
-  config.routes.forEach((route, index) => {
-    const where = `routing.routes[${index}] ("${route.name}")`;
-    assertKnownProvider(route.provider, providerIds, where);
-    rules.push({
-      when: compileRule(engine, route.when, `${where} when`),
-      providerId: route.provider,
-      model: route.model,
-      routeName: route.name,
-      warnedNonBoolean: false,
-    });
-  });
-
-  config.modelRules.forEach((rule, index) => {
-    const where = `routing.modelRules[${index}]`;
-    assertKnownProvider(rule.provider, providerIds, where);
-    rules.push({
-      when: compileRule(engine, rule.match, `${where} match`),
-      providerId: rule.provider,
-      model: rule.model,
-      routeName: `model-rule[${index}]`,
-      warnedNonBoolean: false,
-    });
-  });
-
-  const defaultProvider = config.defaultProvider;
-  if (defaultProvider !== undefined) {
-    assertKnownProvider(defaultProvider, providerIds, "routing.defaultProvider");
-  }
+  const allowedModels = new Set(options.allowedModels ?? []);
+  const log = options.log;
 
   /** The CEL variable namespaces. Shared so `explain` cannot drift from `resolve`. */
   const varsFor = (facts: RequestFacts): Record<string, unknown> => ({
@@ -128,7 +132,8 @@ export function createRouter(
         }
         if (result === true) {
           return {
-            providerId: rule.providerId,
+            provider: rule.provider,
+            providerType: rule.providerType,
             model: rule.model ?? facts.request.model,
             routeName: rule.routeName,
           };
@@ -142,13 +147,11 @@ export function createRouter(
         }
       }
 
-      if (defaultProvider !== undefined) {
-        return { providerId: defaultProvider, model: facts.request.model, routeName: null };
-      }
-
       throw new OmniError(
         404,
-        `The model \`${facts.request.model}\` does not exist or no route is configured to serve it.`,
+        rules.length === 0
+          ? "no routing rules are configured, so nothing can be served yet"
+          : `The model \`${facts.request.model}\` does not exist or no rule is configured to serve it.`,
         { code: "model_not_found", param: "model" },
       );
     },
@@ -157,7 +160,7 @@ export function createRouter(
       const vars = varsFor(facts);
       const evaluations: RuleEvaluation[] = [];
       for (const rule of rules) {
-        const base = { rule: rule.routeName, providerId: rule.providerId };
+        const base = { rule: rule.routeName, providerType: rule.providerType };
         try {
           const result = rule.when.evaluate(vars);
           if (result === true) {

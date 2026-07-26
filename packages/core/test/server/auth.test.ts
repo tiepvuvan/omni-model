@@ -9,11 +9,9 @@ security:
   mode: any
   providers:
     - type: fake-auth
-providers:
-  fake:
-    type: fake
 routing:
-  defaultProvider: fake
+  rules:
+    - { id: fake, when: "true", target: { type: fake } }
 `;
 
 function verifier(name: string): AuthVerifier {
@@ -113,11 +111,9 @@ security:
     - type: fake-auth
       name: secondary
       header: x-user-b
-providers:
-  fake:
-    type: fake
 routing:
-  defaultProvider: fake
+  rules:
+    - { id: fake, when: "true", target: { type: fake } }
 `;
     const { app } = await createTestApp({ yaml });
     const ok = await app.fetch(chatRequest(CHAT_BODY, { "x-user-b": "bob" }));
@@ -141,11 +137,9 @@ security:
   publicPaths: ["/v1/models"]
   providers:
     - type: fake-auth
-providers:
-  fake:
-    type: fake
 routing:
-  defaultProvider: fake
+  rules:
+    - { id: fake, when: "true", target: { type: fake } }
 `;
     const { app } = await createTestApp({ yaml });
     const models = await app.fetch(new Request("http://local/v1/models"));
@@ -157,11 +151,9 @@ routing:
 
   const NO_VERIFIER_YAML = `
 version: 1
-providers:
-  fake:
-    type: fake
 routing:
-  defaultProvider: fake
+  rules:
+    - { id: fake, when: "true", target: { type: fake } }
 `;
 
   it("refuses to start when no verifier is configured", async () => {
@@ -205,15 +197,9 @@ security:
       name: secondary
       header: x-user-b
       kind: device
-providers:
-  fake:
-    type: fake
 routing:
-  routes:
-    - name: merged-claims
-      when: 'user.claims.tier == "pro" && device.id == "dev-1"'
-      provider: fake
-      model: merged-model
+  rules:
+    - { id: merged-claims, name: merged-claims, when: 'user.claims.tier == "pro" && device.id == "dev-1"', target: { type: fake, model: merged-model } }
 `;
 
   it("accepts when every verifier accepts and merges identities", async () => {
@@ -223,7 +209,7 @@ routing:
     );
     // The route only matches when merged claims AND merged device id are visible.
     expect(response.status).toBe(200);
-    expect(providers.get("fake")?.chatCalls[0]?.request.model).toBe("merged-model");
+    expect(providers.get("merged-claims")?.chatCalls[0]?.request.model).toBe("merged-model");
   });
 
   it("rejects when any verifier sees no credential", async () => {

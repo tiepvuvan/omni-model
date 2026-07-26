@@ -30,34 +30,32 @@ Use the smallest shape that fits the change:
 | Use case | Environment variable | Example |
 | --- | --- | --- |
 | Complete configuration | `OMNI_CONFIG_JSON` | A JSON object containing all top-level blocks. |
-| Complex provider set | `OMNI_PROVIDERS_JSON` | A JSON object keyed by provider ID. |
-| Routing and model aliases | `OMNI_ROUTING_JSON` | A JSON object with routes, model rules, and a default. |
+| Routing rules and their upstreams | `OMNI_ROUTING_JSON` | A JSON object with `rules` and `allowedModels`. |
 | Rate-limit rules | `OMNI_RATE_LIMITS_JSON` | A JSON array of rules. |
 | Security providers | `OMNI_SECURITY_JSON` or `OMNI_SECURITY_PROVIDERS_JSON` | A JSON object or array. |
-| One default provider | `OMNI_PROVIDERS_DEFAULT_*` | `OMNI_PROVIDERS_DEFAULT_TYPE=openai`. |
+| One upstream for everything | `OMNI_TARGET_*` | `OMNI_TARGET_TYPE=openai`. |
 | One built-in verifier | `OMNI_SECURITY_<VERIFIER>_*` | `OMNI_SECURITY_FIREBASE_AUTH_ENABLED=true`. |
-| One simple value | `OMNI_STORAGE_TYPE`, `OMNI_ROUTING_DEFAULT_PROVIDER`, `OMNI_SERVER_LOG_LEVEL`, or `OMNI_SECURITY_MODE` | `OMNI_STORAGE_TYPE=postgres`. |
-| One deeply nested override | `OMNI__…` | `OMNI__ROUTING__ROUTES__0__MODEL=gpt-4o-mini`. |
+| One simple value | `OMNI_STORAGE_TYPE`, `OMNI_TARGET_TYPE`, `OMNI_SERVER_LOG_LEVEL`, or `OMNI_SECURITY_MODE` | `OMNI_STORAGE_TYPE=postgres`. |
+| One deeply nested override | `OMNI__…` | `OMNI__ROUTING__RULES__0__TARGET__MODEL=gpt-4o-mini`. |
 
 The precedence order is: `OMNI_CONFIG_JSON`, named JSON blocks, simple variables, then `OMNI__…`
 paths. Later values override earlier values at the same path.
 
 ## Quick setup with named variables
 
-Use named variables for the common one-provider deployment. They avoid JSON and are the fastest way
-to configure the container. The built-in provider created this way always has the routing ID
-**`default`**; setting any `OMNI_PROVIDERS_DEFAULT_*` variable automatically sets
-`routing.defaultProvider` to `default` unless `OMNI_ROUTING_DEFAULT_PROVIDER` or a later `OMNI__…`
-override changes it.
+Use named variables for the common one-upstream deployment. They avoid JSON and are the fastest way
+to configure the container: setting any `OMNI_TARGET_*` variable seeds a single catch-all routing
+rule (`id: "default"`, `when: "true"`) pointing at that upstream.
 
 ```sh
 # Storage
 OMNI_STORAGE_TYPE=postgres
 OMNI_STORAGE_POSTGRES_URL='${DATABASE_URL}'
 
-# The default upstream provider
-OMNI_PROVIDERS_DEFAULT_TYPE=openai
-OMNI_PROVIDERS_DEFAULT_API_KEY='${OPENAI_API_KEY}'
+# The upstream everything is routed to
+OMNI_TARGET_TYPE=openai
+OMNI_TARGET_API_KEY='${OPENAI_API_KEY}'
+OMNI_TARGET_MODEL=gpt-4o-mini
 
 # One or more enabled authentication methods
 OMNI_SECURITY_FIREBASE_AUTH_ENABLED=true
@@ -68,8 +66,8 @@ OMNI_SECURITY_FIREBASE_APPCHECK_APP_ID=1:1234567890:ios:abc123
 # Opt in only after clients send a fresh limited-use token per request.
 OMNI_SECURITY_FIREBASE_APPCHECK_CONSUME=false
 
-# Optional model alias rules are JSON because they are ordered lists.
-OMNI_ROUTING_ROUTES='[{"name":"smart","when":"request.model == \"smart\"","provider":"default","model":"gpt-4o-mini"}]'
+# More than one upstream, or a condition on a claim, is JSON: rules are ordered.
+OMNI_ROUTING_RULES='[{"id":"smart","when":"request.model == \"smart\"","target":{"type":"openai","apiKey":"${OPENAI_API_KEY}","model":"gpt-4o-mini"}}]'
 ```
 
 <Note>
@@ -109,10 +107,15 @@ export OMNI_CONFIG_JSON='{
       { "type": "jwt", "secret": "${OMNI_JWT_SECRET}", "algorithms": ["HS256"] }
     ]
   },
-  "providers": {
-    "openai": { "type": "openai", "apiKey": "${OPENAI_API_KEY}" }
-  },
-  "routing": { "defaultProvider": "openai" }
+  "routing": {
+    "rules": [
+      {
+        "id": "everything",
+        "when": "true",
+        "target": { "type": "openai", "apiKey": "${OPENAI_API_KEY}" }
+      }
+    ]
+  }
 }'
 ```
 
@@ -132,13 +135,24 @@ export OMNI_SECURITY_PROVIDERS_JSON='[
   {"type":"firebase-auth","projectId":"${GOOGLE_CLOUD_PROJECT}"}
 ]'
 
-export OMNI_PROVIDERS_JSON='{
-  "openai": {"type":"openai","apiKey":"${OPENAI_API_KEY}"},
-  "groq": {
-    "type":"openai-compatible",
-    "baseUrl":"https://api.groq.com/openai/v1",
-    "apiKey":"${GROQ_API_KEY}"
-  }
+export OMNI_ROUTING_JSON='{
+  "rules": [
+    {
+      "id": "fast",
+      "when": "request.model == \"fast\"",
+      "target": {
+        "type": "openai-compatible",
+        "baseUrl": "https://api.groq.com/openai/v1",
+        "apiKey": "${GROQ_API_KEY}",
+        "model": "llama-3.3-70b-versatile"
+      }
+    },
+    {
+      "id": "default",
+      "when": "true",
+      "target": {"type": "openai", "apiKey": "${OPENAI_API_KEY}"}
+    }
+  ]
 }'
 ```
 
@@ -152,7 +166,6 @@ Available block variables are:
 | `OMNI_SECURITY_JSON` | `security` | object |
 | `OMNI_SECURITY_PROVIDERS_JSON` | `security.providers` | array |
 | `OMNI_RATE_LIMITS_JSON` | `rateLimits` | array |
-| `OMNI_PROVIDERS_JSON` | `providers` | object |
 | `OMNI_ROUTING_JSON` | `routing` | object |
 | `OMNI_LOGGING_JSON` | `logging` | object |
 
@@ -168,11 +181,11 @@ OMNI__SERVER__MAX_BODY_BYTES=3000000
 # security.providers[0].type = "jwt"
 OMNI__SECURITY__PROVIDERS__0__TYPE=jwt
 
-# providers.openai.apiKey = "${OPENAI_API_KEY}"
-OMNI__PROVIDERS__OPENAI__API_KEY='${OPENAI_API_KEY}'
+# routing.rules[0].target.apiKey = "${OPENAI_API_KEY}"
+OMNI__ROUTING__RULES__0__TARGET__API_KEY='${OPENAI_API_KEY}'
 
-# routing.routes[0].when = 'request.model == "smart"'
-OMNI__ROUTING__ROUTES__0__WHEN='request.model == "smart"'
+# routing.rules[0].when = 'request.model == "smart"'
+OMNI__ROUTING__RULES__0__WHEN='request.model == "smart"'
 ```
 
 Values beginning with `{`, `[`, or `"` are parsed as JSON. Bare JSON numbers, `true`, `false`, and
@@ -183,14 +196,14 @@ For provider IDs or third-party option names that do not fit a shell-friendly pa
 as JSON instead:
 
 ```sh
-OMNI_PROVIDERS_JSON='{
+OMNI_ROUTING_JSON='{
   "azure_openai-production": {
     "type": "openai-compatible",
     "baseUrl": "https://example.openai.azure.com/openai/v1",
     "apiKey": "${AZURE_OPENAI_API_KEY}"
   }
 }'
-OMNI_DEFAULT_PROVIDER=azure_openai-production
+OMNI_TARGET_TYPE=azure_openai-production
 ```
 
 ## Server
@@ -284,124 +297,108 @@ Supported provider types include `jwt`, `firebase-auth`, `firebase-app-check`, `
 See the dedicated [security guides](/security/custom-jwt) for verifier-specific options and client
 headers.
 
-## Providers, endpoints, and model types
+## Model routing
 
-### Default provider profile
+Routing is one ordered list of rules. Each rule is a condition and a **target**: which upstream,
+with which credentials, as which model.
 
-For one upstream, use `OMNI_PROVIDERS_DEFAULT_*`; it creates a provider named `default` and routes
-unmatched requests there automatically. `OMNI_PROVIDERS_DEFAULT_TYPE` is one of `openai`,
-`openai-compatible`, `anthropic`, or `google`.
-
-| Variable | Applies to | Type / behavior |
-| --- | --- | --- |
-| `OMNI_PROVIDERS_DEFAULT_TYPE` | all | Required. Provider implementation type. |
-| `OMNI_PROVIDERS_DEFAULT_API_KEY` | OpenAI, Anthropic, Google; optional for compatible | String or `${SECRET}` reference. |
-| `OMNI_PROVIDERS_DEFAULT_BASE_URL` | all | URL. Required for `openai-compatible`; optional otherwise. |
-| `OMNI_PROVIDERS_DEFAULT_HEADERS` | OpenAI / compatible | JSON object of extra upstream headers. |
-| `OMNI_PROVIDERS_DEFAULT_MODELS` | OpenAI / compatible | JSON array used as a fallback `/v1/models` list. |
-| `OMNI_PROVIDERS_DEFAULT_ORGANIZATION` | OpenAI / compatible | Optional OpenAI organization header. |
-| `OMNI_PROVIDERS_DEFAULT_INCLUDE_STREAM_USAGE` | OpenAI / compatible | Boolean, default `true`. |
-| `OMNI_PROVIDERS_DEFAULT_ANTHROPIC_VERSION` | Anthropic | String, default `2023-06-01`. |
-| `OMNI_PROVIDERS_DEFAULT_ANTHROPIC_MAX_TOKENS_DEFAULT` | Anthropic | Positive integer, default `4096`. |
-
-```sh
-# OpenAI
-OMNI_PROVIDERS_DEFAULT_TYPE=openai
-OMNI_PROVIDERS_DEFAULT_API_KEY='${OPENAI_API_KEY}'
-
-# Or an OpenAI-compatible endpoint such as Groq, OpenRouter, Together, or a local gateway.
-OMNI_PROVIDERS_DEFAULT_TYPE=openai-compatible
-OMNI_PROVIDERS_DEFAULT_BASE_URL=https://api.groq.com/openai/v1
-OMNI_PROVIDERS_DEFAULT_API_KEY='${GROQ_API_KEY}'
+```json
+{
+  "routing": {
+    "rules": [
+      {
+        "id": "pro-users",
+        "when": "request.model == \"smart\" && has(user.claims.tier) && user.claims.tier == \"pro\"",
+        "target": { "type": "anthropic", "apiKey": "${ANTHROPIC_API_KEY}", "model": "claude-sonnet-5" }
+      },
+      {
+        "id": "everyone-else",
+        "when": "true",
+        "target": { "type": "openai", "apiKey": "${OPENAI_API_KEY}", "model": "gpt-4o-mini" }
+      }
+    ]
+  }
+}
 ```
 
-### Multiple named providers
+Rules are evaluated top to bottom and the **first match wins**; nothing after it runs. There is no
+separate default: a catch-all is a last rule with `when: "true"`. With no rule matching, the request
+is a 404 `model_not_found`.
 
-`OMNI_PROVIDERS_JSON` is an object keyed by your provider IDs. Each entry must contain `type`.
+A target owns its credentials rather than referring to a named provider defined elsewhere. That is
+deliberate — a reference can dangle, and "which key does this rule actually use" stopped being
+answerable by reading the rule.
 
-| Provider type | Required fields | Optional fields |
+### Target fields
+
+`type` is required and is one of `openai`, `openai-compatible`, `anthropic`, or `google`. The rest are
+that provider's own options, validated by its schema — `GET /admin/api/meta` publishes them as JSON
+Schema, which is how the dashboard renders a form per type.
+
+| Provider type | Required | Optional |
 | --- | --- | --- |
 | `openai` | `apiKey` | `baseUrl`, `organization`, `headers`, `models`, `includeStreamUsage` |
 | `openai-compatible` | `baseUrl` | `apiKey`, `organization`, `headers`, `models`, `includeStreamUsage` |
 | `anthropic` | `apiKey` | `baseUrl`, `version`, `maxTokensDefault` |
 | `google` | `apiKey` | `baseUrl` |
 
-Set an endpoint per provider, not globally. This lets one route use OpenAI while another uses an
-OpenAI-compatible gateway:
+`model` is common to all of them: the upstream model to forward as. Omit it to pass the
+client-requested model through unchanged, which is what a rule matching on `request.model` usually
+wants.
+
+### Rule fields
+
+| Field | Type | Purpose |
+| --- | --- | --- |
+| `when` | string | CEL expression. Only a literal `true` counts as a match. |
+| `target` | object | Where a match goes. See above. |
+| `id` | string | Stable identity, used by logs and the admin API. Defaults to the rule's position, so a hand-written configuration need not invent one — but anything editing rules programmatically should set it, since a positional id changes meaning when rules are reordered. |
+| `name` | string | Human label, shown as the route name in request logs. Defaults to `id`. |
+
+### One upstream, the common case
+
+Expressing "one provider, one key, send everything there" as a JSON array of rules would make the
+simplest case the ugliest. These shortcuts build that catch-all rule instead:
+
+| Variable | Applies to | Type / behavior |
+| --- | --- | --- |
+| `OMNI_TARGET_TYPE` | all | Required. Provider implementation type. |
+| `OMNI_TARGET_MODEL` | all | Upstream model to forward as. |
+| `OMNI_TARGET_API_KEY` | OpenAI, Anthropic, Google; optional for compatible | String or `${SECRET}` reference. |
+| `OMNI_TARGET_BASE_URL` | all | URL. Required for `openai-compatible`; optional otherwise. |
+| `OMNI_TARGET_HEADERS` | OpenAI / compatible | JSON object of extra upstream headers. |
+| `OMNI_TARGET_MODELS` | OpenAI / compatible | JSON array used as a fallback model list. |
+| `OMNI_TARGET_ORGANIZATION` | OpenAI / compatible | Optional OpenAI organization header. |
+| `OMNI_TARGET_INCLUDE_STREAM_USAGE` | OpenAI / compatible | Boolean, default `true`. |
+| `OMNI_TARGET_ANTHROPIC_VERSION` | Anthropic | String, default `2023-06-01`. |
+| `OMNI_TARGET_ANTHROPIC_MAX_TOKENS_DEFAULT` | Anthropic | Positive integer, default `4096`. |
 
 ```sh
-OMNI_PROVIDERS_JSON='{
-  "openai": {"type":"openai","apiKey":"${OPENAI_API_KEY}"},
-  "anthropic": {"type":"anthropic","apiKey":"${ANTHROPIC_API_KEY}"},
-  "fast": {
-    "type":"openai-compatible",
-    "baseUrl":"https://api.groq.com/openai/v1",
-    "apiKey":"${GROQ_API_KEY}"
-  }
-}'
+# OpenAI
+OMNI_TARGET_TYPE=openai
+OMNI_TARGET_API_KEY='${OPENAI_API_KEY}'
+
+# Or an OpenAI-compatible endpoint such as Groq, OpenRouter, Together, or a local gateway.
+OMNI_TARGET_TYPE=openai-compatible
+OMNI_TARGET_BASE_URL=https://api.groq.com/openai/v1
+OMNI_TARGET_API_KEY='${GROQ_API_KEY}'
 ```
 
-Provider IDs are your stable routing names. Client model names do not have to match upstream model
-names; routes and model rules can replace them.
+They seed a rule with `id: "default"` and `when: "true"`. Anything more — several upstreams, or a
+condition on a claim — is `OMNI_ROUTING_RULES`, or the [admin API](/reference/admin-api).
 
-## Model routing
-
-Set `OMNI_ROUTING_JSON` to configure client-facing aliases, conditional routes, model rules, and a
-fallback provider. Routes run in order; the first `when` expression that evaluates to true wins.
-
-For the common fields, these aliases avoid wrapping one value in an object:
+### Restricting what clients may ask for
 
 | Variable | JSON type | Maps to |
 | --- | --- | --- |
-| `OMNI_ROUTING_DEFAULT_PROVIDER` | string | `routing.defaultProvider` |
 | `OMNI_ROUTING_ALLOWED_MODELS` | string array | `routing.allowedModels` |
-| `OMNI_ROUTING_ROUTES` | array | `routing.routes` |
-| `OMNI_ROUTING_MODEL_RULES` | array | `routing.modelRules` |
+| `OMNI_ROUTING_RULES` | array | `routing.rules` |
 
-`OMNI_DEFAULT_PROVIDER` remains supported as a legacy alias. Use the `OMNI_ROUTING_*` names for new
-deployments. Ordered routes and model rules are arrays, so use JSON for them.
+`allowedModels` is the client-facing catalogue: a request for anything else is a 404 before any rule
+runs, and `GET /v1/models` lists exactly these. Leave it empty and every name is eligible for
+routing, in which case `/v1/models` falls back to the distinct models the rules forward to.
 
-Set an allowlist to restrict clients to exact model names. This applies to chat completions and
-embeddings before any upstream call; `/v1/models` then exposes only these client-facing names. An
-empty or omitted allowlist permits all model names, preserving the default behavior.
-
-```sh
-OMNI_ROUTING_ALLOWED_MODELS='["smart","fast","embed"]'
-```
-
-```sh
-OMNI_ROUTING_JSON='{
-  "routes":[
-    {
-      "name":"smart-pro",
-      "when":"request.model == \"smart\" && has(user.claims.tier) && user.claims.tier == \"pro\"",
-      "provider":"anthropic",
-      "model":"claude-sonnet-4-5"
-    },
-    {
-      "name":"smart-default",
-      "when":"request.model == \"smart\"",
-      "provider":"fast",
-      "model":"llama-3.3-70b-versatile"
-    }
-  ],
-  "modelRules":[
-    {"match":"request.model.startsWith(\"gpt-\")","provider":"openai"},
-    {"match":"request.model.startsWith(\"claude-\")","provider":"anthropic"}
-  ],
-  "defaultProvider":"openai"
-}'
-```
-
-For a surgical update, override one generated route field:
-
-```sh
-OMNI__ROUTING__ROUTES__1__MODEL=llama-3.3-70b-versatile
-```
-
-All `when`, `match`, and rate-limit `when` expressions use CEL. Guard optional claims with
-`has(user.claims.tier)` before reading them. See [Model routing](/model-routing/routing) for the
-available request, user, device, [client](/reference/write-keys), HTTP, and time facts.
+Client-facing names need not match upstream names — that is what a target's `model` is for.
 
 ## Rate limits
 
@@ -446,7 +443,7 @@ its own options at startup, so unsupported fields fail before the service accept
 | `security` | object | `{ mode: "all", publicPaths: [], providers: [] }` | At least one provider is required for an HTTP proxy. |
 | `rateLimits` | array | `[{ per-user-requests: 30/1h }, { per-user-daily-tokens: 30000/1d }]` | Ordered request/token budget rules. |
 | `providers` | object keyed by ID | `{}` | Each value has a `type` and type-specific options. |
-| `routing` | object | `{ allowedModels: [], routes: [], modelRules: [] }` | Restricts client model names and chooses an upstream. |
+| `routing` | object | `{ allowedModels: [], rules: [] }` | Restricts client model names and chooses an upstream. |
 
 ### `server` object
 
@@ -485,9 +482,7 @@ its own options at startup, so unsupported fields fail before the service accept
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
 | `allowedModels` | string array | `[]` | Exact client model names allowed for chat and embeddings. When non-empty, `/v1/models` returns this list only. |
-| `routes` | array of `{ name, when, provider, model? }` | `[]` | First CEL `when` that is true wins. |
-| `modelRules` | array of `{ match, provider, model? }` | `[]` | Fallback matching by client model name. |
-| `defaultProvider` | provider ID | omitted | Last fallback; an unmatched request is 404 when omitted. |
+| `rules` | array of `{ when, target, id?, name? }` | `[]` | Ordered; first match wins. A catch-all is `when: "true"`. |
 
 See [Model routing](/model-routing/routing) for the CEL request context and a full routing example.
 

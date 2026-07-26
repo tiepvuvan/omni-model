@@ -158,7 +158,7 @@ export function createMetaRoutes(deps: AdminDeps): Hono<AdminEnv> {
       return c.json({
         matched: true,
         route: decision.routeName,
-        provider: decision.providerId,
+        provider: decision.providerType,
         model: decision.model,
         rules,
         warnings: warningsFor(broken),

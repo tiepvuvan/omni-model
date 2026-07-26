@@ -17,7 +17,13 @@ services:
       POSTGRES_INITDB_ARGS: "--nosync"
     tmpfs:
       - /var/lib/postgresql/data
-    command: ["postgres", "-c", "fsync=off", "-c", "full_page_writes=off"]
+    # `max_connections` is raised because the *test suite* fans out far wider than
+    # the product does: vitest runs many files in parallel and each gated suite
+    # opens its own pool (plus one per scoped-schema helper), where a real
+    # deployment has one pool per container. At the default 100 the full run
+    # intermittently failed to connect. Nothing here reflects production sizing.
+    command:
+      ["postgres", "-c", "fsync=off", "-c", "full_page_writes=off", "-c", "max_connections=300"]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U omni -d omni_test"]
       interval: 1s

@@ -9,11 +9,9 @@ rateLimits:
   - name: daily-tokens
     key: user
     tokens: { limit: 100000, window: 1h }
-providers:
-  fake:
-    type: fake
 routing:
-  defaultProvider: fake
+  rules:
+    - { id: fake, when: "true", target: { type: fake } }
 `;
 
 function chunk(content: string, finish: string | null = null): ChatCompletionChunk {

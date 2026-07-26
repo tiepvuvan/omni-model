@@ -15,16 +15,10 @@ version: 1
 security:
   providers:
     - type: fake-auth
-providers:
-  fake:
-    type: fake
 routing:
-  routes:
-    - name: smart-for-pro
-      when: 'request.model == "smart" && user.claims.tier == "pro"'
-      provider: fake
-      model: fake-large
-  defaultProvider: fake
+  rules:
+    - { id: smart-for-pro, name: smart-for-pro, when: 'request.model == "smart" && user.claims.tier == "pro"', target: { type: fake, model: fake-large } }
+    - { id: fake, when: "true", target: { type: fake } }
 `;
 
 describe("POST /v1/chat/completions", () => {
@@ -43,7 +37,7 @@ describe("POST /v1/chat/completions", () => {
     };
     const { app, providers } = await createTestApp({
       yaml: ROUTED_YAML,
-      behaviors: { fake: { completion } },
+      behaviors: { "smart-for-pro": { completion } },
     });
     const messages = [
       { role: "system", content: "be nice" },
@@ -68,7 +62,7 @@ describe("POST /v1/chat/completions", () => {
       ],
     });
 
-    const call = providers.get("fake")?.chatCalls[0];
+    const call = providers.get("smart-for-pro")?.chatCalls[0];
     // The provider sees the route's model override but the client's payload verbatim.
     expect(call?.request.model).toBe("fake-large");
     expect(call?.request.messages).toEqual(messages);
@@ -91,12 +85,10 @@ version: 1
 security:
   providers:
     - type: fake-auth
-providers:
-  fake:
-    type: fake
 routing:
   allowedModels: [smart]
-  defaultProvider: fake
+  rules:
+    - { id: fake, when: "true", target: { type: fake } }
 `;
     const { app, providers } = await createTestApp({ yaml });
 
@@ -120,11 +112,9 @@ rateLimits:
   - name: daily-tokens
     key: user
     tokens: { limit: 100000, window: 1h }
-providers:
-  fake:
-    type: fake
 routing:
-  defaultProvider: fake
+  rules:
+    - { id: fake, when: "true", target: { type: fake } }
 `;
     const storage = new MemoryStorageAdapter(() => FIXED_NOW);
     const { app, collector } = await createTestApp({ yaml, storage });
@@ -139,44 +129,36 @@ routing:
     expect(counter).toBe(15);
   });
 
-  it("falls through routes to modelRules and then defaultProvider", async () => {
+  it("evaluates rules in order and stops at the first match", async () => {
     const yaml = `
 version: 1
-providers:
-  alpha:
-    type: fake
-  beta:
-    type: fake
 routing:
-  modelRules:
-    - match: 'request.model.startsWith("claude-")'
-      provider: beta
-  defaultProvider: alpha
+  rules:
+    - { id: claude, when: 'request.model.startsWith("claude-")', target: { type: fake } }
+    - { id: catch-all, when: "true", target: { type: fake } }
 `;
     const { app, providers } = await createTestApp({ yaml });
 
-    const toBeta = await app.fetch(
+    const toClaude = await app.fetch(
       chatRequest({ model: "claude-opus-4", messages: CHAT_BODY.messages }),
     );
-    expect(toBeta.status).toBe(200);
-    expect(providers.get("beta")?.chatCalls).toHaveLength(1);
-    expect(providers.get("alpha")?.chatCalls).toHaveLength(0);
+    expect(toClaude.status).toBe(200);
+    expect(providers.get("claude")?.chatCalls).toHaveLength(1);
+    expect(providers.get("catch-all")?.chatCalls).toHaveLength(0);
 
-    const toAlpha = await app.fetch(chatRequest({ model: "gpt-4o", messages: CHAT_BODY.messages }));
-    expect(toAlpha.status).toBe(200);
-    expect(providers.get("alpha")?.chatCalls).toHaveLength(1);
+    const toCatchAll = await app.fetch(
+      chatRequest({ model: "gpt-4o", messages: CHAT_BODY.messages }),
+    );
+    expect(toCatchAll.status).toBe(200);
+    expect(providers.get("catch-all")?.chatCalls).toHaveLength(1);
   });
 
-  it("returns 404 model_not_found when nothing matches and no default exists", async () => {
+  it("returns 404 model_not_found when no rule matches", async () => {
     const yaml = `
 version: 1
-providers:
-  fake:
-    type: fake
 routing:
-  modelRules:
-    - match: 'request.model.startsWith("claude-")'
-      provider: fake
+  rules:
+    - { id: model-rule-0, when: 'request.model.startsWith("claude-")', target: { type: fake } }
 `;
     const { app } = await createTestApp({ yaml });
     const response = await app.fetch(
@@ -234,7 +216,7 @@ routing:
     };
     const { app } = await createTestApp({
       yaml: ROUTED_YAML,
-      behaviors: { fake: { error: { status: 502, body: errorBody } } },
+      behaviors: { "smart-for-pro": { error: { status: 502, body: errorBody } } },
     });
     const response = await app.fetch(chatRequest(CHAT_BODY, { "x-test-user": "pro" }));
     expect(response.status).toBe(502);
@@ -255,7 +237,7 @@ routing:
       chatRequest(CHAT_BODY, { "x-test-user": "pro" }, { signal: controller.signal }),
     );
     expect(response.status).toBe(200);
-    const signal = providers.get("fake")?.chatCalls[0]?.signal;
+    const signal = providers.get("smart-for-pro")?.chatCalls[0]?.signal;
     expect(signal).toBeInstanceOf(AbortSignal);
     expect(signal?.aborted).toBe(false);
     controller.abort();
@@ -268,7 +250,7 @@ routing:
     delete completion.usage;
     const { app, collector } = await createTestApp({
       yaml: ROUTED_YAML,
-      behaviors: { fake: { completion } },
+      behaviors: { "smart-for-pro": { completion } },
     });
     const response = await app.fetch(chatRequest(CHAT_BODY, { "x-test-user": "pro" }));
     expect(response.status).toBe(200);

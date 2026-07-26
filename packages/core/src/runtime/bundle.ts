@@ -15,7 +15,12 @@ import type { ChatProvider } from "../providers/types.js";
 import { createRateLimiter } from "../ratelimit/limiter.js";
 import type { RateLimiter } from "../ratelimit/types.js";
 import type { OmniRegistry } from "../registry.js";
-import { createRouter } from "../routing/router.js";
+import {
+  type CompiledRoutingRule,
+  compileRoutingExpression,
+  createRouter,
+  unreachableRules,
+} from "../routing/router.js";
 import type { ExpressionEngine, Router } from "../routing/types.js";
 import type { AppEnv } from "../server/types.js";
 import type { StorageAdapter } from "../storage/types.js";
@@ -47,6 +52,13 @@ export interface RuntimeBundle {
   /** Source revision, when it came from a `ConfigStore`. */
   readonly revision: number | null;
 
+  /**
+   * One upstream per routing rule, keyed by the rule's id.
+   *
+   * Rules hold their own provider for serving; this is for anything that needs to
+   * address one by name — the admin probe asks "is *this rule's* upstream
+   * reachable", which is the right question now that credentials belong to a rule.
+   */
   readonly providers: ReadonlyMap<string, ChatProvider>;
   readonly router: Router;
   readonly limiter: RateLimiter;
@@ -141,8 +153,14 @@ export function buildBundle(input: BuildBundleInput): RuntimeBundle {
     );
   }
 
-  const providers = buildProviders(config, input.registry, runtime);
-  const router = createRouter(config.routing, new Set(providers.keys()), input.engine, log);
+  const { rules, providers } = buildRoutingRules(config, input.registry, input.engine, runtime);
+  // A smell, not an error: the configuration is valid and serves traffic, it just
+  // contains a rule that can never fire. Said out loud because nothing about a
+  // request reveals it — the proxy answers normally, from an earlier rule.
+  for (const dead of unreachableRules(config.routing.rules)) {
+    log.warn("routing rule can never match: an earlier catch-all always wins", dead);
+  }
+  const router = createRouter(rules, { allowedModels: config.routing.allowedModels, log });
   const limiter = createRateLimiter(config.rateLimits, {
     storage: input.storage,
     engine: input.engine,
@@ -187,23 +205,58 @@ function buildVerifiers(
   });
 }
 
-function buildProviders(
+/**
+ * Compile every rule and construct the upstream each one points at.
+ *
+ * One provider instance per rule, keyed by the rule's id. Sharing an instance
+ * between rules with identical targets was tried and reverted: a provider is a
+ * stateless wrapper over `fetch` that holds no sockets, so the saving was
+ * nothing, and it made `ChatProvider.id` arbitrary — whichever rule happened to
+ * build it first — which then showed up in error messages and logs.
+ */
+function buildRoutingRules(
   config: OmniConfig,
   registry: OmniRegistry,
+  engine: ExpressionEngine,
   runtime: RuntimeContext,
-): Map<string, ChatProvider> {
+): { rules: CompiledRoutingRule[]; providers: Map<string, ChatProvider> } {
   const providers = new Map<string, ChatProvider>();
-  for (const [id, providerConfig] of Object.entries(config.providers)) {
-    const factory = registry.providers.get(providerConfig.type);
+  const rules = config.routing.rules.map((rule, index) => {
+    const id = rule.id ?? `rules[${index}]`;
+    const where = `routing.rules[${index}]${rule.name === undefined ? "" : ` ("${rule.name}")`}`;
+    const factory = registry.providers.get(rule.target.type);
     if (factory === undefined) {
       throw new ConfigError(
-        `providers.${id}: unknown provider type "${providerConfig.type}" ` +
+        `${where}.target: unknown provider type "${rule.target.type}" ` +
           `(registered provider types: ${registeredTypes(registry.providers)})`,
       );
     }
-    providers.set(id, factory.create(id, providerConfig, runtime));
-  }
-  return providers;
+    if (providers.has(id)) {
+      throw new ConfigError(
+        `${where}: duplicate rule id "${id}"; ids identify a rule in logs and in the admin API, ` +
+          "so two rules cannot share one",
+      );
+    }
+
+    // `model` is the *rule's* choice of what to forward as, not a provider
+    // option — and the factories validate with `strictObject`, so passing it
+    // through would be rejected as an unrecognized key.
+    const { model, ...options } = rule.target;
+    // The factory validates its own options and throws `ConfigError`, so a bad
+    // credential or base URL is reported here rather than on the first request.
+    const provider = factory.create(id, options, runtime);
+    providers.set(id, provider);
+
+    return {
+      when: compileRoutingExpression(engine, rule.when, `${where} when`),
+      routeName: rule.name ?? id,
+      provider,
+      providerType: rule.target.type,
+      model,
+      warnedNonBoolean: false,
+    };
+  });
+  return { rules, providers };
 }
 
 /**

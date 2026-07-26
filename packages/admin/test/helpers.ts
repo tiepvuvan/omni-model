@@ -24,21 +24,27 @@ export const TEST_KEY = Buffer.alloc(32, 7).toString("base64");
 /**
  * A minimal working configuration.
  *
- * One provider, one verifier — the smallest document `buildBundle` accepts, so a
- * test that changes one block is not also asserting the rest.
+ * One catch-all routing rule and one verifier — the smallest document
+ * `buildBundle` accepts, so a test that changes one block is not also asserting
+ * the rest.
  */
 export function baseConfig(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     storage: { type: "memory" },
-    providers: {
-      default: { type: "openai", apiKey: "sk-test", baseUrl: "https://upstream.test/v1" },
-    },
     security: {
       providers: [
         { type: "jwt", issuer: "https://issuer.test", audience: "test", secret: "s".repeat(32) },
       ],
     },
-    routing: { defaultProvider: "default" },
+    routing: {
+      rules: [
+        {
+          id: "default",
+          when: "true",
+          target: { type: "openai", apiKey: "sk-test", baseUrl: "https://upstream.test/v1" },
+        },
+      ],
+    },
     ...overrides,
   };
 }

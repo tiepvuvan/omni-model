@@ -18,13 +18,14 @@ const STARTER_ENV = {
   OMNI__SECURITY__PROVIDERS__0__TYPE: "jwt",
   OMNI__SECURITY__PROVIDERS__0__SECRET: JWT_SECRET_REFERENCE,
   OMNI__SECURITY__PROVIDERS__0__ALGORITHMS: '["HS256"]',
-  OMNI__PROVIDERS__OPENAI__TYPE: "openai",
-  OMNI__PROVIDERS__OPENAI__API_KEY: OPENAI_API_KEY_REFERENCE,
+  OMNI__ROUTING__RULES__0__ID: "default",
+  OMNI__ROUTING__RULES__0__WHEN: '"true"',
+  OMNI__ROUTING__RULES__0__TARGET__TYPE: "openai",
+  OMNI__ROUTING__RULES__0__TARGET__API_KEY: OPENAI_API_KEY_REFERENCE,
   OMNI__RATE_LIMITS__0__NAME: "per-user-requests",
   OMNI__RATE_LIMITS__0__KEY: "user",
   OMNI__RATE_LIMITS__0__REQUESTS__LIMIT: "60",
   OMNI__RATE_LIMITS__0__REQUESTS__WINDOW: "1m",
-  OMNI__ROUTING__DEFAULT_PROVIDER: "openai",
 };
 
 describe("environment configuration", () => {
@@ -35,11 +36,12 @@ describe("environment configuration", () => {
       server: { logLevel: "silent", cors: { allowOrigins: ["https://app.example.com"] } },
       storage: { type: "memory" },
       security: { providers: [{ type: "jwt", secret: "test-jwt-secret", algorithms: ["HS256"] }] },
-      providers: { openai: { type: "openai", apiKey: "sk-test" } },
       rateLimits: [
         { name: "per-user-requests", key: "user", requests: { limit: 60, window: "1m" } },
       ],
-      routing: { defaultProvider: "openai" },
+      routing: {
+        rules: [{ id: "default", when: "true", target: { type: "openai", apiKey: "sk-test" } }],
+      },
     });
   });
 
@@ -47,14 +49,16 @@ describe("environment configuration", () => {
     const document = environmentConfigDocument({
       OMNI__SERVER__TRUST_PROXY_HEADERS: "true",
       OMNI__SERVER__MAX_BODY_BYTES: "3000000",
-      OMNI__PROVIDERS__EXAMPLE__API_KEY: '"123"',
-      OMNI__ROUTING: '{"defaultProvider":"provider-with-an-arbitrary-id"}',
+      OMNI__ROUTING__ALLOWED_MODELS: '["smart"]',
+      OMNI__ROUTING__RULES: '[{"id":"a","when":"true","target":{"type":"openai"}}]',
     });
 
     expect(document).toEqual({
       server: { trustProxyHeaders: true, maxBodyBytes: 3_000_000 },
-      providers: { example: { apiKey: "123" } },
-      routing: { defaultProvider: "provider-with-an-arbitrary-id" },
+      routing: {
+        allowedModels: ["smart"],
+        rules: [{ id: "a", when: "true", target: { type: "openai" } }],
+      },
     });
   });
 
@@ -65,25 +69,33 @@ describe("environment configuration", () => {
         version: 1,
         storage: { type: "memory" },
         security: { providers: [{ type: "jwt", secret: "test", algorithms: ["HS256"] }] },
-        providers: { openai: { type: "openai", apiKey: OPENAI_API_KEY_REFERENCE } },
-        routing: { defaultProvider: "openai" },
+        routing: {
+          rules: [
+            {
+              id: "slow",
+              when: "true",
+              target: { type: "openai", apiKey: OPENAI_API_KEY_REFERENCE },
+            },
+          ],
+        },
       }),
       OMNI_SERVER_JSON: '{"logLevel":"warn","cors":{"allowOrigins":["https://base.example"]}}',
-      OMNI_PROVIDERS_JSON: `{"fast":{"type":"openai-compatible","baseUrl":"https://api.example.com/v1","apiKey":"${OPENAI_API_KEY_REFERENCE}"}}`,
+      OMNI_ROUTING_JSON: `{"rules":[{"id":"fast","when":"true","target":{"type":"openai-compatible","baseUrl":"https://api.example.com/v1","apiKey":"${OPENAI_API_KEY_REFERENCE}"}}]}`,
       OMNI_LOG_LEVEL: "error",
       OMNI__SERVER__CORS__ALLOW_ORIGINS: '["https://override.example"]',
-      OMNI__ROUTING__DEFAULT_PROVIDER: "fast",
+      OMNI__ROUTING__ALLOWED_MODELS: '["only-this"]',
     });
 
     expect(config.server).toMatchObject({
       logLevel: "error",
       cors: { allowOrigins: ["https://override.example"] },
     });
-    expect(config.providers).toMatchObject({
-      openai: { type: "openai", apiKey: "sk-test" },
-      fast: { type: "openai-compatible", baseUrl: "https://api.example.com/v1" },
-    });
-    expect(config.routing.defaultProvider).toBe("fast");
+    // The named JSON block replaced the whole-document rules, and the path
+    // override then added to the block it did not touch.
+    expect(config.routing.rules).toMatchObject([
+      { id: "fast", target: { type: "openai-compatible", apiKey: "sk-test" } },
+    ]);
+    expect(config.routing.allowedModels).toEqual(["only-this"]);
   });
 
   it("builds storage, a default provider, Firebase Auth, and App Check from ergonomic variables", () => {
@@ -91,9 +103,10 @@ describe("environment configuration", () => {
       OMNI_STORAGE_TYPE: "postgres",
       OMNI_STORAGE_POSTGRES_URL: "postgres://localhost:5432/omni",
       OMNI_STORAGE_POSTGRES_MIGRATE: "false",
-      OMNI_PROVIDERS_DEFAULT_TYPE: "openai-compatible",
-      OMNI_PROVIDERS_DEFAULT_BASE_URL: "https://gateway.example.com/v1",
-      OMNI_PROVIDERS_DEFAULT_API_KEY: "gateway-key",
+      OMNI_TARGET_TYPE: "openai-compatible",
+      OMNI_TARGET_BASE_URL: "https://gateway.example.com/v1",
+      OMNI_TARGET_API_KEY: "gateway-key",
+      OMNI_TARGET_MODEL: "gpt-4o-mini",
       OMNI_SECURITY_MODE: "all",
       OMNI_SECURITY_FIREBASE_AUTH_ENABLED: "true",
       OMNI_SECURITY_FIREBASE_AUTH_PROJECT_ID: "my-firebase-project",
@@ -102,14 +115,6 @@ describe("environment configuration", () => {
       OMNI_SECURITY_FIREBASE_APPCHECK_APP_ID: "1:1234567890:ios:abc123",
       OMNI_SECURITY_FIREBASE_APPCHECK_CONSUME: "true",
       OMNI_ROUTING_ALLOWED_MODELS: '["smart","embeddings"]',
-      OMNI_ROUTING_ROUTES: JSON.stringify([
-        {
-          name: "smart",
-          when: 'request.model == "smart"',
-          provider: "default",
-          model: "gpt-4o-mini",
-        },
-      ]),
     });
 
     expect(config.storage).toMatchObject({
@@ -117,15 +122,22 @@ describe("environment configuration", () => {
       url: "postgres://localhost:5432/omni",
       migrate: false,
     });
-    expect(config.providers.default).toMatchObject({
-      type: "openai-compatible",
-      baseUrl: "https://gateway.example.com/v1",
-      apiKey: "gateway-key",
-    });
+    // One catch-all rule, so the commonest deployment stays the simplest to
+    // express: one provider, one key, send everything there.
     expect(config.routing).toMatchObject({
-      defaultProvider: "default",
       allowedModels: ["smart", "embeddings"],
-      routes: [{ name: "smart", provider: "default", model: "gpt-4o-mini" }],
+      rules: [
+        {
+          id: "default",
+          when: "true",
+          target: {
+            type: "openai-compatible",
+            baseUrl: "https://gateway.example.com/v1",
+            apiKey: "gateway-key",
+            model: "gpt-4o-mini",
+          },
+        },
+      ],
     });
     expect(config.security).toMatchObject({
       mode: "all",
@@ -185,15 +197,15 @@ describe("environment configuration", () => {
 
   it("omits empty optional compatible-provider credentials and App Check app IDs", () => {
     const config = parseEnvironmentConfig({
-      OMNI_PROVIDERS_DEFAULT_TYPE: "openai-compatible",
-      OMNI_PROVIDERS_DEFAULT_BASE_URL: "https://gateway.example.com/v1",
-      OMNI_PROVIDERS_DEFAULT_API_KEY: "",
+      OMNI_TARGET_TYPE: "openai-compatible",
+      OMNI_TARGET_BASE_URL: "https://gateway.example.com/v1",
+      OMNI_TARGET_API_KEY: "",
       OMNI_SECURITY_FIREBASE_APPCHECK_ENABLED: "true",
       OMNI_SECURITY_FIREBASE_APPCHECK_PROJECT_NUMBER: "1234567890",
       OMNI_SECURITY_FIREBASE_APPCHECK_APP_ID: "",
     });
 
-    expect(config.providers.default).toEqual({
+    expect(config.routing.rules[0]?.target).toEqual({
       type: "openai-compatible",
       baseUrl: "https://gateway.example.com/v1",
     });
@@ -206,7 +218,7 @@ describe("environment configuration", () => {
     expect(() => environmentConfigDocument({ OMNI_CONFIG_JSON: "[]" })).toThrow(
       /full configuration must be a JSON object/,
     );
-    expect(() => environmentConfigDocument({ OMNI_PROVIDERS_JSON: "not-json" })).toThrow(
+    expect(() => environmentConfigDocument({ OMNI_ROUTING_JSON: "not-json" })).toThrow(
       /expected valid JSON/,
     );
   });

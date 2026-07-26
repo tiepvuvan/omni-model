@@ -1,12 +1,22 @@
 {
   "version": 1,
-  "server": { "logLevel": "info" },
-  "storage": { "type": "memory" },
+  "server": {
+    "logLevel": "info"
+  },
+  "storage": {
+    "type": "memory"
+  },
   "security": {
     "mode": "any",
     "providers": [
-      { "type": "firebase-auth", "projectId": "${FIREBASE_PROJECT_ID}" },
-      { "type": "firebase-app-check", "projectNumber": "${FIREBASE_PROJECT_NUMBER}" },
+      {
+        "type": "firebase-auth",
+        "projectId": "${FIREBASE_PROJECT_ID}"
+      },
+      {
+        "type": "firebase-app-check",
+        "projectNumber": "${FIREBASE_PROJECT_NUMBER}"
+      },
       {
         "type": "apple-app-attest",
         "teamId": "${APPLE_TEAM_ID}",
@@ -23,18 +33,30 @@
     ]
   },
   "rateLimits": [
-    { "name": "per-identity-requests", "key": "user", "requests": { "limit": 120, "window": "1m" } }
-  ],
-  "providers": {
-    "openrouter": {
-      "type": "openai-compatible",
-      "baseUrl": "https://openrouter.ai/api/v1",
-      "apiKey": "${OPENROUTER_API_KEY}",
-      "headers": {
-        "HTTP-Referer": "https://github.com/tiepvuvan/omni-model",
-        "X-Title": "omni-model device-auth"
+    {
+      "name": "per-identity-requests",
+      "key": "user",
+      "requests": {
+        "limit": 120,
+        "window": "1m"
       }
     }
-  },
-  "routing": { "defaultProvider": "openrouter" }
+  ],
+  "routing": {
+    "rules": [
+      {
+        "id": "openrouter",
+        "when": "true",
+        "target": {
+          "type": "openai-compatible",
+          "baseUrl": "https://openrouter.ai/api/v1",
+          "apiKey": "${OPENROUTER_API_KEY}",
+          "headers": {
+            "HTTP-Referer": "https://github.com/tiepvuvan/omni-model",
+            "X-Title": "omni-model device-auth"
+          }
+        }
+      }
+    ]
+  }
 }
