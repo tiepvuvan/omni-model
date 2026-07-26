@@ -1,35 +1,30 @@
+import type * as Monaco from "monaco-editor";
 import { useEffect, useId, useRef, useState } from "react";
 import validIcon from "../../assets/valid.svg";
 import { cx } from "../ui/primitives";
-import { type Completion, complete, type Diagnostic, diagnose, tokenize } from "./cel";
-
-/** One colour per token kind, from the design's palette. */
-const TOKEN_COLOURS: Record<string, string> = {
-  namespace: "text-accent-subtle-foreground",
-  function: "text-violet-subtle-foreground",
-  keyword: "text-pink-subtle-foreground",
-  string: "text-green-subtle-foreground",
-  number: "text-orange-subtle-foreground",
-  operator: "text-foreground-secondary",
-  punctuation: "text-foreground-secondary",
-  identifier: "text-foreground-primary",
-  unknown: "text-destructive",
-  whitespace: "text-foreground-primary",
-};
+import { diagnose } from "./cel";
+import {
+  CEL_LANGUAGE,
+  CEL_THEME_DARK,
+  CEL_THEME_LIGHT,
+  monaco,
+  registerCel,
+  setMarkers,
+} from "./cel-monaco";
 
 /**
- * A syntax-highlighted CEL editor with completion and live correctness.
+ * The condition editor: Monaco with the CEL language registered.
  *
- * A real textarea under a painted overlay, rather than a `contenteditable`: the
- * textarea keeps native selection, undo, IME and screen-reader behaviour, and the
- * overlay only has to agree with it on font and box metrics. That is why both use
- * the same `type-mono-12` and the same padding — a mismatch shows up immediately
- * as drifting text.
+ * Monaco brings what a hand-rolled overlay cannot — a squiggle under the offending
+ * text, hover documentation, bracket matching, multi-cursor, and a completion
+ * widget that behaves the way every other code editor does. The language itself
+ * (tokens, completions, diagnostics) is `cel.ts`, shared with the tests and with
+ * the fact-parity check against core's `RequestFacts`.
  *
- * Correctness comes from two places. The instant half is lexical (brackets,
- * strings, unknown identifiers, and the unguarded-map-key trap). The authoritative
- * half is the server, which is the only thing that actually compiles CEL — passed
- * in as `serverError` by the screen that owns the draft.
+ * The status line below is kept even though Monaco shows markers inline: a marker
+ * explains *where*, and the line explains *what happens* — "this rule would
+ * silently never fire" is the sentence that matters, and it should not need a
+ * hover to find.
  */
 export function CelEditor({
   value,
@@ -43,179 +38,130 @@ export function CelEditor({
   id?: string;
   /** A compile error from the API, which is the authority on syntax. */
   serverError?: string | null;
-  /** Named in the field's accessible label so a screen full of them is navigable. */
   ruleLabel: string;
 }) {
   const generated = useId();
   const controlId = id ?? generated;
-  const textarea = useRef<HTMLTextAreaElement>(null);
-  const overlay = useRef<HTMLPreElement>(null);
+  const host = useRef<HTMLDivElement>(null);
+  /**
+   * Mount-time seeds, read once.
+   *
+   * Monaco is constructed with the value and the aria-label it should start from;
+   * afterwards both are pushed in imperatively. Kept in refs so the mount effect
+   * has no reactive dependency on either — depending on `value` would tear the
+   * editor down and rebuild it on every keystroke.
+   */
+  const seed = useRef({ value, ruleLabel });
+  const editor = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
+  /** The latest `onChange`, so the mount-once listener never calls a stale one. */
+  const notify = useRef(onChange);
+  notify.current = onChange;
+  const [ready, setReady] = useState(false);
 
-  const [menu, setMenu] = useState<{ from: number; items: Completion[]; active: number } | null>(
-    null,
-  );
-
-  const diagnostics: Diagnostic[] = diagnose(value);
+  const diagnostics = diagnose(value);
   const errors = diagnostics.filter((entry) => entry.severity === "error");
   const warnings = diagnostics.filter((entry) => entry.severity === "warning");
   const catchAll = value.trim() === "true";
 
-  // The overlay does not scroll itself; it follows the textarea so a long
-  // expression stays aligned with its highlighting.
-  const syncScroll = () => {
-    if (overlay.current !== null && textarea.current !== null) {
-      overlay.current.scrollTop = textarea.current.scrollTop;
-      overlay.current.scrollLeft = textarea.current.scrollLeft;
-    }
-  };
+  // Mount once. Monaco owns its own DOM, so React must not render into it — hence
+  // the empty dependency list and the imperative updates below.
+  useEffect(() => {
+    if (host.current === null) return;
+    registerCel();
 
-  // Runs after every render rather than on a value change: the overlay has to
-  // re-follow the textarea whenever either could have moved, and `syncScroll`
-  // reads refs only, so there is nothing to depend on.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: intentionally every render.
-  useEffect(syncScroll);
-
-  const openMenu = (source: string, caret: number) => {
-    const { from, items } = complete(source, caret);
-    setMenu(items.length === 0 ? null : { from, items, active: 0 });
-  };
-
-  const accept = (item: Completion) => {
-    const field = textarea.current;
-    if (field === null || menu === null) return;
-    const caret = field.selectionStart;
-    const next = value.slice(0, menu.from) + item.insert + value.slice(caret);
-    onChange(next);
-    setMenu(null);
-    // Put the caret after what was inserted, on the next frame so React has
-    // already written the new value into the textarea.
-    requestAnimationFrame(() => {
-      const at = menu.from + item.insert.length;
-      field.focus();
-      field.setSelectionRange(at, at);
-      // Inserting `request.` should immediately offer that namespace's fields —
-      // the chained menu is most of what makes this feel like an editor.
-      if (item.insert.endsWith(".")) openMenu(next, at);
+    const dark = document.documentElement.dataset.theme === "dark";
+    const instance = monaco.editor.create(host.current, {
+      value: seed.current.value,
+      language: CEL_LANGUAGE,
+      theme: dark ? CEL_THEME_DARK : CEL_THEME_LIGHT,
+      // The design's expression box, not an IDE: no gutter furniture, no minimap.
+      lineNumbers: "off",
+      glyphMargin: false,
+      folding: false,
+      minimap: { enabled: false },
+      lineDecorationsWidth: 0,
+      lineNumbersMinChars: 0,
+      overviewRulerLanes: 0,
+      hideCursorInOverviewRuler: true,
+      overviewRulerBorder: false,
+      scrollbar: { vertical: "auto", horizontal: "hidden", useShadows: false },
+      scrollBeyondLastLine: false,
+      renderLineHighlight: "none",
+      // Geist Mono at the design's 12/16, so the box matches every other mono
+      // surface on the screen.
+      fontFamily: '"Geist Mono", ui-monospace, monospace',
+      fontSize: 12,
+      lineHeight: 16,
+      padding: { top: 16, bottom: 16 },
+      wordWrap: "on",
+      // A routing condition is one expression; Tab belongs to the form, not to the
+      // editor, so keyboard navigation out of the field still works.
+      tabFocusMode: true,
+      automaticLayout: true,
+      contextmenu: false,
+      quickSuggestions: { other: true, strings: false, comments: false },
+      suggestSelection: "first",
+      fixedOverflowWidgets: true,
+      ariaLabel: `Condition for ${seed.current.ruleLabel}`,
     });
-  };
 
-  const onKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (menu !== null) {
-      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-        event.preventDefault();
-        const delta = event.key === "ArrowDown" ? 1 : -1;
-        setMenu({
-          ...menu,
-          active: (menu.active + delta + menu.items.length) % menu.items.length,
-        });
-        return;
-      }
-      if (event.key === "Enter" || event.key === "Tab") {
-        const item = menu.items[menu.active];
-        if (item !== undefined) {
-          event.preventDefault();
-          accept(item);
-          return;
-        }
-      }
-      if (event.key === "Escape") {
-        event.preventDefault();
-        setMenu(null);
-        return;
-      }
-    }
+    editor.current = instance;
+    setReady(true);
 
-    // Ctrl/Cmd-Space is the universal "what can go here" gesture.
-    if (event.key === " " && (event.ctrlKey || event.metaKey)) {
-      event.preventDefault();
-      openMenu(value, event.currentTarget.selectionStart);
-    }
-  };
+    const subscription = instance.onDidChangeModelContent(() => {
+      notify.current(instance.getValue());
+    });
 
-  const tokens = tokenize(value);
+    return () => {
+      subscription.dispose();
+      instance.getModel()?.dispose();
+      instance.dispose();
+      editor.current = null;
+    };
+    // biome-ignore lint/correctness/useExhaustiveDependencies: mount once; updates are imperative.
+  }, []);
+
+  // Adopt an outside change — a discard, or a reorder that moves a different
+  // expression into this instance — without disturbing the caret while typing.
+  useEffect(() => {
+    const instance = editor.current;
+    if (instance === null) return;
+    if (instance.getValue() !== value) instance.setValue(value);
+  }, [value]);
+
+  // Markers follow the text, the server's verdict, and the editor existing at all
+  // — `ready` flips once after mount, which is what schedules the first push.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `value` is read through the model.
+  useEffect(() => {
+    const model = editor.current?.getModel();
+    if (model == null) return;
+    setMarkers(model, serverError ?? null);
+  }, [value, serverError, ready]);
+
+  // Monaco's theme is global, so a toggle has to be pushed into it.
+  useEffect(() => {
+    if (!ready) return;
+    const apply = () =>
+      monaco.editor.setTheme(
+        document.documentElement.dataset.theme === "dark" ? CEL_THEME_DARK : CEL_THEME_LIGHT,
+      );
+    apply();
+    const observer = new MutationObserver(apply);
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["data-theme"],
+    });
+    return () => observer.disconnect();
+  }, [ready]);
 
   return (
     <div className="flex w-full flex-col overflow-clip rounded-[var(--radius-card)] border border-solid border-border bg-background-grouped-container">
-      <label className="sr-only" htmlFor={controlId}>
-        Condition for {ruleLabel}
-      </label>
-
-      <div className="relative h-[85px] w-full">
-        {/*
-         * The painted copy. `aria-hidden` because the textarea over it already
-         * carries the text — announcing both would read the expression twice.
-         */}
-        <pre
-          ref={overlay}
-          aria-hidden
-          className="pointer-events-none absolute inset-0 m-0 overflow-hidden whitespace-pre-wrap break-words p-[16px] type-mono-12"
-        >
-          {tokens.map((token) => (
-            <span
-              // Tokens have no identity across edits, but a start offset is unique
-              // within one pass, which is all a key has to be.
-              key={token.start}
-              className={TOKEN_COLOURS[token.kind] ?? "text-foreground-primary"}
-            >
-              {token.value}
-            </span>
-          ))}
-          {/* A trailing newline would otherwise not reserve a line in the overlay. */}
-          {value.endsWith("\n") ? " " : null}
-        </pre>
-
-        <textarea
-          ref={textarea}
-          id={controlId}
-          value={value}
-          spellCheck={false}
-          autoComplete="off"
-          aria-describedby={`${controlId}-status`}
-          aria-invalid={errors.length > 0 || (serverError != null && serverError !== "")}
-          placeholder={'request.model == "smart" && has(user.claims.tier)'}
-          className="absolute inset-0 h-full w-full resize-none whitespace-pre-wrap break-words bg-transparent p-[16px] type-mono-12 text-transparent caret-foreground-primary outline-none placeholder:text-foreground-primary/30"
-          onScroll={syncScroll}
-          onKeyDown={onKeyDown}
-          onBlur={() => setMenu(null)}
-          onChange={(event) => {
-            const next = event.target.value;
-            onChange(next);
-            openMenu(next, event.target.selectionStart);
-          }}
-        />
-
-        {menu !== null ? (
-          <div
-            role="listbox"
-            aria-label="Completions"
-            className="absolute left-[16px] top-[calc(100%-8px)] z-30 max-h-[220px] w-[min(420px,calc(100%-32px))] overflow-y-auto rounded-[var(--radius-field)] border border-solid border-border bg-menu-background p-[4px] shadow-lg"
-          >
-            {menu.items.map((item, index) => (
-              <button
-                key={item.label}
-                type="button"
-                role="option"
-                aria-selected={index === menu.active}
-                // The textarea must keep focus, so the click cannot blur it.
-                onMouseDown={(event) => event.preventDefault()}
-                onClick={() => accept(item)}
-                className={cx(
-                  "flex w-full flex-col items-start gap-[2px] rounded-[6px] px-[8px] py-[6px] text-left",
-                  index === menu.active && "bg-item-selection",
-                )}
-              >
-                <span className="type-mono-12 text-foreground-primary">{item.label}</span>
-                <span className="type-label-12 text-foreground-secondary">{item.detail}</span>
-              </button>
-            ))}
-          </div>
-        ) : null}
-      </div>
+      <div ref={host} id={controlId} data-testid={`cel-${ruleLabel}`} className="h-[85px] w-full" />
 
       {/*
-       * The status line, right-aligned as the design draws it. One line, and the
-       * most severe thing wins: a compile error from the server outranks a lexical
-       * error, which outranks the silent-failure warning.
+       * The status line, right-aligned as the design draws it. One line, most
+       * severe wins: a compile error from the server outranks a lexical error,
+       * which outranks the silent-failure warning.
        */}
       <div id={`${controlId}-status`} className="flex w-full flex-col items-end gap-[4px] p-[12px]">
         {serverError != null && serverError !== "" ? (

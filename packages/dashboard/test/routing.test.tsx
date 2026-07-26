@@ -2,7 +2,7 @@ import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it } from "vitest";
 import { createFakeApi, type FakeApi } from "./support/fake-api";
-import { renderAt, selectOption, setMultiline } from "./support/render";
+import { renderAt } from "./support/render";
 
 /**
  * Open a rule's action menu.
@@ -84,7 +84,9 @@ describe("the rule rows", () => {
     // Each row carries the condition on the left and the target on the right.
     expect(row("pro-users")).toHaveTextContent("Match rule");
     expect(row("pro-users")).toHaveTextContent("Anthropic");
-    expect(row("everyone-else")).toHaveTextContent("Open AI Compatible");
+    // "OpenAI", not the design's "Open AI" — misspelling a vendor's name in
+    // shipped UI is worse than deviating from a typo in the file.
+    expect(row("everyone-else")).toHaveTextContent("OpenAI Compatible");
   });
 
   it("shows the condition as editable mono text", async () => {
@@ -139,12 +141,21 @@ describe("the rule rows", () => {
     expect(row("everyone")).not.toHaveTextContent("can never fire");
   });
 
-  it("says nothing is served when there are no rules", async () => {
+  it("starts a fresh deployment from a default catch-all rule", async () => {
+    // An empty routing screen is a dead end: every request is a 404 and nothing
+    // says what a working configuration looks like. The seeded rule is a *draft*,
+    // so it shows the shape without storing a configuration nobody asked for.
     fake.state.config = { routing: { allowedModels: [], rules: [] } };
 
     await renderAt("/routing");
 
-    expect(await screen.findByText(/every request to/)).toHaveTextContent("is a 404");
+    const seeded = row("everyone");
+    expect(within(seeded).getByLabelText("Condition for everyone")).toHaveValue("true");
+    expect(seeded).toHaveTextContent("Catch-all — matches everything");
+    expect(fake.callsTo("PUT", "/routing")).toHaveLength(0);
+    // Offering it as a draft means Save Changes is live, because the screen now
+    // differs from what is stored.
+    expect(screen.getByRole("button", { name: "Save Changes" })).toBeEnabled();
   });
 });
 
@@ -169,7 +180,7 @@ describe("credentials", () => {
     const user = userEvent.setup();
     await renderAt("/routing");
 
-    const model = within(row("pro-users")).getByLabelText("Model");
+    const model = within(row("pro-users")).getByLabelText("Model (optional)");
     await user.clear(model);
     await user.type(model, "claude-opus-4");
     await save(user);
@@ -199,7 +210,7 @@ describe("credentials", () => {
     const user = userEvent.setup();
     await renderAt("/routing");
 
-    await user.clear(within(row("pro-users")).getByLabelText("Model"));
+    await user.clear(within(row("pro-users")).getByLabelText("Model (optional)"));
     await save(user);
 
     // Absent means "forward whatever the client asked for"; `""` is not a model.
@@ -213,7 +224,7 @@ describe("editing", () => {
     const user = userEvent.setup();
     await renderAt("/routing");
 
-    await user.type(within(row("pro-users")).getByLabelText("Model"), "-x");
+    await user.type(within(row("pro-users")).getByLabelText("Model (optional)"), "-x");
 
     expect(fake.callsTo("PUT", "/routing")).toHaveLength(0);
     expect(screen.getByRole("button", { name: "Save Changes" })).toBeEnabled();
@@ -230,12 +241,14 @@ describe("editing", () => {
     const user = userEvent.setup();
     await renderAt("/routing");
 
-    const model = within(row("pro-users")).getByLabelText("Model");
+    const model = within(row("pro-users")).getByLabelText("Model (optional)");
     await user.clear(model);
     await user.type(model, "something-else");
     await user.click(screen.getByRole("button", { name: "Discard" }));
 
-    expect(within(row("pro-users")).getByLabelText("Model")).toHaveValue("claude-sonnet-5");
+    expect(within(row("pro-users")).getByLabelText("Model (optional)")).toHaveValue(
+      "claude-sonnet-5",
+    );
   });
 
   it("reorders with the whole list", async () => {
@@ -328,7 +341,11 @@ describe("editing", () => {
         name: "Change the provider for everyone-else",
       }),
     );
-    await selectOption(user, /provider/i, "Anthropic");
+    // A tiled picker rather than a dropdown: choosing a provider chooses which
+    // fields the card then asks for, so all four are shown with their marks.
+    await user.click(
+      await within(row("everyone-else")).findByRole("button", { name: /Anthropic/ }),
+    );
 
     // Anthropic's card does not draw a base URL, so the field goes — and the
     // value goes with it. Carrying a value across a type change is how an
@@ -344,7 +361,7 @@ describe("editing", () => {
     const user = userEvent.setup();
     await renderAt("/routing");
 
-    await user.type(within(row("pro-users")).getByLabelText("Model"), "-x");
+    await user.type(within(row("pro-users")).getByLabelText("Model (optional)"), "-x");
     await save(user);
 
     expect(await screen.findByText(/can never match/)).toBeInTheDocument();
@@ -355,7 +372,7 @@ describe("editing", () => {
     const user = userEvent.setup();
     await renderAt("/routing");
 
-    await user.type(within(row("pro-users")).getByLabelText("Model"), "-x");
+    await user.type(within(row("pro-users")).getByLabelText("Model (optional)"), "-x");
     await user.click(screen.getByRole("button", { name: "Save Changes" }));
 
     expect(await screen.findByText(/unknown provider type/)).toBeInTheDocument();
@@ -396,21 +413,6 @@ describe("probing a rule's upstream", () => {
 
     expect(await screen.findByText("this provider type cannot be probed")).toBeInTheDocument();
     expect(screen.queryByText(/refused/)).toBeNull();
-  });
-});
-
-describe("the client-facing model list", () => {
-  it("saves the list the way the API expects it", async () => {
-    const user = userEvent.setup();
-    await renderAt("/routing");
-
-    setMultiline(screen.getByLabelText("Allowed models"), "smart\nfast\nnano");
-    await save(user);
-
-    expect(lastRouting().allowedModels).toEqual(["smart", "fast", "nano"]);
-    // A whole-block write must carry the rules through, or saving the model list
-    // would delete every rule.
-    expect(lastRouting().rules).toHaveLength(2);
   });
 });
 
@@ -474,5 +476,105 @@ describe("simulating a request", () => {
 
     expect(await screen.findByText(/would be a 404/)).toBeInTheDocument();
     expect(screen.queryByRole("alert")).toBeNull();
+  });
+});
+
+describe("the model dropdown", () => {
+  it("loads the list from the upstream and says the key was accepted", async () => {
+    const user = userEvent.setup();
+    await renderAt("/routing");
+
+    // The list only appears once a credential exists to check — which is the
+    // point: populating it *is* the key check.
+    await user.click(within(row("pro-users")).getByLabelText("Model (optional)"));
+
+    expect(await within(row("pro-users")).findByText(/Key accepted/)).toBeInTheDocument();
+    expect(await screen.findByRole("option", { name: "gpt-4o-mini" })).toBeInTheDocument();
+  });
+
+  it("sends the candidate target, so an unsaved key is what gets checked", async () => {
+    const user = userEvent.setup();
+    await renderAt("/routing");
+
+    await user.type(within(row("pro-users")).getByLabelText("API Key"), "sk-ant-new");
+
+    // Every rule checks its own target on mount, so waiting for "any call" would
+    // pass on those. The lookup for the typed key is also debounced, so this waits
+    // for the specific call rather than for a count.
+    const keys = () =>
+      fake
+        .callsTo("POST", "/providers/models")
+        .map((call) => (call.body as { target: Record<string, unknown> }).target.apiKey);
+    await waitFor(
+      () => {
+        // The whole point: the key being typed, not the one already stored.
+        expect(keys()).toContain("sk-ant-new");
+      },
+      { timeout: 3000 },
+    );
+  });
+
+  it("reports a refused key rather than showing an empty list", async () => {
+    // A wrong key must not look like "this provider has no models".
+    fake.state.upstreamModels = { ok: false, models: [], status: 401, error: null };
+    const user = userEvent.setup();
+    await renderAt("/routing");
+
+    await user.click(within(row("pro-users")).getByLabelText("Model (optional)"));
+
+    expect(await within(row("pro-users")).findByText(/refused this key/)).toBeInTheDocument();
+  });
+
+  it("still accepts a model the upstream does not advertise", async () => {
+    // An endpoint can serve a model it does not list, so the field stays free
+    // text — but it says so rather than silently accepting a typo.
+    const user = userEvent.setup();
+    await renderAt("/routing");
+
+    const field = within(row("pro-users")).getByLabelText("Model (optional)");
+    await user.clear(field);
+    await user.type(field, "some-private-model");
+
+    expect(await within(row("pro-users")).findByText(/is not in the list/)).toBeInTheDocument();
+    await save(user);
+    const target = lastRouting().rules[0]?.target as Record<string, unknown>;
+    expect(target.model).toBe("some-private-model");
+  });
+
+  it("says so when a provider cannot list models at all", async () => {
+    fake.state.upstreamModels = {
+      ok: null,
+      models: [],
+      reason: "this provider answers from configuration without contacting the upstream",
+    };
+    const user = userEvent.setup();
+    await renderAt("/routing");
+
+    await user.click(within(row("pro-users")).getByLabelText("Model (optional)"));
+
+    expect(
+      await within(row("pro-users")).findByText(/without contacting the upstream/),
+    ).toBeInTheDocument();
+  });
+});
+
+describe("the provider picker", () => {
+  it("offers every registered provider with a name an operator recognises", async () => {
+    const user = userEvent.setup();
+    await renderAt("/routing");
+
+    await user.click(
+      within(row("pro-users")).getByRole("button", { name: "Change the provider for pro-users" }),
+    );
+
+    const picker = within(row("pro-users"));
+    for (const name of [/Anthropic/, /OpenAI Compatible/]) {
+      expect(picker.getByRole("button", { name })).toBeInTheDocument();
+    }
+    // The current one reads as selected rather than needing a colour to tell.
+    expect(picker.getByRole("button", { name: /Anthropic/ })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
   });
 });

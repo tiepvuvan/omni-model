@@ -4,21 +4,18 @@ import connectorImage from "../../assets/connector.svg";
 import editIcon from "../../assets/edit.svg";
 import plusIcon from "../../assets/plus.svg";
 import plusTargetIcon from "../../assets/plus-target.svg";
-import vendorOpenAi from "../../assets/vendor-openai.svg";
-import vendorOpenAiCompatible from "../../assets/vendor-openai-compatible.svg";
 import { ActionBar, WidePane } from "../../components/chrome";
 import { CelEditor } from "../../components/routing/cel-editor";
+import { ModelField } from "../../components/routing/model-field";
+import {
+  ProviderPicker,
+  VENDOR_ICONS,
+  VENDOR_TITLES,
+} from "../../components/routing/provider-picker";
 import { RuleMenu } from "../../components/routing/rule-menu";
 import { SimulatePanel } from "../../components/routing/simulate-panel";
 import { mergeCredentials, SchemaForm } from "../../components/schema-form";
-import {
-  Button,
-  Callout,
-  Card,
-  IconButton,
-  SelectField,
-  TextAreaField,
-} from "../../components/ui/primitives";
+import { Button, Callout, Card, IconButton } from "../../components/ui/primitives";
 import {
   api,
   type ConfigResponse,
@@ -27,6 +24,7 @@ import {
   type RoutingBlock,
   type RoutingRule,
 } from "../../lib/api";
+import { PREFERRED_PROVIDERS, preferredType } from "../../lib/preferred";
 
 export const Route = createFileRoute("/_app/routing")({
   loader: async (): Promise<{ config: ConfigResponse; meta: MetaResponse }> => {
@@ -39,34 +37,19 @@ export const Route = createFileRoute("/_app/routing")({
 /** `when: "true"` — the only expression the router treats as a catch-all. */
 const CATCH_ALL = "true";
 
-/** Vendor glyphs for the provider types the design draws. */
-const VENDOR_ICONS: Record<string, string> = {
-  openai: vendorOpenAi,
-  "openai-compatible": vendorOpenAiCompatible,
-};
-
 /**
  * The target fields the design draws, per provider type.
  *
- * `Open AI` shows an API key and a model; `Open AI Compatible` adds a base URL.
- * The factories accept more than that, and showing all of it turns a two-field
- * card into a form — so this is the curated list, and `SchemaForm` appends
- * anything *required* the list misses so a save can never need a hidden field.
- * `model` is not here because the card renders it itself, last, as the design does.
+ * A curated list: the factories accept more than the file shows, and rendering all
+ * of it turns a two-field card into a form. `SchemaForm` appends anything
+ * *required* the list misses, so a save can never need a hidden field. `model` is
+ * absent because the card renders it itself, last, as a dropdown.
  */
 const TARGET_FIELDS: Record<string, readonly string[]> = {
   openai: ["apiKey"],
   "openai-compatible": ["baseUrl", "apiKey"],
   anthropic: ["apiKey"],
   google: ["apiKey"],
-};
-
-/** The design's title for each provider type. */
-const VENDOR_TITLES: Record<string, string> = {
-  openai: "Open AI",
-  "openai-compatible": "Open AI Compatible",
-  anthropic: "Anthropic",
-  google: "Google Gemini",
 };
 
 function routingOf(config: ConfigResponse): RoutingBlock {
@@ -88,12 +71,30 @@ function catchAllIndex(rules: readonly RoutingRule[]): number {
   return rules.findIndex((rule) => rule.when.trim() === CATCH_ALL);
 }
 
+/**
+ * The rule a deployment with none starts from.
+ *
+ * An empty routing screen is a dead end: every request is a 404, and nothing on
+ * the page says what the shape of a working configuration is. Seeding one
+ * catch-all rule makes the answer visible — a condition of `true`, a provider, a
+ * key — and it is a *draft*, so nothing is stored until Save Changes. Which also
+ * means it cannot quietly create a configuration nobody asked for.
+ */
+function defaultRule(providerType: string): RoutingRule {
+  return { id: "everyone", name: "Everyone", when: "true", target: { type: providerType } };
+}
+
 function RoutingScreen() {
   const { config, meta } = Route.useLoaderData();
   const router = useRouter();
   const stored = routingOf(config);
+  // Not `meta.providers[0]`: `/meta` sorts alphabetically, which would seed every
+  // new deployment with Anthropic purely because of the letter A.
+  const firstProvider = preferredType(meta.providers, PREFERRED_PROVIDERS);
 
-  const [draft, setDraft] = useState<RoutingBlock>(stored);
+  const [draft, setDraft] = useState<RoutingBlock>(() =>
+    stored.rules.length === 0 ? { ...stored, rules: [defaultRule(firstProvider)] } : stored,
+  );
   const [error, setError] = useState<string | null>(null);
   const [warnings, setWarnings] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
@@ -144,7 +145,19 @@ function RoutingScreen() {
     if (index === -1) return null;
     const mentioned =
       compileError.includes(`rules[${index}]`) || compileError.includes(`"${ruleId}"`);
-    return mentioned ? compileError.replace(/^.*?when:\s*/, "") : null;
+    if (!mentioned) return null;
+    /*
+     * Only a `when:` problem belongs here.
+     *
+     * `validate` reports the first thing wrong with the whole document, which is
+     * often an unfilled provider option — and putting "expected string at apiKey"
+     * under the *expression* points at the wrong control. The API Key field shows
+     * its own state, and the save path reports the rest at the top of the screen.
+     * A seeded default rule would otherwise open with a red expression box before
+     * the operator has typed anything.
+     */
+    if (!compileError.includes("when")) return null;
+    return compileError.replace(/^.*?when:\s*/, "");
   };
 
   const updateRule = (index: number, patch: Partial<RoutingRule>) => {
@@ -322,7 +335,12 @@ function RoutingScreen() {
                 title={VENDOR_TITLES[rule.target.type] ?? rule.target.type}
                 icon={
                   VENDOR_ICONS[rule.target.type] === undefined ? (
-                    <span className="size-[24px] shrink-0 rounded-[6px] bg-item-selection" />
+                    <span
+                      aria-hidden
+                      className="flex size-[24px] shrink-0 items-center justify-center rounded-[6px] bg-item-selection type-strong-12 text-foreground-secondary"
+                    >
+                      {(VENDOR_TITLES[rule.target.type] ?? rule.target.type).charAt(0)}
+                    </span>
                   ) : (
                     <img
                       src={VENDOR_ICONS[rule.target.type]}
@@ -341,18 +359,15 @@ function RoutingScreen() {
                 }
               >
                 {editingTarget === index ? (
-                  <SelectField
-                    label="Provider"
+                  <ProviderPicker
+                    available={meta.providers.map((entry) => entry.type)}
                     value={rule.target.type}
-                    items={meta.providers.map((entry) => ({
-                      value: entry.type,
-                      label: VENDOR_TITLES[entry.type] ?? entry.type,
-                    }))}
-                    onValueChange={(type) =>
+                    onChange={(type) => {
                       // Options belong to a provider type; carrying them across a
                       // change would submit keys the new factory rejects.
-                      setTarget(index, { type })
-                    }
+                      setTarget(index, { type });
+                      setEditingTarget(null);
+                    }}
                   />
                 ) : null}
 
@@ -371,16 +386,10 @@ function RoutingScreen() {
                   }
                 />
 
-                <TextAreaField
-                  label="Model"
-                  mono
-                  rows={1}
+                <ModelField
+                  target={rule.target}
                   value={rule.target.model ?? ""}
-                  placeholder="gpt-4o-mini"
-                  help="The upstream model to forward as. Leave blank to pass the client's model through unchanged."
-                  onChange={(event) =>
-                    setTarget(index, { ...rule.target, model: event.target.value })
-                  }
+                  onChange={(model) => setTarget(index, { ...rule.target, model })}
                 />
               </Card>
             </div>
@@ -404,11 +413,6 @@ function RoutingScreen() {
         <Button icon={plusIcon} onClick={addRule} className="self-start">
           Matching Rule
         </Button>
-
-        <AllowedModelsCard
-          value={draft.allowedModels}
-          onChange={(allowedModels) => setDraft((now) => ({ ...now, allowedModels }))}
-        />
 
         <SimulatePanel
           suggestedModel={draft.allowedModels[0] ?? draft.rules[0]?.target.model ?? null}
@@ -434,39 +438,5 @@ function ProbeResult({ result }: { result: ProbeResponse }) {
           }.`
         : `The upstream refused: ${result.error ?? `HTTP ${result.status ?? "error"}`}.`}
     </Callout>
-  );
-}
-
-/**
- * The client-facing catalogue.
- *
- * Enforced *before* any rule runs, and it is what `GET /v1/models` lists — so
- * this decides what a client may ask for, independent of what the rules serve.
- */
-function AllowedModelsCard({
-  value,
-  onChange,
-}: {
-  value: readonly string[];
-  onChange: (models: string[]) => void;
-}) {
-  return (
-    <Card title="Client-facing models">
-      <TextAreaField
-        label="Allowed models"
-        mono
-        rows={4}
-        value={value.join("\n")}
-        help="One per line. Anything else is a 404 before any rule runs, and GET /v1/models lists exactly these. Leave empty to allow any name."
-        onChange={(event) =>
-          onChange(
-            event.target.value
-              .split("\n")
-              .map((line) => line.trim())
-              .filter((line) => line !== ""),
-          )
-        }
-      />
-    </Card>
   );
 }

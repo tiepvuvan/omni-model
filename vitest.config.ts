@@ -32,7 +32,20 @@ export default defineConfig({
       },
       {
         plugins: [viteReact()],
-        resolve: { alias },
+        resolve: {
+          alias: {
+            ...alias,
+            /*
+             * Monaco cannot construct in jsdom — it measures glyphs and owns a
+             * canvas-backed view — so a screen embedding it renders nothing at all.
+             * Only the *widget* is replaced: the CEL language it is taught
+             * (`cel.ts`) keeps its own tests, and everything `CelEditor` does around
+             * the widget still runs. Driving real Monaco needs a real browser.
+             */
+            "../../src/components/routing/cel-monaco": pkg("dashboard/test/support/monaco-stub.ts"),
+            "./cel-monaco": pkg("dashboard/test/support/monaco-stub.ts"),
+          },
+        },
         test: {
           name: "dashboard",
           root: pkg("dashboard"),

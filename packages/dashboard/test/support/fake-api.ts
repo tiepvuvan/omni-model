@@ -32,6 +32,14 @@ export interface FakeState {
   simulate: unknown;
   /** Warnings the next save should answer with. */
   warnings: string[];
+  /** What `POST /providers/models` should answer for a candidate target. */
+  upstreamModels: {
+    ok: boolean | null;
+    models: string[];
+    status?: number | null;
+    error?: string | null;
+    reason?: string;
+  };
 }
 
 export const PROVIDER_SCHEMAS = [
@@ -157,6 +165,7 @@ export function createFakeApi(initial: Partial<FakeState> = {}) {
     probe: { ok: true, latencyMs: 12, models: 3 },
     simulate: { matched: false, reason: "no rule matches", rules: [], warnings: [] },
     warnings: [],
+    upstreamModels: { ok: true, models: ["gpt-4o", "gpt-4o-mini", "o3"] },
     ...initial,
   };
 
@@ -273,6 +282,9 @@ export function createFakeApi(initial: Partial<FakeState> = {}) {
         const value = isRecord(body) && isRecord(body.value) ? body.value : {};
         return save({ ...state.config, security: value });
       }
+
+      case path === "/providers/models" && method === "POST":
+        return json(state.upstreamModels);
 
       case path === "/routing/simulate":
         return json(state.simulate);

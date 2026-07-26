@@ -1,8 +1,12 @@
 import {
   buildRequestFacts,
+  ConfigError,
+  interpolateDeep,
   OmniError,
   omniConfigSchema,
   type RuleEvaluation,
+  type RuntimeContext,
+  resolveSecretRefs,
   type ZodTypeLike,
 } from "@omni-model/core";
 import { Hono } from "hono";
@@ -60,6 +64,11 @@ const simulateSchema = z.object({
  * missing map key throws (so the rule never fires), and only a literal `true`
  * counts as a match (so `"true"` or a truthy value never fires either).
  */
+/** A 400 in the shape the proxy's error handler renders. */
+function badRequestError(message: string): OmniError {
+  return new OmniError(400, message, { code: "invalid_request" });
+}
+
 function warningsFor(broken: readonly RuleEvaluation[]): string[] {
   return broken.map((rule) =>
     rule.outcome === "error"
@@ -71,8 +80,99 @@ function warningsFor(broken: readonly RuleEvaluation[]): string[] {
   );
 }
 
+const modelsSchema = z.object({
+  /** A candidate `routing.rules[].target`, not necessarily saved yet. */
+  target: z.looseObject({ type: z.string().min(1) }),
+});
+
 export function createMetaRoutes(deps: AdminDeps): Hono<AdminEnv> {
   const app = new Hono<AdminEnv>();
+
+  /**
+   * List the models a candidate target can serve — and prove its credential works.
+   *
+   * The existing per-rule probe answers for the *applied* bundle, which is no use
+   * while an operator is still typing a key: the point is to check it before it is
+   * saved. So this builds a provider from the candidate target, asks the upstream,
+   * and reports what it said.
+   *
+   * Two things make the answer trustworthy. The verdict comes from watching the
+   * `fetch`, not from whether `listModels` resolved — that method deliberately falls
+   * back to the configured model list on failure, so trusting its return value
+   * would report a rejected key as a healthy upstream. And a `{"$secret": id}` in
+   * the candidate is resolved first, so re-checking a rule whose key is already
+   * sealed works without the operator retyping it.
+   */
+  app.post("/providers/models", async (c) => {
+    const body = modelsSchema.parse(await c.req.json());
+    const factory = deps.registry.providers.get(body.target.type);
+    if (factory === undefined) {
+      throw badRequestError(`unknown provider type "${body.target.type}"`);
+    }
+
+    // `${VAR}` from the environment, then `{"$secret": id}` from the keyring —
+    // the same order `buildBundle` resolves them in.
+    const interpolated = interpolateDeep(body.target, deps.runtime.env);
+    const resolved = (await resolveSecretRefs(interpolated, deps.secrets ?? null)) as Record<
+      string,
+      unknown
+    >;
+    // `model` is the rule's choice of what to forward as, not a provider option;
+    // the factories validate with `strictObject` and would reject it.
+    const { model: _model, ...options } = resolved;
+
+    let upstream: { ok: boolean; status?: number; error?: string } | null = null;
+    const observed: RuntimeContext = {
+      ...deps.runtime,
+      fetch: async (...args: Parameters<typeof fetch>) => {
+        try {
+          const response = await deps.runtime.fetch(...args);
+          upstream ??= { ok: response.ok, status: response.status };
+          return response;
+        } catch (error) {
+          upstream ??= { ok: false, error: error instanceof Error ? error.message : String(error) };
+          throw error;
+        }
+      },
+    };
+
+    let provider: { listModels?: (ctx: RuntimeContext) => Promise<{ id: string }[]> };
+    try {
+      provider = factory.create("candidate", options, deps.runtime);
+    } catch (error) {
+      // A `ConfigError` here is the operator's own input being wrong — a missing
+      // base URL, a malformed key — which is a 400, not a 500.
+      if (error instanceof ConfigError) throw badRequestError(error.message);
+      throw error;
+    }
+
+    if (provider.listModels === undefined) {
+      return c.json({
+        ok: null,
+        models: [],
+        reason: "this provider type cannot list models",
+      });
+    }
+
+    let models: string[] = [];
+    try {
+      models = (await provider.listModels(observed)).map((entry) => entry.id);
+    } catch (error) {
+      upstream ??= { ok: false, error: error instanceof Error ? error.message : String(error) };
+    }
+
+    // Always 200: "the upstream refused this key" is a successful answer to
+    // "is this key good, and what can it serve".
+    return c.json({
+      ok: upstream === null ? null : upstream.ok,
+      models: upstream?.ok === false ? [] : models,
+      status: upstream?.status ?? null,
+      error: upstream?.error ?? null,
+      ...(upstream === null
+        ? { reason: "this provider answers from configuration without contacting the upstream" }
+        : {}),
+    });
+  });
 
   /**
    * What this build can be configured with.

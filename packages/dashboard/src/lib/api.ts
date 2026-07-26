@@ -336,6 +336,23 @@ export const api = {
   testRule: (id: string) =>
     request<ProbeResponse>(`/routing/rules/${encodeURIComponent(id)}/test`, { method: "POST" }),
 
+  /**
+   * Which models a candidate target can serve — and whether its key works.
+   *
+   * Takes an unsaved target, so an operator finds out a key is wrong while typing
+   * it rather than when a client's request fails. `ok: false` means the upstream
+   * refused; `ok: null` means this provider answers from configuration and never
+   * contacted anything, so there is no verdict to give.
+   */
+  listUpstreamModels: (target: RoutingTarget) =>
+    request<{
+      ok: boolean | null;
+      models: string[];
+      status?: number | null;
+      error?: string | null;
+      reason?: string;
+    }>("/providers/models", { method: "POST", body: { target } }),
+
   simulate: (input: SimulateInput) =>
     request<SimulateResponse>("/routing/simulate", { method: "POST", body: input }),
 };
