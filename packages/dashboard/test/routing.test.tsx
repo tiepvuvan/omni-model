@@ -84,9 +84,9 @@ describe("the rule rows", () => {
     // Each row carries the condition on the left and the target on the right.
     expect(row("pro-users")).toHaveTextContent("Match rule");
     expect(row("pro-users")).toHaveTextContent("Anthropic");
-    // "OpenAI", not the design's "Open AI" — misspelling a vendor's name in
-    // shipped UI is worse than deviating from a typo in the file.
-    expect(row("everyone-else")).toHaveTextContent("OpenAI Compatible");
+    // Spelled as the file's *menu* spells them: its card header says "Open AI",
+    // its menu says "OpenAI", and the menu is the one that is right.
+    expect(row("everyone-else")).toHaveTextContent("OpenAI compatible");
   });
 
   it("shows the condition as editable mono text", async () => {
@@ -337,15 +337,11 @@ describe("editing", () => {
     await renderAt("/routing");
 
     await user.click(
-      within(row("everyone-else")).getByRole("button", {
-        name: "Change the provider for everyone-else",
-      }),
+      within(row("everyone-else")).getByRole("button", { name: /^Provider: OpenAI compatible/ }),
     );
-    // A tiled picker rather than a dropdown: choosing a provider chooses which
-    // fields the card then asks for, so all four are shown with their marks.
-    await user.click(
-      await within(row("everyone-else")).findByRole("button", { name: /Anthropic/ }),
-    );
+    // The menu is portalled, so it is looked up on the page rather than inside
+    // the row that opened it.
+    await user.click(await screen.findByRole("menuitem", { name: "Anthropic" }));
 
     // Anthropic's card does not draw a base URL, so the field goes — and the
     // value goes with it. Carrying a value across a type change is how an
@@ -558,24 +554,30 @@ describe("the model dropdown", () => {
   });
 });
 
-describe("the provider picker", () => {
-  it("offers every registered provider with a name an operator recognises", async () => {
+describe("the provider menu", () => {
+  it("offers every registered provider, in the design's order", async () => {
     const user = userEvent.setup();
     await renderAt("/routing");
 
     await user.click(
-      within(row("pro-users")).getByRole("button", { name: "Change the provider for pro-users" }),
+      within(row("pro-users")).getByRole("button", { name: /^Provider: Anthropic/ }),
     );
 
-    const picker = within(row("pro-users"));
-    for (const name of [/Anthropic/, /OpenAI Compatible/]) {
-      expect(picker.getByRole("button", { name })).toBeInTheDocument();
-    }
-    // The current one reads as selected rather than needing a colour to tell.
-    expect(picker.getByRole("button", { name: /Anthropic/ })).toHaveAttribute(
-      "aria-pressed",
-      "true",
-    );
+    // Not alphabetical: the file lists OpenAI, Anthropic, OpenAI compatible,
+    // Gemini, and an operator scanning for their vendor expects that order.
+    // The fake registry has two of the four, and they come back in the file's
+    // order rather than alphabetically — which is what an operator scanning for
+    // their vendor expects.
+    const items = (await screen.findAllByRole("menuitem")).map((item) => item.textContent);
+    expect(items).toEqual(["Anthropic", "OpenAI compatible"]);
+  });
+
+  it("names the current provider in the trigger, so it reads without opening", async () => {
+    await renderAt("/routing");
+
+    expect(
+      within(row("pro-users")).getByRole("button", { name: /^Provider: Anthropic/ }),
+    ).toBeInTheDocument();
   });
 });
 
@@ -626,35 +628,16 @@ describe("the variable reference", () => {
 });
 
 describe("adding a rule", () => {
-  it("opens the provider picker for the new rule", async () => {
-    // Choosing where a rule sends its matches decides which fields the card then
-    // asks for, so it cannot land on a silent default behind an edit button.
+  it("adds a rule whose provider is pickable from its own header", async () => {
     const user = userEvent.setup();
     await renderAt("/routing");
 
     await user.click(screen.getByRole("button", { name: "Matching Rule" }));
 
-    const added = row("rule-3");
-    for (const name of [/OpenAI Compatible/, /Anthropic/]) {
-      expect(within(added).getByRole("button", { name })).toBeInTheDocument();
-    }
-  });
-
-  it("keeps the picker open until the target has been given something", async () => {
-    const user = userEvent.setup();
-    await renderAt("/routing");
-
-    await user.click(screen.getByRole("button", { name: "Model" }));
-    const added = row("rule-3");
-    expect(within(added).getByRole("button", { name: /Anthropic/ })).toBeInTheDocument();
-
-    // Picking a provider is not "set up" on its own — the endpoint or key is what
-    // the card then needs, so the picker stays until one of those is filled in.
-    await user.click(within(added).getByRole("button", { name: /Anthropic/ }));
-    await user.type(within(added).getByLabelText("API Key"), "sk-ant-x");
-
-    await waitFor(() => {
-      expect(within(added).queryByRole("button", { name: /OpenAI Compatible/ })).toBeNull();
-    });
+    // No separate "choose a provider" step: the new card's header is the picker,
+    // which is one click away.
+    expect(
+      within(row("rule-3")).getByRole("button", { name: /^Provider: OpenAI compatible/ }),
+    ).toBeInTheDocument();
   });
 });

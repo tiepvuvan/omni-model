@@ -8,11 +8,7 @@ import { ActionBar, WidePane } from "../../components/chrome";
 import { CelEditor } from "../../components/routing/cel-editor";
 import { CelReference } from "../../components/routing/cel-reference";
 import { ModelField } from "../../components/routing/model-field";
-import {
-  ProviderPicker,
-  VENDOR_ICONS,
-  VENDOR_TITLES,
-} from "../../components/routing/provider-picker";
+import { ProviderPicker, VendorIcon } from "../../components/routing/provider-picker";
 import { RuleMenu } from "../../components/routing/rule-menu";
 import { SimulatePanel } from "../../components/routing/simulate-panel";
 import { mergeCredentials, SchemaForm } from "../../components/schema-form";
@@ -61,18 +57,6 @@ function routingOf(config: ConfigResponse): RoutingBlock {
 const idOf = (rule: RoutingRule, index: number): string => rule.id ?? `rules[${index}]`;
 
 /**
- * A rule that has not been set up yet.
- *
- * Its picker stays open rather than hiding behind the edit button: until a target
- * has an endpoint or a credential, choosing the provider *is* the task, and the
- * card has nothing else to show.
- */
-function isNew(rule: RoutingRule): boolean {
-  const { type, model, ...options } = rule.target;
-  return Object.keys(options).length === 0 && (model === undefined || model === "");
-}
-
-/**
  * Rules an earlier catch-all makes unreachable.
  *
  * The same rule as the server's `unreachableRules`, computed again here so a dead
@@ -112,7 +96,6 @@ function RoutingScreen() {
   const [warnings, setWarnings] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [probes, setProbes] = useState<Record<string, ProbeResponse | "running">>({});
-  const [editingTarget, setEditingTarget] = useState<number | null>(null);
 
   const dirty = JSON.stringify(draft) !== JSON.stringify(stored);
   const catchAll = catchAllIndex(draft.rules);
@@ -190,19 +173,17 @@ function RoutingScreen() {
     let n = draft.rules.length + 1;
     while (taken.has(`rule-${n}`)) n += 1;
     setDraft((now) => {
-      const rules = [...now.rules, { id: `rule-${n}`, when: "", target: { type: firstProvider } }];
-      // Open the new rule's picker straight away. Choosing where a rule sends its
-      // matches is the first decision, and it decides which fields the card then
-      // asks for — landing on a silent default and hiding the choice behind an
-      // edit button gets that backwards.
-      setEditingTarget(rules.length - 1);
-      return { ...now, rules };
+      // The provider is chosen from the new card's own header, one click away — so
+      // a new rule needs no separate "pick a provider" step.
+      return {
+        ...now,
+        rules: [...now.rules, { id: `rule-${n}`, when: "", target: { type: firstProvider } }],
+      };
     });
   };
 
   const removeRule = (index: number) => {
     setDraft((now) => ({ ...now, rules: now.rules.filter((_, at) => at !== index) }));
-    setEditingTarget(null);
   };
 
   const move = (index: number, delta: number) => {
@@ -345,45 +326,26 @@ function RoutingScreen() {
               {/* The target: provider, credentials and model together. */}
               <Card
                 className="w-[408px] shrink-0 self-stretch"
-                title={VENDOR_TITLES[rule.target.type] ?? rule.target.type}
-                icon={
-                  VENDOR_ICONS[rule.target.type] === undefined ? (
-                    <span
-                      aria-hidden
-                      className="flex size-[24px] shrink-0 items-center justify-center rounded-[6px] bg-item-selection type-strong-12 text-foreground-secondary"
-                    >
-                      {(VENDOR_TITLES[rule.target.type] ?? rule.target.type).charAt(0)}
-                    </span>
-                  ) : (
-                    <img
-                      src={VENDOR_ICONS[rule.target.type]}
-                      alt=""
-                      aria-hidden
-                      className="size-[24px] shrink-0"
-                    />
-                  )
-                }
-                actions={
-                  <IconButton
-                    icon={editIcon}
-                    label={`Change the provider for ${id}`}
-                    onClick={() => setEditingTarget(editingTarget === index ? null : index)}
-                  />
-                }
-              >
-                {editingTarget === index || isNew(rule) ? (
+                title={
                   <ProviderPicker
                     available={meta.providers.map((entry) => entry.type)}
                     value={rule.target.type}
                     onChange={(type) => {
                       // Options belong to a provider type; carrying them across a
                       // change would submit keys the new factory rejects.
-                      setTarget(index, { type });
-                      setEditingTarget(null);
+                      if (type !== rule.target.type) setTarget(index, { type });
                     }}
                   />
-                ) : null}
-
+                }
+                icon={<VendorIcon type={rule.target.type} size={24} />}
+                actions={
+                  <IconButton
+                    icon={editIcon}
+                    label={`Remove ${id}`}
+                    onClick={() => removeRule(index)}
+                  />
+                }
+              >
                 <SchemaForm
                   schema={schema}
                   values={rule.target}

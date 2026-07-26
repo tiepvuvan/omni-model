@@ -1,0 +1,19 @@
+<svg preserveAspectRatio="none" overflow="visible" style="display: block;" width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+<g id="icons8-gemini-ai 1" clip-path="url(#clip0_0_193)">
+<path id="Vector" d="M15.3723 7.69367L15.0407 7.68033H15.04C11.4143 7.53767 8.46233 4.58567 8.31967 0.96L8.30633 0.628C8.3 0.463333 8.16467 0.333333 8 0.333333C7.83533 0.333333 7.7 0.463333 7.69367 0.627667L7.68033 0.959667C7.53733 4.58533 4.58533 7.53733 0.959333 7.68033L0.627667 7.69367C0.463333 7.7 0.333333 7.83533 0.333333 8C0.333333 8.16467 0.463333 8.3 0.628 8.30633L0.959667 8.31933C4.58533 8.46267 7.53733 11.4147 7.68033 15.0403L7.69367 15.3723C7.7 15.5367 7.83533 15.6667 8 15.6667C8.16467 15.6667 8.3 15.5367 8.30633 15.3723L8.31967 15.0403C8.46267 11.4147 11.4147 8.46267 15.0403 8.31933L15.372 8.30633C15.5367 8.3 15.6667 8.16467 15.6667 8C15.6667 7.83533 15.5367 7.7 15.3723 7.69367Z" fill="url(#paint0_linear_0_193)"/>
+</g>
+<defs>
+<linearGradient id="paint0_linear_0_193" x1="1.302" y1="1.302" x2="15.1427" y2="15.1427" gradientUnits="userSpaceOnUse">
+<stop stop-color="#CA5DF5"/>
+<stop offset="0.036" stop-color="#C05FF4"/>
+<stop offset="0.293" stop-color="#806CEA"/>
+<stop offset="0.528" stop-color="#4D77E3"/>
+<stop offset="0.731" stop-color="#297FDD"/>
+<stop offset="0.895" stop-color="#1283DA"/>
+<stop offset="1" stop-color="#0A85D9"/>
+</linearGradient>
+<clipPath id="clip0_0_193">
+<rect width="16" height="16" fill="white"/>
+</clipPath>
+</defs>
+</svg>
