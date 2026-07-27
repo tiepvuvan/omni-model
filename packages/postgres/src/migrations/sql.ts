@@ -182,10 +182,17 @@ CREATE INDEX "omni_prompt_cache_expires_idx" ON "omni_prompt_cache" USING btree 
 CREATE INDEX "omni_prompt_cache_created_idx" ON "omni_prompt_cache" USING btree ("created_at");
 `;
 
+/** Redacted request headers and the complete parsed body for the activity-log drawer. */
+const REQUEST_DETAILS = `
+ALTER TABLE "omni_request_contents" ADD COLUMN "body" jsonb;
+ALTER TABLE "omni_request_contents" ADD COLUMN "headers" jsonb;
+`;
+
 /** Every migration, in application order. */
 export const MIGRATIONS: readonly Migration[] = [
   { version: 1, name: "baseline", sql: `${BASELINE_TABLES}\n${CONFIG_CHANGE_FEED}` },
   { version: 2, name: "prompt_cache", sql: PROMPT_CACHE },
+  { version: 3, name: "request_details", sql: REQUEST_DETAILS },
 ];
 
 /** Highest version this build knows how to apply. */

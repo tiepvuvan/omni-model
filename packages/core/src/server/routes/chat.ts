@@ -1,6 +1,11 @@
 import type { Context } from "hono";
 import { badRequest, OmniError } from "../../errors.js";
-import { ContentAccumulator, capturePrompt } from "../../logs/content.js";
+import {
+  ContentAccumulator,
+  capturePrompt,
+  captureRequestBody,
+  captureRequestHeaders,
+} from "../../logs/content.js";
 import type { ChatCompletionRequest } from "../../openai/types.js";
 import type { RequestFacts } from "../../routing/types.js";
 import type { RuntimeBundle } from "../../runtime/bundle.js";
@@ -292,8 +297,19 @@ export function createChatHandler(deps: RouteDeps): (c: Context<AppEnv>) => Prom
       draft.stream = request.stream === true;
       if (capture) {
         const prompt = capturePrompt(request.messages, bundle.logging.maxContentBytes);
+        const capturedBody = captureRequestBody(body, bundle.logging.maxContentBytes);
+        const capturedHeaders = captureRequestHeaders(
+          c.req.raw.headers,
+          bundle.logging.maxContentBytes,
+        );
         draft.messages = prompt.value;
-        draft.truncated = draft.truncated || prompt.truncated;
+        draft.body = capturedBody.value;
+        draft.headers = capturedHeaders.value;
+        draft.truncated =
+          draft.truncated ||
+          prompt.truncated ||
+          capturedBody.truncated ||
+          capturedHeaders.truncated;
       }
     }
 

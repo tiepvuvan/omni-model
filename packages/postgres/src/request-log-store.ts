@@ -2,7 +2,7 @@ import type { Logger, RequestLogEntry, RequestLogWriter } from "@omni-model/core
 import { and, desc, eq, gte, inArray, lt, sql } from "drizzle-orm";
 import { createDb, type Db } from "./db.js";
 import type { PgPoolLike, PgQueryResult } from "./pool.js";
-import { requestContents, requestLogs } from "./schema.js";
+import { requestContents, requestLogs, writeKeys } from "./schema.js";
 
 /** Advisory-lock key for the retention sweep. Arbitrary but permanent. */
 const SWEEP_LOCK_ID = 1_869_768_810;
@@ -72,6 +72,8 @@ export class PostgresRequestLogWriter implements RequestLogWriter {
       withContent.map((row) => ({
         requestLogId: row.id,
         messages: row.entry.content?.messages ?? null,
+        body: row.entry.content?.body ?? null,
+        headers: row.entry.content?.headers ?? null,
         completion: row.entry.content?.completion ?? null,
         truncated: row.entry.content?.truncated ?? false,
       })),
@@ -97,6 +99,8 @@ export interface RequestLogQuery {
 export interface RequestLogRow extends RequestLogEntry {
   /** Database row id, distinct from the proxy-generated `requestId`. */
   id: string;
+  /** Human-readable client name retained by the write-key row. */
+  writeKeyName: string | null;
 }
 
 type LogRow = typeof requestLogs.$inferSelect;
@@ -127,27 +131,34 @@ export async function queryRequestLogs(
 
   if (query.includeContent !== true) {
     const rows = await db
-      .select()
+      .select({ log: requestLogs, writeKeyName: writeKeys.name })
       .from(requestLogs)
+      .leftJoin(writeKeys, eq(writeKeys.id, requestLogs.writeKeyId))
       .where(where)
       .orderBy(desc(requestLogs.ts))
       .limit(limit);
-    return rows.map((row) => toRow(row, null));
+    return rows.map((row) => toRow(row.log, row.writeKeyName, null));
   }
 
   const rows = await db
-    .select({ log: requestLogs, content: requestContents })
+    .select({ log: requestLogs, writeKeyName: writeKeys.name, content: requestContents })
     .from(requestLogs)
+    .leftJoin(writeKeys, eq(writeKeys.id, requestLogs.writeKeyId))
     .leftJoin(requestContents, eq(requestContents.requestLogId, requestLogs.id))
     .where(where)
     .orderBy(desc(requestLogs.ts))
     .limit(limit);
-  return rows.map((row) => toRow(row.log, row.content));
+  return rows.map((row) => toRow(row.log, row.writeKeyName, row.content));
 }
 
-function toRow(row: LogRow, content: ContentRow | null): RequestLogRow {
+function toRow(
+  row: LogRow,
+  writeKeyName: string | null,
+  content: ContentRow | null,
+): RequestLogRow {
   const entry: RequestLogRow = {
     id: row.id,
+    writeKeyName,
     requestId: row.requestId ?? "",
     ts: row.ts.getTime(),
     writeKeyId: row.writeKeyId,
@@ -173,9 +184,17 @@ function toRow(row: LogRow, content: ContentRow | null): RequestLogRow {
   };
   // Absent rather than null when nothing was captured, so a caller can tell
   // "content capture was off" from "the prompt was empty".
-  if (content !== null && (content.messages !== null || content.completion !== null)) {
+  if (
+    content !== null &&
+    (content.messages !== null ||
+      content.body !== null ||
+      content.headers !== null ||
+      content.completion !== null)
+  ) {
     entry.content = {
       messages: content.messages ?? null,
+      ...(content.body === null ? {} : { body: content.body }),
+      ...(content.headers === null ? {} : { headers: content.headers }),
       completion: content.completion,
       truncated: content.truncated,
     };

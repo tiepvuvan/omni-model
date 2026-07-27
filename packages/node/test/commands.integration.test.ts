@@ -62,13 +62,13 @@ describe.skipIf(!url)("migrate and import-config (integration)", () => {
   describe("migrate", () => {
     it("applies the schema, and is a no-op the second time", async () => {
       const first = await applyMigrations({ env, logger: silentLogger });
-      expect(first.applied).toEqual([1, 2]);
-      expect(first.version).toBe(2);
+      expect(first.applied).toEqual([1, 2, 3]);
+      expect(first.version).toBe(3);
 
       // An init container that runs on every pod start must be safe to repeat.
       const second = await applyMigrations({ env, logger: silentLogger });
       expect(second.applied).toEqual([]);
-      expect(second.version).toBe(2);
+      expect(second.version).toBe(3);
     }, 30_000);
 
     it("created every omni_ relation in the target schema", async () => {

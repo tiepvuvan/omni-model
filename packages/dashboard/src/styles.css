@@ -40,6 +40,15 @@
   --radius-check: 4px;
 }
 
+@keyframes activity-drawer-in {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
 /*
  * The type scale, one utility per named Figma text style.
  *

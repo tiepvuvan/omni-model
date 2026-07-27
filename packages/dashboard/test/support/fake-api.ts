@@ -1,5 +1,5 @@
 import { vi } from "vitest";
-import type { ProbeResponse } from "../../src/lib/api";
+import type { ProbeResponse, RequestLog } from "../../src/lib/api";
 
 /**
  * A stand-in for the admin API, wired in as `globalThis.fetch`.
@@ -36,6 +36,8 @@ export interface FakeState {
   warnings: string[];
   /** Entries the response cache reports, and whether it exists at all. */
   cache: { available: boolean; entries: number; oldestAt: number | null; bytes: number | null };
+  /** Request metadata and content returned by the log endpoints. */
+  logs: RequestLog[];
   /** What `POST /providers/models` should answer for a candidate target. */
   upstreamModels: {
     ok: boolean | null;
@@ -270,6 +272,7 @@ export function createFakeApi(initial: Partial<FakeState> = {}) {
     warnings: [],
     upstreamModels: { ok: true, models: ["gpt-4o", "gpt-4o-mini", "o3"] },
     cache: { available: true, entries: 0, oldestAt: null, bytes: null },
+    logs: [],
     ...initial,
   };
 
@@ -364,6 +367,22 @@ export function createFakeApi(initial: Partial<FakeState> = {}) {
           secretsAvailable: true,
           logsAvailable: true,
         });
+
+      case path.startsWith("/logs?") && method === "GET":
+        return json({
+          logs: state.logs.map(({ content: _content, ...log }) => log),
+          nextBefore: null,
+        });
+
+      case /^\/logs\/[^?]+\?includeContent=true$/.test(path) && method === "GET": {
+        const requestId = decodeURIComponent(
+          (path.match(/^\/logs\/([^?]+)/)?.[1] ?? "").replace(/\+/g, " "),
+        );
+        const log = state.logs.find((entry) => entry.requestId === requestId);
+        return log === undefined
+          ? error(404, `no request logged with id "${requestId}"`)
+          : json({ log });
+      }
 
       // Method-qualified: an unqualified `/config` case would swallow the PATCH
       // below and answer a save with a config payload.

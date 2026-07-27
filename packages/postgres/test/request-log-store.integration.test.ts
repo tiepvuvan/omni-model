@@ -104,6 +104,8 @@ describe.skipIf(!url)("PostgresRequestLogWriter (integration)", () => {
         userId: "with-content",
         content: {
           messages: [{ role: "user", content: "secret prompt" }],
+          body: { model: "gpt-4o-mini", messages: [{ role: "user", content: "secret prompt" }] },
+          headers: { authorization: "[REDACTED]", "content-type": "application/json" },
           completion: "the reply",
           truncated: true,
         },
@@ -120,6 +122,8 @@ describe.skipIf(!url)("PostgresRequestLogWriter (integration)", () => {
     });
     expect(withContent[0]?.content).toEqual({
       messages: [{ role: "user", content: "secret prompt" }],
+      body: { model: "gpt-4o-mini", messages: [{ role: "user", content: "secret prompt" }] },
+      headers: { authorization: "[REDACTED]", "content-type": "application/json" },
       completion: "the reply",
       truncated: true,
     });
@@ -130,15 +134,17 @@ describe.skipIf(!url)("PostgresRequestLogWriter (integration)", () => {
     const { writeKey } = await keys.create({ name: "ios-app" });
     await writer.write([entry({ userId: "attributed", writeKeyId: writeKey.id })]);
 
-    expect((await queryRequestLogs(pool, { userId: "attributed" }))[0]?.writeKeyId).toBe(
-      writeKey.id,
-    );
+    expect((await queryRequestLogs(pool, { userId: "attributed" }))[0]).toMatchObject({
+      writeKeyId: writeKey.id,
+      writeKeyName: "ios-app",
+    });
 
     // Hard-deleting a key must not erase the usage it accrued.
     await pool.query("DELETE FROM omni_write_keys WHERE id = $1", [writeKey.id]);
     const orphan = await queryRequestLogs(pool, { userId: "attributed" });
     expect(orphan).toHaveLength(1);
     expect(orphan[0]?.writeKeyId).toBeNull();
+    expect(orphan[0]?.writeKeyName).toBeNull();
   });
 
   test("a malformed write key id does not cost the rest of the batch", async () => {

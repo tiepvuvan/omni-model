@@ -265,11 +265,22 @@ describe.skipIf(!POSTGRES_URL)("E2E: the admin API from an empty database", () =
       providerId: "openai-compatible",
       routeName: "main",
       userId: "user-e2e",
+      writeKeyName: "ios app",
       totalTokens: 14,
     });
     expect(log.log.writeKeyId).not.toBeNull();
     // Content capture was switched on in the configuration, so the prompt is here.
     expect(JSON.stringify(log.log.content)).toContain("what is the answer");
+    expect(log.log.content).toMatchObject({
+      headers: {
+        authorization: "[REDACTED]",
+        "x-omni-key": "[REDACTED]",
+      },
+      body: {
+        model: "mock-model",
+        messages: [{ role: "user", content: "what is the answer" }],
+      },
+    });
 
     const usage = await admin("/admin/api/usage/summary?hours=1");
     const summary = (await usage.json()) as { clients: { writeKeyName: string | null }[] };

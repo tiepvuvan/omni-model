@@ -52,10 +52,14 @@ export interface RequestLogEntry {
   content?: RequestLogContent;
 }
 
-/** Prompt and completion text, captured only when explicitly enabled. */
+/** Sensitive request and response content, captured only when explicitly enabled. */
 export interface RequestLogContent {
   /** The request messages (or embeddings input), as sent. */
   messages: unknown;
+  /** The complete parsed request body, with credential-shaped fields redacted. */
+  body?: unknown;
+  /** Request headers, with credential-bearing values redacted before storage. */
+  headers?: Record<string, string>;
   completion: string | null;
   /** Whether either side was cut at the configured byte cap. */
   truncated: boolean;

@@ -15,20 +15,19 @@ import { Badge, Button, cx } from "./ui/primitives";
  * The chrome from the design: a 60px header bar over a 300px sidebar and the
  * content pane.
  *
- * Navigation lists what the deployment has, in the design's order. `Logs` and
- * `Users` appear in the file and have no screen yet, so they render disabled rather
- * than being dropped — the sidebar is the map of the product, and silently
- * shortening it makes the built screens look like the whole of it.
+ * Navigation lists what the deployment has, in the design's order. `Users`
+ * appears in the file and has no screen yet, so it renders disabled rather than
+ * being dropped — the sidebar is the map of the product.
  */
 const NAV: readonly {
   label: string;
   icon: string;
-  to?: "/routing" | "/authentication" | "/rate-limit" | "/settings";
+  to?: "/routing" | "/authentication" | "/rate-limit" | "/logs" | "/settings";
 }[] = [
   { label: "Authentication", icon: navAuthentication, to: "/authentication" },
   { label: "Routing", icon: navRouting, to: "/routing" },
   { label: "Rate Limit", icon: navRateLimit, to: "/rate-limit" },
-  { label: "Logs", icon: navLogs },
+  { label: "Logs", icon: navLogs, to: "/logs" },
 ];
 
 const ADMIN_NAV: readonly { label: string; icon: string; to?: "/settings" }[] = [

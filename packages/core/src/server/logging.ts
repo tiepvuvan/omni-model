@@ -35,6 +35,10 @@ export interface RequestLogDraft {
   ttfbMs: number | null;
   /** Captured prompt, when content capture is on for this request. */
   messages: unknown;
+  /** Captured and redacted parsed request body. */
+  body: unknown;
+  /** Captured request headers, with credential values redacted. */
+  headers: Record<string, string> | undefined;
   /** Captured completion. For a stream, filled in as deltas arrive. */
   completion: string | null;
   truncated: boolean;
@@ -60,6 +64,8 @@ export function createRequestLogDraft(requestId: string, startedAt: number): Req
     errorCode: null,
     ttfbMs: null,
     messages: undefined,
+    body: undefined,
+    headers: undefined,
     completion: null,
     truncated: false,
     settled: null,
@@ -193,9 +199,16 @@ export function createRequestLoggingMiddleware(
       ip: facts?.http.ip ?? null,
       userAgent: c.req.header("user-agent") ?? null,
     };
-    if (draft.messages !== undefined || draft.completion !== null) {
+    if (
+      draft.messages !== undefined ||
+      draft.body !== undefined ||
+      draft.headers !== undefined ||
+      draft.completion !== null
+    ) {
       entry.content = {
         messages: draft.messages ?? null,
+        ...(draft.body === undefined ? {} : { body: draft.body }),
+        ...(draft.headers === undefined ? {} : { headers: draft.headers }),
         completion: draft.completion,
         truncated: draft.truncated,
       };

@@ -1,6 +1,8 @@
 import type { Context } from "hono";
 import { badRequest } from "../../errors.js";
+import { capturePrompt, captureRequestBody, captureRequestHeaders } from "../../logs/content.js";
 import type { EmbeddingsRequest } from "../../openai/types.js";
+import { shouldCaptureContent } from "../../writekeys/types.js";
 import { draftOf } from "../logging.js";
 import {
   acquireConcurrencySlot,
@@ -40,7 +42,21 @@ export function createEmbeddingsHandler(
     // Before the allowlist check: a refused request should still say which model
     // it asked for. See the same ordering in the chat handler.
     const draft = draftOf(c);
-    if (draft !== undefined) draft.modelRequested = request.model;
+    if (draft !== undefined) {
+      draft.modelRequested = request.model;
+      if (shouldCaptureContent(c.get("writeKey") ?? null, bundle.logging.content)) {
+        const prompt = capturePrompt(request.input, bundle.logging.maxContentBytes);
+        const capturedBody = captureRequestBody(body, bundle.logging.maxContentBytes);
+        const capturedHeaders = captureRequestHeaders(
+          c.req.raw.headers,
+          bundle.logging.maxContentBytes,
+        );
+        draft.messages = prompt.value;
+        draft.body = capturedBody.value;
+        draft.headers = capturedHeaders.value;
+        draft.truncated = prompt.truncated || capturedBody.truncated || capturedHeaders.truncated;
+      }
+    }
 
     assertModelAllowedForClient(c, request.model);
 

@@ -177,7 +177,7 @@ export const requestLogs = pgTable(
 );
 
 /**
- * Captured prompt and completion text.
+ * Captured request and response content.
  *
  * A separate table so it can be retained on a shorter clock — or never written
  * at all — without touching the metrics rows, and so the hot table stays narrow.
@@ -188,6 +188,8 @@ export const requestContents = pgTable("omni_request_contents", {
     .primaryKey()
     .references(() => requestLogs.id, { onDelete: "cascade" }),
   messages: jsonb("messages"),
+  body: jsonb("body"),
+  headers: jsonb("headers").$type<Record<string, string>>(),
   completion: text("completion"),
   truncated: boolean("truncated").notNull().default(false),
 });

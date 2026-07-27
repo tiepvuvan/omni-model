@@ -229,9 +229,10 @@ See [logging](/reference/logging) for what is recorded and for retention.
 | `GET /admin/api/logs/:requestId` | One request, by the id the client was given in `x-omni-request-id`. |
 | `GET /admin/api/usage/summary?hours=24` | Requests, failures, tokens and mean latency per client. |
 
-Both log endpoints accept `includeContent=true`, which returns the stored prompt and completion.
-Reading it is recorded in the server log with the operator's email — an accountable act even for an
-operator who is allowed to perform it.
+Both log endpoints accept `includeContent=true`, which returns the stored prompt, parsed request
+body, redacted headers, and completion. Reading it is recorded in the server log with the operator's
+email — an accountable act even for an operator who is allowed to perform it. Credential-bearing
+header and body values are redacted before storage, not merely hidden by the UI.
 
 ## Building a dashboard
 

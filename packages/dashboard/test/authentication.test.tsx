@@ -411,14 +411,12 @@ describe("the sidebar", () => {
     await renderAt("/authentication");
 
     const nav = within(screen.getByRole("navigation", { name: "Sections" }));
-    for (const label of ["Authentication", "Routing", "Rate Limit", "Settings"]) {
+    for (const label of ["Authentication", "Routing", "Rate Limit", "Logs", "Settings"]) {
       expect(nav.getByRole("link", { name: label })).toBeInTheDocument();
     }
     // Present but not yet built: dropping them would make the built screens look
     // like the whole product.
-    for (const label of ["Logs", "Users"]) {
-      expect(nav.getByText(label)).toHaveAttribute("aria-disabled");
-    }
+    expect(nav.getByText("Users")).toHaveAttribute("aria-disabled");
     expect(nav.getByText("Admin")).toBeInTheDocument();
   });
 });

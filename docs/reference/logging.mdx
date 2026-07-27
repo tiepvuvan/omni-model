@@ -18,7 +18,8 @@ or a revoked client key is usually the row you are looking for.
 | Outcome | status, error code, the rate-limit rule that refused it, whether the response came from the cache |
 | Caller | IP (per `trustProxyHeaders`), user agent |
 
-Metadata is on by default. Message content is **not** — see below.
+Metadata is on by default. Prompts, the parsed request body, redacted headers, and completion text are
+**not** — see below.
 
 Every response carries `x-omni-request-id`, which is the `request_id` on the row. That is what makes
 "my request failed at 14:03" answerable.
@@ -27,7 +28,7 @@ Every response carries `x-omni-request-id`, which is the `request_id` on the row
 
 ```sh
 OMNI_LOGGING_REQUESTS=true             # metadata (default true)
-OMNI_LOGGING_CONTENT=false             # prompt + completion text (default false)
+OMNI_LOGGING_CONTENT=false             # request + completion content (default false)
 OMNI_LOGGING_RETENTION=30d             # metadata rows
 OMNI_LOGGING_CONTENT_RETENTION=7d      # captured text
 ```
@@ -44,7 +45,7 @@ you want: usage history for a year, prompts for a week.
 Expired rows are deleted periodically. Every replica offers to sweep; a non-blocking advisory lock
 means exactly one actually does, so no coordination is needed.
 
-## Capturing prompts and completions
+## Capturing request and response details
 
 <Warning>
   This is the most sensitive data the proxy handles. Storing your users' prompts is a privacy
@@ -62,18 +63,35 @@ without logging everyone else:
 | `true` | Always capture, even when the global setting is off. |
 | `false` | Never capture, even when the global setting is on. |
 
-Text over `maxContentBytes` is cut and the row is flagged `truncated`, so a reader knows the text is
-partial rather than assuming the model stopped there.
+Each captured prompt, request body, header set, and completion is byte-capped by `maxContentBytes`.
+When a cap is reached the row is flagged `truncated`, so a reader knows the content is partial rather
+than assuming the model stopped there.
+
+Credential-bearing header values are replaced with `[REDACTED]` before storage. The same redaction is
+applied recursively to credential-shaped request-body fields such as `apiKey`, `password`, `secret`,
+and `access_token`. Their names remain visible for diagnosis, but the values never reach PostgreSQL
+or the dashboard.
 
 Streamed completions are captured as they are delivered — assembled from the same deltas the client
 receives, so nothing is recorded that was not sent. A stream the client abandons mid-way is still
 recorded, with whatever arrived.
 
-## Reading them
+## Activity Logs dashboard
+
+Open **Logs** in the operator sidebar to see the newest requests in the Activity Logs table. The
+columns match the request overview: client, outcome, routed model, output tokens, input tokens, and
+request time.
+
+Selecting a row opens the request-detail drawer. It reads sensitive content through the accountable
+single-request endpoint and shows identity, routing, token and timing metrics, prompts, redacted
+headers, the parsed request body, and the captured completion. If content capture was disabled, the
+drawer still shows all metadata and explains why the sensitive sections are unavailable.
+
+## Reading through the API
 
 Rows are queryable newest-first, filterable by write key, user, time window and minimum status, with
-content excluded unless explicitly requested. The admin API exposes this; until then, the tables are
-plain SQL:
+content excluded unless explicitly requested. The admin API exposes this; the tables are also plain
+SQL:
 
 ```sql
 -- Spend per client over the last day

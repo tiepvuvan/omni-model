@@ -677,3 +677,51 @@ export function Modal({
     </Dialog.Root>
   );
 }
+
+/**
+ * A modal panel that enters from the right edge.
+ *
+ * It keeps Base UI's focus trap, escape handling, backdrop dismissal, and
+ * accessible title while matching the dashboard's flat bordered surfaces.
+ */
+export function Drawer({
+  open,
+  onOpenChange,
+  title,
+  description,
+  children,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  title: string;
+  description?: string;
+  children: ReactNode;
+}) {
+  return (
+    <Dialog.Root open={open} onOpenChange={onOpenChange}>
+      <Dialog.Portal>
+        <Dialog.Backdrop className="fixed inset-0 z-40 bg-dialog-backdrop/40" />
+        <Dialog.Popup className="fixed inset-y-0 right-0 z-50 flex w-[min(680px,calc(100vw-24px))] animate-[activity-drawer-in_180ms_ease-out] flex-col border-l border-solid border-border bg-background-l3 shadow-xl">
+          <div className="flex shrink-0 items-start justify-between gap-[16px] border-b border-solid border-border px-[20px] py-[16px]">
+            <div className="min-w-0">
+              <Dialog.Title className="type-heading-20 text-foreground-primary">
+                {title}
+              </Dialog.Title>
+              {description !== undefined ? (
+                <Dialog.Description className="mt-[4px] truncate type-label-12 text-foreground-secondary">
+                  {description}
+                </Dialog.Description>
+              ) : null}
+            </div>
+            <Dialog.Close
+              className={cx(BUTTON_BASE, BUTTON_STYLES.secondary, BUTTON_SIZES.medium, "shrink-0")}
+            >
+              Close
+            </Dialog.Close>
+          </div>
+          <div className="min-h-0 flex-1 overflow-y-auto">{children}</div>
+        </Dialog.Popup>
+      </Dialog.Portal>
+    </Dialog.Root>
+  );
+}

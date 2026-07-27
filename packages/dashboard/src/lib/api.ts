@@ -179,6 +179,50 @@ export interface MetaResponse {
   logsAvailable: boolean;
 }
 
+/** Sensitive content returned only by the accountable single-log lookup. */
+export interface RequestLogContent {
+  messages: unknown;
+  body?: unknown;
+  headers?: Record<string, string>;
+  completion: string | null;
+  truncated: boolean;
+}
+
+/** One request-log row as exposed by the operator API. */
+export interface RequestLog {
+  id: string;
+  requestId: string;
+  ts: number;
+  writeKeyId: string | null;
+  writeKeyName: string | null;
+  userId: string | null;
+  deviceId: string | null;
+  authProvider: string | null;
+  modelRequested: string | null;
+  modelRouted: string | null;
+  providerId: string | null;
+  routeName: string | null;
+  stream: boolean;
+  status: number;
+  errorCode: string | null;
+  rateLimitRule: string | null;
+  cached: boolean;
+  promptTokens: number | null;
+  completionTokens: number | null;
+  totalTokens: number | null;
+  latencyMs: number | null;
+  ttfbMs: number | null;
+  ip: string | null;
+  userAgent: string | null;
+  content?: RequestLogContent;
+}
+
+/** A newest-first request-log page. */
+export interface RequestLogsResponse {
+  logs: RequestLog[];
+  nextBefore: number | null;
+}
+
 /**
  * The slice of JSON Schema the generated forms read.
  *
@@ -366,6 +410,22 @@ export const api = {
   meta: () => request<MetaResponse>("/meta"),
 
   config: () => request<ConfigResponse>("/config"),
+
+  /** Newest request metadata; sensitive content is deliberately excluded. */
+  logs: (before?: number) =>
+    request<RequestLogsResponse>(
+      `/logs?limit=100${before === undefined ? "" : `&before=${encodeURIComponent(before)}`}`,
+    ),
+
+  /**
+   * One request with opt-in captured content.
+   *
+   * The server audits every call because this can disclose prompts.
+   */
+  log: (requestId: string) =>
+    request<{ log: RequestLog }>(`/logs/${encodeURIComponent(requestId)}?includeContent=true`).then(
+      (body) => body.log,
+    ),
 
   /**
    * Would this document work? Applies and stores nothing.

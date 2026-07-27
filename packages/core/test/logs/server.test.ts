@@ -4,7 +4,13 @@ import { REQUEST_ID_HEADER } from "../../src/server/logging.js";
 import { WRITE_KEY_HEADER } from "../../src/server/writekey.js";
 import { MemoryStorageAdapter } from "../../src/storage/memory.js";
 import { MemoryWriteKeyStore } from "../../src/writekeys/memory.js";
-import { CHAT_BODY, chatRequest, createTestProxy, FIXED_NOW } from "../server/helpers.js";
+import {
+  CHAT_BODY,
+  chatRequest,
+  createTestProxy,
+  embeddingsRequest,
+  FIXED_NOW,
+} from "../server/helpers.js";
 
 function fixture(parts: { logging?: string; rateLimits?: string; security?: string } = {}): string {
   return [
@@ -286,9 +292,70 @@ describe("content capture", () => {
     await on.app.fetch(chatRequest(CHAT_BODY));
     expect((await on.logs())[0]?.content).toMatchObject({
       messages: [{ role: "user", content: "hi" }],
+      body: CHAT_BODY,
+      headers: {
+        "content-type": "application/json",
+      },
       completion: "the answer",
       truncated: false,
     });
+  });
+
+  it("redacts credential headers and body fields before they reach the sink", async () => {
+    const { app, logs } = await setup(CAPTURING);
+    const request = chatRequest({ ...CHAT_BODY, apiKey: "body-secret" });
+    request.headers.set("x-debug-token", "user-secret");
+    request.headers.set("x-trace-id", "trace-9");
+
+    await app.fetch(request);
+
+    const content = (await logs())[0]?.content;
+    expect(content?.headers).toMatchObject({
+      "x-debug-token": "[REDACTED]",
+      "x-trace-id": "trace-9",
+    });
+    expect(content?.body).toMatchObject({ apiKey: "[REDACTED]" });
+    expect(JSON.stringify(content)).not.toContain("body-secret");
+    expect(JSON.stringify(content)).not.toContain("user-secret");
+  });
+
+  it("captures embeddings input, redacted headers, and the complete body", async () => {
+    const { app, logs } = await setup(CAPTURING, {
+      behaviors: {
+        main: {
+          embeddingsResult: {
+            kind: "embeddings",
+            response: {
+              object: "list",
+              data: [{ object: "embedding", index: 0, embedding: [0.1] }],
+              model: "embed",
+              usage: { prompt_tokens: 3, total_tokens: 3 },
+            },
+          },
+        },
+      },
+    });
+
+    const response = await app.fetch(
+      embeddingsRequest(
+        { model: "smart", input: ["first", "second"], apiKey: "body-secret" },
+        { "x-debug-token": "header-secret", "x-trace-id": "trace-embed" },
+      ),
+    );
+    expect(response.status).toBe(200);
+
+    const content = (await logs())[0]?.content;
+    expect(content).toMatchObject({
+      messages: ["first", "second"],
+      headers: { "x-debug-token": "[REDACTED]", "x-trace-id": "trace-embed" },
+      body: {
+        model: "smart",
+        input: ["first", "second"],
+        apiKey: "[REDACTED]",
+      },
+    });
+    expect(JSON.stringify(content)).not.toContain("body-secret");
+    expect(JSON.stringify(content)).not.toContain("header-secret");
   });
 
   it("lets a write key opt in without enabling it for everyone", async () => {

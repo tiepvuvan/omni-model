@@ -66,9 +66,33 @@ export function capturePrompt(
   messages: unknown,
   maxBytes: number,
 ): { value: unknown; truncated: boolean } {
+  return captureJson(redactSensitiveFields(messages), maxBytes);
+}
+
+const SENSITIVE_FIELD =
+  /authorization|cookie|credential|password|secret|signature|token|(?:^|[-_])(?:api[-_]?key|key)(?:$|[-_])/i;
+
+function redactSensitiveFields(value: unknown, seen = new WeakSet<object>()): unknown {
+  if (Array.isArray(value)) {
+    if (seen.has(value)) return "[Circular]";
+    seen.add(value);
+    return value.map((item) => redactSensitiveFields(item, seen));
+  }
+  if (typeof value !== "object" || value === null) return value;
+  if (seen.has(value)) return "[Circular]";
+  seen.add(value);
+
+  const redacted: Record<string, unknown> = {};
+  for (const [key, item] of Object.entries(value)) {
+    redacted[key] = SENSITIVE_FIELD.test(key) ? "[REDACTED]" : redactSensitiveFields(item, seen);
+  }
+  return redacted;
+}
+
+function captureJson(value: unknown, maxBytes: number): { value: unknown; truncated: boolean } {
   let serialized: string;
   try {
-    serialized = JSON.stringify(messages ?? null);
+    serialized = JSON.stringify(value ?? null);
   } catch {
     // Circular or otherwise unserialisable: record that something was there.
     return { value: null, truncated: true };
@@ -79,4 +103,50 @@ export function capturePrompt(
   // Truncated JSON is not parseable, so store it as a string. A reader can still
   // see what the prompt began with, which is the point.
   return { value: sliceToBytes(serialized, maxBytes), truncated: true };
+}
+
+function isSafeDiagnosticHeader(name: string): boolean {
+  return (
+    /^(?:accept|accept-encoding|accept-language|connection|content-length|content-type|host|origin|referer|traceparent|tracestate|user-agent)$/i.test(
+      name,
+    ) || /^(?:sec-fetch-|x-forwarded-|x-real-ip$|x-request-|x-correlation-|x-trace-)/i.test(name)
+  );
+}
+
+/**
+ * Capture a parsed request body at the content cap.
+ *
+ * Credential-shaped fields are replaced before serialization, so a custom
+ * OpenAI-compatible extension cannot smuggle an API key into request logs.
+ */
+export function captureRequestBody(
+  body: unknown,
+  maxBytes: number,
+): { value: unknown; truncated: boolean } {
+  return captureJson(redactSensitiveFields(body), maxBytes);
+}
+
+/**
+ * Capture request headers at the content cap.
+ *
+ * Header names remain visible for diagnosis, while any name that could carry a
+ * credential is retained only as `[REDACTED]`.
+ */
+export function captureRequestHeaders(
+  headers: Headers,
+  maxBytes: number,
+): { value: Record<string, string>; truncated: boolean } {
+  const captured: Record<string, string> = {};
+  for (const [name, value] of headers.entries()) {
+    captured[name] =
+      SENSITIVE_FIELD.test(name) || !isSafeDiagnosticHeader(name) ? "[REDACTED]" : value;
+  }
+  const result = captureJson(captured, maxBytes);
+  return {
+    value:
+      typeof result.value === "object" && result.value !== null && !Array.isArray(result.value)
+        ? (result.value as Record<string, string>)
+        : { "[truncated]": String(result.value) },
+    truncated: result.truncated,
+  };
 }
