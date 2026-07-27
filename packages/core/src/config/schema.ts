@@ -176,15 +176,25 @@ export const concurrencyConfigSchema = z.strictObject({
 /**
  * Exact-match response cache.
  *
- * Keyed by the resolved upstream, the resolved model and the whole request body,
- * so a hit is a request that would have produced the same answer. Off by default:
- * a cached completion is not a fresh one, and that is a decision about your
- * clients' expectations rather than a default anyone should inherit silently.
+ * Keyed by the resolved upstream, the resolved model and the whole request body, so
+ * a hit is a request that would have produced the same answer.
+ *
+ * On by default, with a deliberately short window. Saving the operator's provider
+ * credits is the reason this proxy exists, and a duplicate request — a retry, a
+ * double-tapped button, the same prompt twice in a session — is the cheapest saving
+ * available. Five minutes is the compromise: long enough to absorb that, short
+ * enough that a change made upstream is not masked for the rest of the afternoon.
+ *
+ * Two things follow from it being on, and both are handled rather than hoped about:
+ * a hit is marked `cached` in the log row and reported as `x-omni-cache: hit`, so
+ * nothing about it is silent — and the key includes OpenAI's `user` field, so a
+ * caller who sends it gets a per-user cache. Turn it off if identical prompts must
+ * always reach the upstream.
  */
 export const cacheConfigSchema = z.strictObject({
-  enabled: z.boolean().default(false),
+  enabled: z.boolean().default(true),
   /** How long an entry stays servable. */
-  ttl: durationSchema.default("1h"),
+  ttl: durationSchema.default("5m"),
   /**
    * Entries to keep. Enforced by a periodic sweep, oldest first, so it is a budget
    * rather than a hard ceiling — a burst can overshoot until the next sweep.

@@ -120,8 +120,12 @@ describe("the response cache settings", () => {
     fake.install();
     await renderAt("/settings");
 
-    // Off, one hour, ten thousand — what the proxy would actually do.
-    expect(within(card("Response cache")).getByRole("switch")).not.toBeChecked();
+    // On, five minutes, ten thousand — what the proxy would actually do, so an
+    // absent block never reads as an absent feature.
+    expect(within(card("Response cache")).getByRole("switch")).toBeChecked();
+    expect(within(card("Response cache")).getByLabelText("Keep an answer for")).toHaveTextContent(
+      "5 minutes",
+    );
     expect(within(card("Response cache")).getByLabelText("Entries to keep")).toHaveValue("10,000");
     expect(screen.getByRole("button", { name: "Save Changes" })).toBeDisabled();
   });

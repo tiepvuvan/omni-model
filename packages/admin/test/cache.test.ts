@@ -54,7 +54,9 @@ describe("the response cache", () => {
     // The moment an operator most wants to empty it is right after turning it off,
     // which is exactly when the bundle stops holding one — so the endpoints work
     // from the store, not from the bundle's view of it.
-    const admin = await createTestAdmin({ config: baseConfig() });
+    const admin = await createTestAdmin({
+      config: baseConfig({ cache: { enabled: false } }),
+    });
     await admin.promptCache.put("a", { kind: "completion", completion: {}, usage: null }, 60);
 
     const body = (await (await admin.call("/admin/api/cache")).json()) as CacheState;

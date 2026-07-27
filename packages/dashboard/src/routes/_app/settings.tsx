@@ -18,7 +18,7 @@ export const Route = createFileRoute("/_app/settings")({
  * absent block is not an absent feature, and the screen has to show what the proxy
  * would actually do. `cache-defaults.test.ts` fails if core changes them.
  */
-export const CACHE_DEFAULTS: CacheBlock = { enabled: false, ttl: "1h", maxEntries: 10_000 };
+export const CACHE_DEFAULTS: CacheBlock = { enabled: true, ttl: "5m", maxEntries: 10_000 };
 
 /** The TTLs the select offers. Any duration the parser accepts still round-trips. */
 const TTLS: readonly { value: string; label: string }[] = [
@@ -121,7 +121,7 @@ function SettingsScreen() {
             label="Answer an identical request from the cache"
             checked={draft.enabled}
             onCheckedChange={(enabled) => setDraft((now) => ({ ...now, enabled }))}
-            help="A request matches only when the resolved upstream, the resolved model and the whole request body are identical — so a hit is a request that would have produced the same answer. Off by default: a cached completion is not a fresh one."
+            help="A request matches only when the resolved upstream, the resolved model and the whole request body are identical — so a hit is a request that would have produced the same answer. On by default, with a short window: a duplicate request is the cheapest saving there is."
           />
 
           <SelectField

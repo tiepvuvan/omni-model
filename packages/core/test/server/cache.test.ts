@@ -216,11 +216,12 @@ routing:
     expect((await cache.stats()).entries).toBe(0);
   });
 
-  it("does nothing when caching is off", async () => {
+  it("does nothing once caching is switched off", async () => {
     const cache = new MemoryPromptCache(() => FIXED_NOW);
     const { app, providers, collector } = await createTestApp({
       yaml: `
 version: 1
+cache: { enabled: false }
 rateLimits: []
 routing:
   rules:
@@ -234,11 +235,64 @@ routing:
     await collector.flush();
     await app.fetch(chatRequest(CHAT_BODY));
 
-    // Off by default: a cached completion is not a fresh one, and that is a
-    // decision an operator makes rather than inherits.
+    // Off means off, all the way: no header at all (rather than a permanent
+    // `miss`), no entry written, and every request reaching the upstream.
     expect(first.headers.get("x-omni-cache")).toBeNull();
     expect(providers.get("fake")?.chatCalls).toHaveLength(2);
     expect((await cache.stats()).entries).toBe(0);
+  });
+
+  it("caches without being configured at all", async () => {
+    const cache = new MemoryPromptCache(() => FIXED_NOW);
+    const { app, providers, collector } = await createTestApp({
+      yaml: `
+version: 1
+rateLimits: []
+routing:
+  rules:
+    - { id: fake, when: "true", target: { type: fake } }
+`,
+      storage: new MemoryStorageAdapter(() => FIXED_NOW),
+      initOverrides: { promptCache: cache },
+    });
+
+    await app.fetch(chatRequest(CHAT_BODY));
+    await collector.flush();
+    const second = await app.fetch(chatRequest(CHAT_BODY));
+
+    // On by default: saving the operator's credits is why this proxy exists, and a
+    // duplicate request is the cheapest saving available.
+    expect(second.headers.get("x-omni-cache")).toBe("hit");
+    expect(providers.get("fake")?.chatCalls).toHaveLength(1);
+  });
+
+  it("expires an entry after five minutes by default", async () => {
+    let now = FIXED_NOW;
+    const cache = new MemoryPromptCache(() => now);
+    const { app, providers, collector } = await createTestApp({
+      yaml: `
+version: 1
+rateLimits: []
+routing:
+  rules:
+    - { id: fake, when: "true", target: { type: fake } }
+`,
+      storage: new MemoryStorageAdapter(() => FIXED_NOW),
+      now: () => now,
+      initOverrides: { promptCache: cache },
+    });
+
+    await app.fetch(chatRequest(CHAT_BODY));
+    await collector.flush();
+
+    now += 4 * 60_000;
+    expect((await app.fetch(chatRequest(CHAT_BODY))).headers.get("x-omni-cache")).toBe("hit");
+
+    // Short on purpose: long enough to absorb a retry or a double-tap, short enough
+    // that a change made upstream is not masked for the rest of the afternoon.
+    now += 2 * 60_000;
+    expect((await app.fetch(chatRequest(CHAT_BODY))).headers.get("x-omni-cache")).toBe("miss");
+    expect(providers.get("fake")?.chatCalls).toHaveLength(2);
   });
 
   it("serves nothing once the entry has expired", async () => {

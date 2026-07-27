@@ -125,10 +125,11 @@ its own requests rather than for a window.
 
 ## Settings
 
-One card so far: the **response cache**. Turn it on, choose how long an answer stays
-servable and how many entries to keep, and purge everything when you need a clean
-slate. The card next to it says what is actually in the cache, so "is this doing
-anything" is answerable without leaving the screen.
+One card so far: the **response cache**. It is on by default with a five-minute
+window; here you change how long an answer stays servable, how many entries to keep,
+or switch it off entirely. The card next to it says what is actually in the cache, so
+"is this doing anything" is answerable without leaving the screen — and purges it
+when you need a clean slate.
 
 A hit is only ever a request that would have produced the same answer — same
 upstream, same resolved model, same body — and it costs no upstream tokens, so it is

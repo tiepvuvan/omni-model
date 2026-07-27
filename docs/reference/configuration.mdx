@@ -533,8 +533,8 @@ response *body* is finished — for a stream, long after the handler returned.
 
 | Field | Type | Default | Notes |
 | --- | --- | --- | --- |
-| `enabled` | boolean | `false` | Answer an identical request from the cache. |
-| `ttl` | duration | `1h` | How long an entry stays servable. |
+| `enabled` | boolean | `true` | Answer an identical request from the cache. |
+| `ttl` | duration | `5m` | How long an entry stays servable. |
 | `maxEntries` | positive integer | `10000` | Enforced by a periodic sweep, oldest first — a budget, not a hard ceiling. |
 
 Two requests are the same request when the resolved upstream, the resolved model,
@@ -555,11 +555,19 @@ they change the key.
 - Entries live in `omni_prompt_cache`, shared by every replica. A deployment on
   memory storage has nowhere to put them and says so at build time.
 
+**On by default, with a deliberately short window.** Saving your provider credits is
+the reason this proxy exists, and a duplicate request — a retry, a double-tapped
+button, the same prompt twice in a session — is the cheapest saving available. Five
+minutes is the compromise: long enough to absorb that, short enough that a change
+made upstream is not masked for the rest of the afternoon. Nothing about a hit is
+silent: the row says `cached` and the response says `x-omni-cache: hit`.
+
 <Warning>
 The body includes OpenAI's `user` field. Send it and the cache is effectively per
 user; omit it and one user's completion can be served to another for the same
 prompt. That is the point of a cache, and it is also a decision about your users'
-data — hence off by default.
+data — set `cache.enabled` to `false` if identical prompts must always reach the
+upstream.
 </Warning>
 
 ### `routing` object
