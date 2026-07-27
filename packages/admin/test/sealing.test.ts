@@ -232,4 +232,67 @@ describe("credentials typed into a rule are sealed before they are stored", () =
     const providers = [(stored.security as { userAuth: { secret: unknown } }).userAuth];
     expect(isSecretRef(providers[0]?.secret)).toBe(true);
   });
+
+  it("seals every credential used by the application-verification layer", async () => {
+    const turnstileSecret = "turnstile-server-secret";
+    const recaptchaApiKey = "recaptcha-server-api-key";
+    const serviceAccountKey = JSON.stringify({
+      type: "service_account",
+      client_email: "runtime@example.test",
+      private_key: "-----BEGIN PRIVATE KEY-----\\ntest\\n-----END PRIVATE KEY-----\\n",
+    });
+    const { call } = await createTestAdmin({
+      config: baseConfig(),
+      getGoogleAccessToken: async () => "test-access-token",
+    });
+    const config = baseConfig({
+      security: {
+        userAuth: {
+          type: "jwt",
+          issuer: "https://issuer.test",
+          audience: "test",
+          secret: "s".repeat(32),
+        },
+        appAuth: {
+          mode: "any",
+          providers: [
+            { type: "cloudflare-turnstile", secret: turnstileSecret },
+            {
+              type: "recaptcha-enterprise",
+              projectId: "risk-project",
+              siteKey: "site-key",
+              apiKey: recaptchaApiKey,
+              expectedAction: "chat",
+              minScore: 0.5,
+            },
+            {
+              type: "google-play-integrity",
+              packageName: "com.example.app",
+              serviceAccountKey,
+            },
+          ],
+        },
+      },
+    });
+
+    const response = await call("/admin/api/config", {
+      method: "PUT",
+      body: JSON.stringify({ config }),
+    });
+    expect(response.status).toBe(200);
+
+    const stored = await storedConfig(call);
+    const serialized = JSON.stringify(stored);
+    expect(serialized).not.toContain(turnstileSecret);
+    expect(serialized).not.toContain(recaptchaApiKey);
+    expect(serialized).not.toContain("runtime@example.test");
+    const providers = (
+      stored.security as {
+        appAuth: { providers: Array<Record<string, unknown>> };
+      }
+    ).appAuth.providers;
+    expect(isSecretRef(providers[0]?.secret)).toBe(true);
+    expect(isSecretRef(providers[1]?.apiKey)).toBe(true);
+    expect(isSecretRef(providers[2]?.serviceAccountKey)).toBe(true);
+  });
 });

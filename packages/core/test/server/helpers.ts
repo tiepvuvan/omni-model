@@ -366,6 +366,13 @@ export function createFakeAppAuthFactory(): AuthVerifierFactory {
           const value = request.headers.get(header);
           if (value === null) return null;
           if (value === "bad") return { ok: false, reason: `invalid attestation for ${name}` };
+          if (value === "unavailable") {
+            return {
+              ok: false,
+              status: 503,
+              reason: `attestation unavailable for ${name}`,
+            };
+          }
           return {
             ok: true,
             identity: { provider: "fake-app-auth", deviceId: value, claims: { device: value } },

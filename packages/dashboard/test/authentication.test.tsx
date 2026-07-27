@@ -61,7 +61,14 @@ describe("the two layers", () => {
       expect(within(card(title)).getByRole("radio")).toBeInTheDocument();
     }
     // Layer 2 is any number: checkboxes.
-    for (const title of ["Firebase App Check", "App Attest", "DeviceCheck"]) {
+    for (const title of [
+      "Firebase App Check",
+      "Cloudflare Turnstile",
+      "reCAPTCHA Enterprise",
+      "Google Play Integrity",
+      "App Attest",
+      "DeviceCheck",
+    ]) {
       expect(within(card(title)).getByRole("checkbox")).toBeInTheDocument();
     }
   });
@@ -174,6 +181,47 @@ describe("the app layer", () => {
     ]);
     // And layer 1 is untouched by any of it.
     expect(saved.userAuth).toMatchObject({ type: "jwt" });
+  });
+
+  it("renders and saves the new server-verified app schemes", async () => {
+    const user = userEvent.setup();
+    await renderAt("/authentication");
+
+    await user.click(
+      within(card("Cloudflare Turnstile")).getByRole("checkbox", {
+        name: "Enable Cloudflare Turnstile",
+      }),
+    );
+    await user.type(
+      await within(card("Cloudflare Turnstile")).findByLabelText("Secret"),
+      "turnstile-secret",
+    );
+    await user.click(
+      within(card("reCAPTCHA Enterprise")).getByRole("checkbox", {
+        name: "Enable reCAPTCHA Enterprise",
+      }),
+    );
+    await user.type(
+      await within(card("reCAPTCHA Enterprise")).findByLabelText("Project ID"),
+      "risk-project",
+    );
+    await user.type(within(card("reCAPTCHA Enterprise")).getByLabelText("Site Key"), "site-key");
+    await user.type(within(card("reCAPTCHA Enterprise")).getByLabelText("Expected Action"), "chat");
+    await user.type(within(card("reCAPTCHA Enterprise")).getByLabelText("Min Score"), "0.7");
+    await save(user);
+
+    expect(lastSecurity().appAuth.providers).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: "cloudflare-turnstile", secret: "turnstile-secret" }),
+        expect.objectContaining({
+          type: "recaptcha-enterprise",
+          projectId: "risk-project",
+          siteKey: "site-key",
+          expectedAction: "chat",
+          minScore: 0.7,
+        }),
+      ]),
+    );
   });
 
   it("chooses how several schemes combine, and explains the choice", async () => {

@@ -1,0 +1,104 @@
+---
+title: Cloudflare Turnstile
+description: Require a fresh Cloudflare Turnstile proof before a request reaches a model provider.
+---
+
+The `cloudflare-turnstile` verifier validates a widget token with Cloudflare's
+server-side Siteverify API. It is an **application verification** layer: keep a
+user verifier under `security.userAuth`, then add Turnstile under
+`security.appAuth`.
+
+Turnstile tokens expire after five minutes and are single-use. Generate a new
+token for every proxy request. omni-model never caches a successful validation;
+it uses Cloudflare's idempotency key only to retry one transient Siteverify
+failure safely.
+
+## Configuration
+
+```yaml
+security:
+  userAuth:
+    type: jwt
+    secret: ${OMNI_JWT_SECRET}
+    algorithms: [HS256]
+  appAuth:
+    mode: all
+    providers:
+      - type: cloudflare-turnstile
+        secret: ${TURNSTILE_SECRET}
+        action: chat
+        hostnames: [app.example.com]
+```
+
+<ParamField path="secret" type="string" required>
+The widget secret. It is sent only to Cloudflare Siteverify and is sealed when
+saved through the dashboard.
+</ParamField>
+<ParamField path="header" type="string" default="x-turnstile-token">
+Header carrying the raw response token, without a `Bearer` prefix.
+</ParamField>
+<ParamField path="action" type="string">
+When set, the action returned by Siteverify must match exactly. Bind different
+operations to different actions rather than accepting a token minted for an
+unrelated form.
+</ParamField>
+<ParamField path="hostnames" type="string[]">
+Optional exact hostname allowlist. Production web deployments should set it.
+</ParamField>
+
+The equivalent named environment profile is:
+
+```sh
+export OMNI_SECURITY_CLOUDFLARE_TURNSTILE_ENABLED=true
+export OMNI_SECURITY_CLOUDFLARE_TURNSTILE_SECRET="${TURNSTILE_SECRET}"
+export OMNI_SECURITY_CLOUDFLARE_TURNSTILE_ACTION=chat
+export OMNI_SECURITY_CLOUDFLARE_TURNSTILE_HOSTNAMES='["app.example.com"]'
+```
+
+## Send a fresh proof
+
+Render the Turnstile widget with the same action configured on the proxy. Send
+the callback token immediately with the model request:
+
+```html
+<div
+  class="cf-turnstile"
+  data-sitekey="YOUR_SITE_KEY"
+  data-action="chat"
+  data-callback="submitChat"
+></div>
+<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+```
+
+```typescript
+async function submitChat(turnstileToken: string) {
+  return fetch("https://proxy.example.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${userToken}`,
+      "Content-Type": "application/json",
+      "X-Turnstile-Token": turnstileToken,
+    },
+    body: JSON.stringify({
+      model: "smart",
+      messages: [{ role: "user", content: "Hello" }],
+    }),
+  });
+}
+```
+
+Reset or execute the widget again before a retry. Reusing the same token is
+expected to fail.
+
+## Failure behavior
+
+An absent header means this verifier did not recognize the request, which lets
+`appAuth.mode: any` try a verifier for another platform. A rejected token,
+action, or hostname returns `401`. Siteverify transport failures, malformed
+responses, and invalid server credentials return `503
+verification_unavailable`; they are not mislabeled as client failures.
+
+See Cloudflare's official [client-side rendering](https://developers.cloudflare.com/turnstile/get-started/client-side-rendering/)
+and [Siteverify](https://developers.cloudflare.com/turnstile/get-started/server-side-validation/)
+documentation for widget configuration and token lifecycle details.
+

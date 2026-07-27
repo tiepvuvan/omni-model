@@ -29,6 +29,9 @@
         "pages": [
           "security/app-attest",
           "security/firebase-app-check",
+          "security/cloudflare-turnstile",
+          "security/recaptcha-enterprise",
+          "security/google-play-integrity",
           "security/custom-jwt",
           "security/verify-on-device"
         ]

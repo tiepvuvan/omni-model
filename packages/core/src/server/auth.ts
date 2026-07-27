@@ -1,11 +1,16 @@
 import type { Context, MiddlewareHandler } from "hono";
 import type { AuthVerifier, Identity, VerifyContext } from "../auth/types.js";
-import { type OmniError, unauthorized } from "../errors.js";
+import { OmniError, unauthorized } from "../errors.js";
 import type { RuntimeBundle } from "../runtime/bundle.js";
 import type { AppEnv } from "./types.js";
 
-function authError(reason: string): OmniError {
-  return unauthorized(reason, { headers: { "WWW-Authenticate": "Bearer" } });
+function authError(reason: string, status = 401): OmniError {
+  if (status === 401) {
+    return unauthorized(reason, { headers: { "WWW-Authenticate": "Bearer" } });
+  }
+  return new OmniError(status, reason, {
+    ...(status === 503 ? { code: "verification_unavailable" } : {}),
+  });
 }
 
 /** Exact match, or prefix match for patterns with a trailing `*`. */
@@ -65,7 +70,7 @@ export interface AuthMiddlewareOptions {
    */
   requireBundle: () => RuntimeBundle;
   /** Build the per-request `VerifyContext` (runtime + storage). */
-  contextFor: (c: Context<AppEnv>) => VerifyContext;
+  contextFor: (c: Context<AppEnv>, bundle: RuntimeBundle) => VerifyContext;
 }
 
 /**
@@ -95,18 +100,19 @@ export function createAuthMiddleware(options: AuthMiddlewareOptions): Middleware
   const { requireBundle, contextFor } = options;
 
   return async (c, next) => {
-    const { publicPaths, userVerifier, appVerifiers, appAuthMode } = requireBundle();
+    const bundle = requireBundle();
+    const { publicPaths, userVerifier, appVerifiers, appAuthMode } = bundle;
     if (isPublicPath(c.req.path, publicPaths)) {
       c.set("identity", null);
       return next();
     }
-    const ctx = contextFor(c);
+    const ctx = contextFor(c, bundle);
 
     // Layer 1: the user. `null` is a rejection, not a fall-through — there is
     // nowhere else for a user credential to come from.
     const user = await userVerifier.verify(c.req.raw, ctx);
     if (user === null) throw authError("authentication required");
-    if (!user.ok) throw authError(user.reason);
+    if (!user.ok) throw authError(user.reason, user.status);
 
     const accepted: { verifier: AuthVerifier; identity: Identity }[] = [
       { verifier: userVerifier, identity: user.identity },
@@ -115,7 +121,7 @@ export function createAuthMiddleware(options: AuthMiddlewareOptions): Middleware
     // Layer 2: the app or device, when any is configured.
     if (appVerifiers.length > 0) {
       if (appAuthMode === "any") {
-        let firstFailure: { ok: false; reason: string } | null = null;
+        let firstFailure: { ok: false; reason: string; status?: number } | null = null;
         let attested: { verifier: AuthVerifier; identity: Identity } | null = null;
         for (const verifier of appVerifiers) {
           const result = await verifier.verify(c.req.raw, ctx);
@@ -127,14 +133,14 @@ export function createAuthMiddleware(options: AuthMiddlewareOptions): Middleware
           if (firstFailure === null) firstFailure = result;
         }
         if (attested === null) {
-          throw authError(firstFailure?.reason ?? "app attestation required");
+          throw authError(firstFailure?.reason ?? "app attestation required", firstFailure?.status);
         }
         accepted.push(attested);
       } else {
         for (const verifier of appVerifiers) {
           const result = await verifier.verify(c.req.raw, ctx);
           if (result === null) throw authError(`credential missing for ${verifier.name}`);
-          if (!result.ok) throw authError(result.reason);
+          if (!result.ok) throw authError(result.reason, result.status);
           accepted.push({ verifier, identity: result.identity });
         }
       }

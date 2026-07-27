@@ -144,6 +144,8 @@ export interface CreateTestAdminOptions {
   pool?: PgPoolLike;
   /** Upstream double, for provider probes. */
   fetch?: typeof fetch;
+  /** Google OAuth double for verifiers that use ADC/WIF in production. */
+  getGoogleAccessToken?: RuntimeContext["getGoogleAccessToken"];
   /** Capture what the admin API logs, for audit assertions. */
   logger?: Logger;
   /** `null` models a deployment with no cache at all; omit for a memory one. */
@@ -167,6 +169,9 @@ export async function createTestAdmin(options: CreateTestAdminOptions = {}): Pro
     now: () => FIXED_NOW,
     waitUntil: () => {},
     log: silentLogger,
+    ...(options.getGoogleAccessToken === undefined
+      ? {}
+      : { getGoogleAccessToken: options.getGoogleAccessToken }),
   };
   const storage = new MemoryStorageAdapter();
   const secrets =

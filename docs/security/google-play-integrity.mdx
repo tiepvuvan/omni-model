@@ -1,0 +1,133 @@
+---
+title: Google Play Integrity
+description: Bind Android requests to a fresh Google Play Integrity Standard API verdict.
+---
+
+The `google-play-integrity` verifier accepts **Standard API** integrity tokens,
+decodes them with Google, and binds each verdict to the exact proxy request.
+It validates freshness, Play app recognition, package name, device integrity,
+optional account licensing, and optional app-signing certificate pins.
+
+Place it under `security.appAuth` and keep a user verifier under
+`security.userAuth`.
+
+## Configure Google Cloud and Play Console
+
+Enable the Play Integrity API, link the Cloud project in Play Console, and grant
+the runtime service account permission to decode integrity verdicts for the
+app. The Node image uses Application Default Credentials or Workload Identity
+Federation by default; a service-account JSON value is also supported.
+
+```yaml
+security:
+  userAuth:
+    type: jwt
+    secret: ${OMNI_JWT_SECRET}
+    algorithms: [HS256]
+  appAuth:
+    mode: all
+    providers:
+      - type: google-play-integrity
+        packageName: com.example.app
+        maxAge: 2m
+        deviceRecognitionVerdicts: [MEETS_DEVICE_INTEGRITY]
+        requireLicensed: true
+        certificateSha256Digests: [YOUR_BASE64URL_SHA256_DIGEST]
+```
+
+<ParamField path="packageName" type="string" required>
+Android application id. The request details and app verdict must both report
+this exact value.
+</ParamField>
+<ParamField path="serviceAccountKey" type="string">
+Optional service-account JSON. Omit it to use ADC/WIF.
+</ParamField>
+<ParamField path="header" type="string" default="x-google-play-integrity">
+Header carrying the encrypted Standard Integrity token.
+</ParamField>
+<ParamField path="maxAge" type="duration" default="2m">
+Maximum accepted age of Google's request timestamp.
+</ParamField>
+<ParamField path="clockToleranceSeconds" type="integer" default="30">
+Maximum future clock skew accepted for the request timestamp.
+</ParamField>
+<ParamField path="deviceRecognitionVerdicts" type="string[]" default="MEETS_DEVICE_INTEGRITY">
+At least one configured label must appear in the decoded verdict. Supported
+labels are `MEETS_BASIC_INTEGRITY`, `MEETS_DEVICE_INTEGRITY`,
+`MEETS_STRONG_INTEGRITY`, and `MEETS_VIRTUAL_INTEGRITY`.
+</ParamField>
+<ParamField path="requireLicensed" type="boolean" default="false">
+Require `appLicensingVerdict: LICENSED`.
+</ParamField>
+<ParamField path="certificateSha256Digests" type="string[]">
+Optional allowlist of the base64url SHA-256 signing-certificate digests returned
+by Play.
+</ParamField>
+
+The equivalent environment profile starts with:
+
+```sh
+export OMNI_SECURITY_GOOGLE_PLAY_INTEGRITY_ENABLED=true
+export OMNI_SECURITY_GOOGLE_PLAY_INTEGRITY_PACKAGE_NAME=com.example.app
+export OMNI_SECURITY_GOOGLE_PLAY_INTEGRITY_REQUIRE_LICENSED=true
+export OMNI_SECURITY_GOOGLE_PLAY_INTEGRITY_DEVICE_RECOGNITION_VERDICTS='["MEETS_DEVICE_INTEGRITY"]'
+export OMNI_SECURITY_GOOGLE_PLAY_INTEGRITY_CERTIFICATE_SHA256_DIGESTS='["YOUR_BASE64URL_SHA256_DIGEST"]'
+```
+
+## Bind the token to the HTTP request
+
+omni-model defines one canonical request hash:
+
+```text
+base64url(
+  SHA-256(
+    uppercase HTTP method + "\n" +
+    path and query + "\n" +
+    exact request body bytes
+  )
+)
+```
+
+For example, hash the UTF-8 bytes of the exact JSON string that will be sent,
+not a parsed and re-serialized object. Do not include the origin or the
+`X-Google-Play-Integrity` header.
+
+```kotlin
+val body = """{"model":"smart","messages":[{"role":"user","content":"Hello"}]}"""
+val prefix = "POST\n/v1/chat/completions\n".toByteArray(Charsets.UTF_8)
+val digest = MessageDigest.getInstance("SHA-256").digest(prefix + body.toByteArray())
+val requestHash = Base64.encodeToString(
+  digest,
+  Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING,
+)
+
+val tokenResponse = standardIntegrityTokenProvider.request(
+  StandardIntegrityTokenRequest.builder()
+    .setRequestHash(requestHash)
+    .build(),
+).await()
+
+httpClient.post("https://proxy.example.com/v1/chat/completions") {
+  header("Authorization", "Bearer $userToken")
+  header("X-Google-Play-Integrity", tokenResponse.token())
+  contentType(ContentType.Application.Json)
+  setBody(body)
+}
+```
+
+Prepare and retain the `StandardIntegrityTokenProvider` using your linked Cloud
+project number as described by Google, then request a fresh verdict for each
+proxy request. Any change to the method, query string, or body invalidates the
+binding.
+
+## Failure behavior
+
+An invalid encrypted token or a verdict that fails binding or policy returns
+`401`. OAuth, network, Google API, and malformed-response failures return `503
+verification_unavailable`. A request body beyond the configured
+`server.maxBodyBytes` is rejected before the Google call.
+
+See Google's [Standard API request guide](https://developer.android.com/google/play/integrity/standard)
+and [verdict reference](https://developer.android.com/google/play/integrity/verdicts)
+for client initialization and Play Console configuration.
+

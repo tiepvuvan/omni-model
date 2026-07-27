@@ -276,6 +276,9 @@ profiles; `OMNI_SECURITY_APP_AUTH_MODE` determines whether any or all of the app
 | --- | --- | --- |
 | Firebase Auth | `OMNI_SECURITY_FIREBASE_AUTH_ENABLED=true`<br/>`OMNI_SECURITY_FIREBASE_AUTH_PROJECT_ID=my-project` | `OMNI_SECURITY_FIREBASE_AUTH_HEADER`<br/>`OMNI_SECURITY_FIREBASE_AUTH_CLOCK_TOLERANCE_SECONDS` |
 | Firebase App Check | `OMNI_SECURITY_FIREBASE_APPCHECK_ENABLED=true`<br/>`OMNI_SECURITY_FIREBASE_APPCHECK_PROJECT_NUMBER=1234567890` | `OMNI_SECURITY_FIREBASE_APPCHECK_APP_ID` (one)<br/>`OMNI_SECURITY_FIREBASE_APPCHECK_APP_IDS` (JSON array)<br/>`OMNI_SECURITY_FIREBASE_APPCHECK_HEADER`<br/>`OMNI_SECURITY_FIREBASE_APPCHECK_CONSUME` (default `false`)<br/>`OMNI_SECURITY_FIREBASE_APPCHECK_CLOCK_TOLERANCE_SECONDS`<br/><br/>`OMNI_GCP_PROJECT_NUMBER` is an alternative source for the project number. |
+| Cloudflare Turnstile | `OMNI_SECURITY_CLOUDFLARE_TURNSTILE_ENABLED=true`<br/>`OMNI_SECURITY_CLOUDFLARE_TURNSTILE_SECRET` | `OMNI_SECURITY_CLOUDFLARE_TURNSTILE_HEADER`<br/>`OMNI_SECURITY_CLOUDFLARE_TURNSTILE_ACTION`<br/>`OMNI_SECURITY_CLOUDFLARE_TURNSTILE_HOSTNAMES` (JSON array) |
+| reCAPTCHA Enterprise | `OMNI_SECURITY_RECAPTCHA_ENTERPRISE_ENABLED=true`<br/>`OMNI_SECURITY_RECAPTCHA_ENTERPRISE_PROJECT_ID`<br/>`OMNI_SECURITY_RECAPTCHA_ENTERPRISE_SITE_KEY`<br/>`OMNI_SECURITY_RECAPTCHA_ENTERPRISE_EXPECTED_ACTION`<br/>`OMNI_SECURITY_RECAPTCHA_ENTERPRISE_MIN_SCORE` | `OMNI_SECURITY_RECAPTCHA_ENTERPRISE_API_KEY` or `OMNI_SECURITY_RECAPTCHA_ENTERPRISE_SERVICE_ACCOUNT_KEY` (omit both for ADC/WIF)<br/>`OMNI_SECURITY_RECAPTCHA_ENTERPRISE_HEADER`<br/>`OMNI_SECURITY_RECAPTCHA_ENTERPRISE_HOSTNAMES`<br/>`OMNI_SECURITY_RECAPTCHA_ENTERPRISE_ANDROID_PACKAGE_NAMES`<br/>`OMNI_SECURITY_RECAPTCHA_ENTERPRISE_IOS_BUNDLE_IDS` (allowlists are JSON arrays) |
+| Google Play Integrity | `OMNI_SECURITY_GOOGLE_PLAY_INTEGRITY_ENABLED=true`<br/>`OMNI_SECURITY_GOOGLE_PLAY_INTEGRITY_PACKAGE_NAME` | `OMNI_SECURITY_GOOGLE_PLAY_INTEGRITY_SERVICE_ACCOUNT_KEY` (omit for ADC/WIF)<br/>`OMNI_SECURITY_GOOGLE_PLAY_INTEGRITY_HEADER`<br/>`OMNI_SECURITY_GOOGLE_PLAY_INTEGRITY_MAX_AGE`<br/>`OMNI_SECURITY_GOOGLE_PLAY_INTEGRITY_CLOCK_TOLERANCE_SECONDS`<br/>`OMNI_SECURITY_GOOGLE_PLAY_INTEGRITY_DEVICE_RECOGNITION_VERDICTS`<br/>`OMNI_SECURITY_GOOGLE_PLAY_INTEGRITY_REQUIRE_LICENSED`<br/>`OMNI_SECURITY_GOOGLE_PLAY_INTEGRITY_CERTIFICATE_SHA256_DIGESTS` |
 | JWT | `OMNI_SECURITY_JWT_ENABLED=true` plus exactly one of `OMNI_SECURITY_JWT_SECRET`, `OMNI_SECURITY_JWT_JWKS_URL`, or `OMNI_SECURITY_JWT_PUBLIC_KEY` | `OMNI_SECURITY_JWT_ALGORITHMS` (JSON array)<br/>`OMNI_SECURITY_JWT_ISSUER`<br/>`OMNI_SECURITY_JWT_AUDIENCE` (string or JSON array)<br/>`OMNI_SECURITY_JWT_HEADER`<br/>`OMNI_SECURITY_JWT_SCHEME` (`bearer` or `none`)<br/>`OMNI_SECURITY_JWT_USER_ID_CLAIM`<br/>`OMNI_SECURITY_JWT_DEVICE_ID_CLAIM`<br/>`OMNI_SECURITY_JWT_CLOCK_TOLERANCE_SECONDS` |
 | Supabase | `OMNI_SECURITY_SUPABASE_ENABLED=true` plus one of `OMNI_SECURITY_SUPABASE_URL`, `OMNI_SECURITY_SUPABASE_JWT_SECRET`, or `OMNI_SECURITY_SUPABASE_JWKS_URL` | `OMNI_SECURITY_SUPABASE_ISSUER`<br/>`OMNI_SECURITY_SUPABASE_AUDIENCE` (string or JSON array)<br/>`OMNI_SECURITY_SUPABASE_HEADER`<br/>`OMNI_SECURITY_SUPABASE_CLOCK_TOLERANCE_SECONDS` |
 | Apple App Attest | `OMNI_SECURITY_APP_ATTEST_ENABLED=true`<br/>`OMNI_SECURITY_APP_ATTEST_TEAM_ID`<br/>`OMNI_SECURITY_APP_ATTEST_BUNDLE_ID` | `OMNI_SECURITY_APP_ATTEST_ENVIRONMENT`<br/>`OMNI_SECURITY_APP_ATTEST_CHALLENGE_TTL`<br/>`OMNI_SECURITY_APP_ATTEST_ROOT_CA_PEM`<br/>`OMNI_SECURITY_APP_ATTEST_KEY_ID_HEADER`<br/>`OMNI_SECURITY_APP_ATTEST_ASSERTION_HEADER`<br/>`OMNI_SECURITY_APP_ATTEST_CHALLENGE_HEADER` |
@@ -299,9 +302,9 @@ OMNI_SECURITY_JSON='{
 ```
 
 Supported provider types include `jwt`, `firebase-auth`, `firebase-app-check`, `supabase`,
-`apple-app-attest`, and `apple-device-check`. Their fields are supplied directly in the JSON entry.
-See the dedicated [security guides](/security/custom-jwt) for verifier-specific options and client
-headers.
+`apple-app-attest`, `apple-device-check`, `cloudflare-turnstile`, `recaptcha-enterprise`, and
+`google-play-integrity`. Their fields are supplied directly in the JSON entry. See the dedicated
+[security guides](/security/custom-jwt) for verifier-specific options and client headers.
 
 ## Model routing
 
@@ -473,7 +476,7 @@ one attestation scheme per platform is normal.
 | --- | --- | --- | --- |
 | `userAuth` | object | none | One of `firebase-auth`, `supabase`, `jwt`. A bundle refuses to build without it, so `/v1` answers 503 rather than serving unauthenticated traffic. |
 | `appAuth.mode` | `any` \| `all` | `all` | `all` requires every configured scheme — right for one platform layering two. `any` takes the first that accepts — right for several platforms, since a client can only satisfy its own. |
-| `appAuth.providers` | array | `[]` | Any of `firebase-app-check`, `apple-app-attest`, `apple-device-check`. |
+| `appAuth.providers` | array | `[]` | Any of `firebase-app-check`, `apple-app-attest`, `apple-device-check`, `cloudflare-turnstile`, `recaptcha-enterprise`, `google-play-integrity`. |
 | `publicPaths` | string array | `[]` | Exact paths or a trailing `*` prefix. |
 | `requireWriteKey` | boolean | `false` | Demand `x-omni-key` on every `/v1/*` request. |
 

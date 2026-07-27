@@ -1,7 +1,9 @@
 import { createFileRoute, useRouter } from "@tanstack/react-router";
 import { useState } from "react";
 import vendorApple from "../../assets/vendor-apple.svg";
+import vendorCloudflare from "../../assets/vendor-cloudflare.svg";
 import vendorFirebase from "../../assets/vendor-firebase.svg";
+import vendorGoogle from "../../assets/vendor-google.svg";
 import vendorJwt from "../../assets/vendor-jwt.svg";
 import vendorSupabase from "../../assets/vendor-supabase.svg";
 import { ActionBar, CenteredPane, PaneTitle } from "../../components/chrome";
@@ -49,6 +51,27 @@ const PRESENTATION: Record<string, { title: string; icon: string; fields: readon
     icon: vendorFirebase,
     fields: ["projectNumber", "appIds", "consume"],
   },
+  "cloudflare-turnstile": {
+    title: "Cloudflare Turnstile",
+    icon: vendorCloudflare,
+    fields: ["secret", "action", "hostnames"],
+  },
+  "recaptcha-enterprise": {
+    title: "reCAPTCHA Enterprise",
+    icon: vendorGoogle,
+    fields: ["projectId", "siteKey", "apiKey", "expectedAction", "minScore", "hostnames"],
+  },
+  "google-play-integrity": {
+    title: "Google Play Integrity",
+    icon: vendorGoogle,
+    fields: [
+      "packageName",
+      "serviceAccountKey",
+      "deviceRecognitionVerdicts",
+      "requireLicensed",
+      "certificateSha256Digests",
+    ],
+  },
   "apple-app-attest": { title: "App Attest", icon: vendorApple, fields: ["teamId", "bundleId"] },
   "apple-device-check": {
     title: "DeviceCheck",
@@ -63,6 +86,9 @@ const ORDER = [
   "supabase",
   "jwt",
   "firebase-app-check",
+  "cloudflare-turnstile",
+  "recaptcha-enterprise",
+  "google-play-integrity",
   "apple-app-attest",
   "apple-device-check",
 ];

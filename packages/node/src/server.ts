@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { AddressInfo } from "node:net";
 import { type ServerType, serve } from "@hono/node-server";
 import { getConnInfo } from "@hono/node-server/conninfo";
@@ -15,6 +16,7 @@ import {
   environmentConfigDocument,
   extractClientIp,
   type FirebaseAppCheckTokenConsumer,
+  type GoogleAccessTokenProvider,
   hasEnvironmentConfig,
   interpolateDeep,
   type Keyring,
@@ -33,6 +35,7 @@ import {
   type WriteKeyStore,
 } from "@omni-model/core";
 import { createPostgresBackend, type PgPoolLike, sweepRequestLogs } from "@omni-model/postgres";
+import { GoogleAuth, type JWTInput } from "google-auth-library";
 import { mountDashboard } from "./dashboard.js";
 import { containerRegistry } from "./registry.js";
 
@@ -88,6 +91,65 @@ function lazyAppCheckConsumer(
       await resolve();
     },
   });
+}
+
+function serviceAccountCredentials(value: string): JWTInput {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw new ConfigError("Google serviceAccountKey must be valid JSON");
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw new ConfigError("Google serviceAccountKey must be a service-account JSON object");
+  }
+  const record = parsed as Record<string, unknown>;
+  if (
+    record.type !== "service_account" ||
+    typeof record.client_email !== "string" ||
+    record.client_email === "" ||
+    typeof record.private_key !== "string" ||
+    record.private_key === ""
+  ) {
+    throw new ConfigError(
+      "Google serviceAccountKey must contain type=service_account, client_email and private_key",
+    );
+  }
+  return record as JWTInput;
+}
+
+/**
+ * Create the Google OAuth hook injected into runtime-agnostic core.
+ *
+ * google-auth-library owns ADC, attached service accounts, Workload Identity
+ * Federation and token caching. Explicit service-account JSON is accepted for
+ * deployments that cannot provide ADC and is never logged.
+ */
+export function createGoogleAccessTokenProvider(): GoogleAccessTokenProvider {
+  const clients = new Map<string, GoogleAuth>();
+  return async ({ scopes, serviceAccountKey }): Promise<string> => {
+    const scopeList = [...new Set(scopes)].sort();
+    const credentials =
+      serviceAccountKey === undefined ? undefined : serviceAccountCredentials(serviceAccountKey);
+    const credentialId =
+      serviceAccountKey === undefined
+        ? "adc"
+        : createHash("sha256").update(serviceAccountKey).digest("hex");
+    const cacheKey = `${scopeList.join(" ")}:${credentialId}`;
+    let auth = clients.get(cacheKey);
+    if (auth === undefined) {
+      auth = new GoogleAuth({
+        scopes: scopeList,
+        ...(credentials === undefined ? {} : { credentials }),
+      });
+      clients.set(cacheKey, auth);
+    }
+    const token = await auth.getAccessToken();
+    if (token === null || token === undefined || token === "") {
+      throw new Error("Google credentials returned no access token");
+    }
+    return token;
+  };
 }
 
 /** Bootstrap readers. These must work on a document that fails validation. */
@@ -158,6 +220,8 @@ export interface StartOptions {
   adminSecret?: string;
   /** Inject a request log sink (tests); otherwise derived from the backend. */
   requestLogs?: RequestLogSink;
+  /** Override Google OAuth token acquisition (tests); defaults to ADC/WIF support. */
+  getGoogleAccessToken?: GoogleAccessTokenProvider;
 }
 
 /** Handle to a running omni-model HTTP server. */
@@ -371,6 +435,7 @@ export async function startServer(options: StartOptions): Promise<RunningServer>
   const resolved = bootstrap === undefined ? undefined : interpolateDeep(bootstrap, env);
   const logger = options.logger ?? createConsoleLogger(rawLogLevel(resolved, env));
   const appCheck = lazyAppCheckConsumer(env);
+  const googleAccess = options.getGoogleAccessToken ?? createGoogleAccessTokenProvider();
 
   const runtime: RuntimeContext = {
     env,
@@ -383,6 +448,7 @@ export async function startServer(options: StartOptions): Promise<RunningServer>
       });
     },
     consumeFirebaseAppCheckToken: appCheck,
+    getGoogleAccessToken: googleAccess,
     log: logger,
   };
 
@@ -409,6 +475,7 @@ export async function startServer(options: StartOptions): Promise<RunningServer>
       logger: options.logger,
       fetch: fetchImpl,
       consumeFirebaseAppCheckToken: appCheck,
+      getGoogleAccessToken: googleAccess,
       // Behind a trusted proxy, derive the IP from headers; otherwise use the
       // real socket peer, which a client cannot spoof.
       clientIp: (c, trustProxyHeaders) =>

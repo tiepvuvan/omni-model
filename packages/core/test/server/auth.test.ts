@@ -223,6 +223,25 @@ routing:
     expect(body.error.message).toBe("invalid attestation for attestation");
   });
 
+  it("preserves a verifier's service-unavailable status and OpenAI error shape", async () => {
+    const { app } = await createTestApp({ yaml: LAYERED_YAML });
+    const response = await app.fetch(
+      chatRequest(CHAT_BODY, {
+        "x-user-a": "pro",
+        "x-device-a": "unavailable",
+      }),
+    );
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({
+      error: {
+        message: "attestation unavailable for attestation",
+        type: "api_error",
+        param: null,
+        code: "verification_unavailable",
+      },
+    });
+  });
+
   it("still requires the user, even with the app attested", async () => {
     const { app } = await createTestApp({ yaml: LAYERED_YAML });
     const response = await app.fetch(chatRequest(CHAT_BODY, { "x-device-a": "dev-1" }));
@@ -286,6 +305,17 @@ routing:
     expect(response.status).toBe(401);
     const body = (await response.json()) as { error: { message: string } };
     expect(body.error.message).toBe("invalid attestation for ios");
+  });
+
+  it("preserves the first explicit failure's status when no later scheme accepts", async () => {
+    const { app } = await createTestApp({ yaml: MULTI_PLATFORM_YAML });
+    const response = await app.fetch(
+      chatRequest(CHAT_BODY, {
+        "x-user-a": "alice",
+        "x-ios": "unavailable",
+      }),
+    );
+    expect(response.status).toBe(503);
   });
 
   it("rejects an authenticated user whose app attests nothing at all", async () => {

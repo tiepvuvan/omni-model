@@ -21,6 +21,16 @@ export type AuthResult =
 /** Runtime services available to verifiers, including shared storage. */
 export interface VerifyContext extends RuntimeContext {
   storage: StorageAdapter;
+  /**
+   * Best-effort client IP from a trusted proxy header or the connection peer.
+   * Undefined only for third-party embedders that predate this field.
+   */
+  clientIp?: string | null;
+  /**
+   * Maximum request-body bytes configured for this immutable runtime bundle.
+   * Verifiers that inspect a cloned body must enforce this bound.
+   */
+  maxBodyBytes?: number;
 }
 
 /**

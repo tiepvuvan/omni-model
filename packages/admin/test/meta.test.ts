@@ -21,14 +21,17 @@ describe("component metadata", () => {
       "openai",
       "openai-compatible",
     ]);
-    // Requirement 8's six auth modes, all of them still registered.
+    // Every built-in auth mode, including the three server-verified app proofs.
     expect(meta.authVerifiers.map((v) => v.type)).toEqual(
       expect.arrayContaining([
         "apple-app-attest",
         "apple-device-check",
+        "cloudflare-turnstile",
         "firebase-app-check",
         "firebase-auth",
+        "google-play-integrity",
         "jwt",
+        "recaptcha-enterprise",
         "supabase",
       ]),
     );

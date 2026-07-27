@@ -105,6 +105,55 @@ const SECURITY_PROFILES: readonly SecurityProfile[] = [
     appIds: "OMNI_SECURITY_FIREBASE_APPCHECK_APP_IDS",
   },
   {
+    type: "cloudflare-turnstile",
+    layer: "app",
+    enabled: "OMNI_SECURITY_CLOUDFLARE_TURNSTILE_ENABLED",
+    values: [
+      ["OMNI_SECURITY_CLOUDFLARE_TURNSTILE_SECRET", "secret"],
+      ["OMNI_SECURITY_CLOUDFLARE_TURNSTILE_HEADER", "header"],
+      ["OMNI_SECURITY_CLOUDFLARE_TURNSTILE_ACTION", "action"],
+      ["OMNI_SECURITY_CLOUDFLARE_TURNSTILE_HOSTNAMES", "hostnames"],
+    ],
+  },
+  {
+    type: "recaptcha-enterprise",
+    layer: "app",
+    enabled: "OMNI_SECURITY_RECAPTCHA_ENTERPRISE_ENABLED",
+    values: [
+      ["OMNI_SECURITY_RECAPTCHA_ENTERPRISE_PROJECT_ID", "projectId"],
+      ["OMNI_SECURITY_RECAPTCHA_ENTERPRISE_SITE_KEY", "siteKey"],
+      ["OMNI_SECURITY_RECAPTCHA_ENTERPRISE_API_KEY", "apiKey"],
+      ["OMNI_SECURITY_RECAPTCHA_ENTERPRISE_SERVICE_ACCOUNT_KEY", "serviceAccountKey"],
+      ["OMNI_SECURITY_RECAPTCHA_ENTERPRISE_EXPECTED_ACTION", "expectedAction"],
+      ["OMNI_SECURITY_RECAPTCHA_ENTERPRISE_MIN_SCORE", "minScore"],
+      ["OMNI_SECURITY_RECAPTCHA_ENTERPRISE_HEADER", "header"],
+      ["OMNI_SECURITY_RECAPTCHA_ENTERPRISE_HOSTNAMES", "hostnames"],
+      ["OMNI_SECURITY_RECAPTCHA_ENTERPRISE_ANDROID_PACKAGE_NAMES", "androidPackageNames"],
+      ["OMNI_SECURITY_RECAPTCHA_ENTERPRISE_IOS_BUNDLE_IDS", "iosBundleIds"],
+    ],
+  },
+  {
+    type: "google-play-integrity",
+    layer: "app",
+    enabled: "OMNI_SECURITY_GOOGLE_PLAY_INTEGRITY_ENABLED",
+    values: [
+      ["OMNI_SECURITY_GOOGLE_PLAY_INTEGRITY_PACKAGE_NAME", "packageName"],
+      ["OMNI_SECURITY_GOOGLE_PLAY_INTEGRITY_SERVICE_ACCOUNT_KEY", "serviceAccountKey"],
+      ["OMNI_SECURITY_GOOGLE_PLAY_INTEGRITY_HEADER", "header"],
+      ["OMNI_SECURITY_GOOGLE_PLAY_INTEGRITY_MAX_AGE", "maxAge"],
+      ["OMNI_SECURITY_GOOGLE_PLAY_INTEGRITY_CLOCK_TOLERANCE_SECONDS", "clockToleranceSeconds"],
+      [
+        "OMNI_SECURITY_GOOGLE_PLAY_INTEGRITY_DEVICE_RECOGNITION_VERDICTS",
+        "deviceRecognitionVerdicts",
+      ],
+      ["OMNI_SECURITY_GOOGLE_PLAY_INTEGRITY_REQUIRE_LICENSED", "requireLicensed"],
+      [
+        "OMNI_SECURITY_GOOGLE_PLAY_INTEGRITY_CERTIFICATE_SHA256_DIGESTS",
+        "certificateSha256Digests",
+      ],
+    ],
+  },
+  {
     type: "jwt",
     layer: "user",
     enabled: "OMNI_SECURITY_JWT_ENABLED",
@@ -393,7 +442,14 @@ function shortcutValue(value: string, key: string): unknown {
     key.endsWith("_MODELS") ||
     key.endsWith("_ALGORITHMS") ||
     key.endsWith("_AUDIENCE") ||
-    key.endsWith("_APP_IDS");
+    key.endsWith("_APP_IDS") ||
+    key.endsWith("_MIN_SCORE") ||
+    key.endsWith("_REQUIRE_LICENSED") ||
+    key.endsWith("_HOSTNAMES") ||
+    key.endsWith("_ANDROID_PACKAGE_NAMES") ||
+    key.endsWith("_IOS_BUNDLE_IDS") ||
+    key.endsWith("_DEVICE_RECOGNITION_VERDICTS") ||
+    key.endsWith("_CERTIFICATE_SHA256_DIGESTS");
   return typedValue ? parseEnvironmentValue(value, key) : value;
 }
 

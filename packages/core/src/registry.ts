@@ -4,9 +4,12 @@ import {
 } from "./auth/apple/index.js";
 import type { AuthVerifierFactory } from "./auth/types.js";
 import {
+  cloudflareTurnstileVerifierFactory,
   firebaseAppCheckVerifierFactory,
   firebaseAuthVerifierFactory,
+  googlePlayIntegrityVerifierFactory,
   jwtVerifierFactory,
+  recaptchaEnterpriseVerifierFactory,
   supabaseVerifierFactory,
 } from "./auth/verifiers/index.js";
 import { anthropicProviderFactory } from "./providers/anthropic.js";
@@ -44,7 +47,10 @@ export function createDefaultRegistry(): OmniRegistry {
     jwtVerifierFactory,
     firebaseAuthVerifierFactory,
     supabaseVerifierFactory,
+    cloudflareTurnstileVerifierFactory,
     firebaseAppCheckVerifierFactory,
+    googlePlayIntegrityVerifierFactory,
+    recaptchaEnterpriseVerifierFactory,
     appleDeviceCheckVerifierFactory,
     appleAppAttestVerifierFactory,
   ]) {

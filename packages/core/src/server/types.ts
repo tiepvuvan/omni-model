@@ -7,7 +7,7 @@ import type { OmniRegistry } from "../registry.js";
 import type { ExpressionEngine, RequestFacts } from "../routing/types.js";
 import type { SecretStore } from "../secrets/types.js";
 import type { StorageAdapter } from "../storage/types.js";
-import type { FirebaseAppCheckTokenConsumer, Logger } from "../types.js";
+import type { FirebaseAppCheckTokenConsumer, GoogleAccessTokenProvider, Logger } from "../types.js";
 import type { WriteKey, WriteKeyStore } from "../writekeys/types.js";
 import type { RequestLogDraft } from "./logging.js";
 
@@ -58,6 +58,11 @@ export interface OmniRuntimeInit {
    * `consume`; other runtimes may omit it.
    */
   consumeFirebaseAppCheckToken?: FirebaseAppCheckTokenConsumer;
+  /**
+   * Google OAuth token hook for verifiers such as Play Integrity and
+   * reCAPTCHA Enterprise. The Node runtime supplies ADC/WIF support.
+   */
+  getGoogleAccessToken?: GoogleAccessTokenProvider;
   /**
    * Pins the logger for every bundle. Omit it and each bundle gets a console
    * logger at its own `server.logLevel`, so the level is reconfigurable.

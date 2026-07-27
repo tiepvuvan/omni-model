@@ -17,6 +17,20 @@ export type FirebaseAppCheckTokenConsumer = (
   token: string,
 ) => Promise<FirebaseAppCheckTokenConsumption>;
 
+/** Options for obtaining an OAuth access token for a Google API. */
+export interface GoogleAccessTokenRequest {
+  /** OAuth scopes the target API requires. */
+  scopes: readonly string[];
+  /**
+   * Optional service-account JSON supplied by verifier configuration.
+   * When absent, the runtime uses Application Default Credentials.
+   */
+  serviceAccountKey?: string;
+}
+
+/** Platform hook that obtains a Google OAuth access token. */
+export type GoogleAccessTokenProvider = (request: GoogleAccessTokenRequest) => Promise<string>;
+
 /**
  * Runtime services injected into every pluggable component (auth verifiers,
  * model providers, storage factories). Nothing here touches a global, which is
@@ -40,5 +54,11 @@ export interface RuntimeContext {
    * runtime supplies it when an App Check verifier enables `consume`.
    */
   consumeFirebaseAppCheckToken?: FirebaseAppCheckTokenConsumer;
+  /**
+   * Optional Google OAuth hook. The Node runtime supplies it through
+   * google-auth-library, keeping credential discovery and Workload Identity
+   * Federation out of runtime-agnostic core.
+   */
+  getGoogleAccessToken?: GoogleAccessTokenProvider;
   log: Logger;
 }

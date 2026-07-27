@@ -1,10 +1,11 @@
 ---
-title: Verify auth on a real device
-description: Prove Firebase Auth, Firebase App Check, Apple App Attest, and Apple DeviceCheck all work end-to-end against a running proxy.
+title: Verify application auth end to end
+description: Prove every built-in application verifier works against a running proxy and, where required, a real device.
 ---
 
-omni-model ships four client-attestation verifiers. This page shows how to prove each one actually
-accepts a **real** credential (and rejects a forged one) against a **running** proxy.
+omni-model ships several user and application-verification methods. This page shows how to prove
+each one actually accepts a **real** credential (and rejects a forged one) against a **running**
+proxy.
 
 The verification splits in two, because two of the four can only be produced by a physical device:
 
@@ -14,6 +15,22 @@ The verification splits in two, because two of the four can only be produced by 
 | Firebase App Check | `firebase-app-check` | Automated e2e exchanges a registered **debug token** for a real App Check token | No |
 | Apple App Attest | `apple-app-attest` | The example iOS app runs the challenge → attest → assert flow on device | **Yes** |
 | Apple DeviceCheck | `apple-device-check` | The example iOS app generates a DeviceCheck token on device | **Yes** |
+| Cloudflare Turnstile | `cloudflare-turnstile` | A browser widget creates a fresh token; the proxy calls Siteverify | No |
+| reCAPTCHA Enterprise | `recaptcha-enterprise` | A web or mobile SDK token is assessed by Google Cloud | Mobile SDK only |
+| Google Play Integrity | `google-play-integrity` | The Android app binds a Standard API verdict to the exact HTTP request | **Yes** |
+
+The offline `application-verification.e2e.test.ts` suite also starts the real Node server and drives
+all three remote assessment integrations through deterministic fake vendor endpoints. It verifies
+the complete header → auth layer → model-upstream path without credentials or network access:
+
+```sh
+pnpm exec vitest run --config vitest.e2e.config.ts \
+  e2e/application-verification.e2e.test.ts
+```
+
+Use the real-service checks below before production; the deterministic suite proves integration
+wiring and failure boundaries, while vendor credentials and console enrollment remain
+deployment-specific.
 
 <Note>
 App Attest and DeviceCheck use the Secure Enclave — `DCAppAttestService`/`DCDevice` report

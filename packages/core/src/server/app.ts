@@ -122,12 +122,17 @@ export async function createOmniProxy(init: OmniProxyInit): Promise<OmniProxy> {
     init.consumeFirebaseAppCheckToken === undefined
       ? {}
       : { consumeFirebaseAppCheckToken: init.consumeFirebaseAppCheckToken };
+  const googleAccess =
+    init.getGoogleAccessToken === undefined
+      ? {}
+      : { getGoogleAccessToken: init.getGoogleAccessToken };
   const startupRuntime: RuntimeContext = {
     env,
     fetch: fetchImpl,
     now,
     waitUntil: fallbackWaitUntil,
     ...appCheck,
+    ...googleAccess,
     log: bootLog,
   };
 
@@ -211,9 +216,9 @@ export async function createOmniProxy(init: OmniProxyInit): Promise<OmniProxy> {
     now,
     waitUntil: waitUntilFor(c),
     ...appCheck,
+    ...googleAccess,
     log: holder.current()?.log ?? bootLog,
   });
-  const verifyContextFor = (c: Context<AppEnv>): VerifyContext => ({ ...runtimeFor(c), storage });
 
   // Default IP resolver: header-only, gated on trustProxyHeaders. Platforms
   // with socket access (Node) override this via `init.clientIp`.
@@ -221,6 +226,12 @@ export async function createOmniProxy(init: OmniProxyInit): Promise<OmniProxy> {
     init.clientIp ??
     ((c: Context<AppEnv>, trustProxyHeaders: boolean): string | null =>
       extractClientIp(c.req.raw.headers, trustProxyHeaders));
+  const verifyContextFor = (c: Context<AppEnv>, bundle: RuntimeBundle): VerifyContext => ({
+    ...runtimeFor(c),
+    storage,
+    clientIp: clientIp(c, bundle.trustProxyHeaders),
+    maxBodyBytes: bundle.maxBodyBytes,
+  });
 
   /**
    * Verifier-contributed routes (e.g. App Attest challenge issuance), dispatched
@@ -235,9 +246,11 @@ export async function createOmniProxy(init: OmniProxyInit): Promise<OmniProxy> {
    * which is the point — they are how a client obtains a credential.
    */
   app.use("*", async (c, next) => {
-    const route = holder.current()?.authRoutes.get(`${c.req.method} ${c.req.path}`);
+    const bundle = holder.current();
+    if (bundle === null) return next();
+    const route = bundle.authRoutes.get(`${c.req.method} ${c.req.path}`);
     if (route === undefined) return next();
-    return route.handler(c.req.raw, verifyContextFor(c));
+    return route.handler(c.req.raw, verifyContextFor(c, bundle));
   });
 
   // Liveness: the process is up. Never depends on configuration, so a

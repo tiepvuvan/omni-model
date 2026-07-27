@@ -157,6 +157,9 @@ importers:
       firebase-admin:
         specifier: ^12.7.0
         version: 12.7.0
+      google-auth-library:
+        specifier: ^9.15.1
+        version: 9.15.1
       hono:
         specifier: ^4.12.0
         version: 4.12.30
@@ -4758,8 +4761,7 @@ snapshots:
       - supports-color
     optional: true
 
-  agent-base@7.1.4:
-    optional: true
+  agent-base@7.1.4: {}
 
   ansi-regex@5.0.1: {}
 
@@ -4811,8 +4813,7 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  base64-js@1.5.1:
-    optional: true
+  base64-js@1.5.1: {}
 
   baseline-browser-mapping@2.11.3: {}
 
@@ -4861,8 +4862,7 @@ snapshots:
     dependencies:
       require-from-string: 2.0.2
 
-  bignumber.js@9.3.1:
-    optional: true
+  bignumber.js@9.3.1: {}
 
   browserslist@4.28.7:
     dependencies:
@@ -5128,8 +5128,7 @@ snapshots:
 
   exsolve@1.1.0: {}
 
-  extend@3.0.2:
-    optional: true
+  extend@3.0.2: {}
 
   farmhash-modern@1.1.0: {}
 
@@ -5209,7 +5208,6 @@ snapshots:
     transitivePeerDependencies:
       - encoding
       - supports-color
-    optional: true
 
   gcp-metadata@6.1.1:
     dependencies:
@@ -5219,7 +5217,6 @@ snapshots:
     transitivePeerDependencies:
       - encoding
       - supports-color
-    optional: true
 
   geist@1.7.2(next@16.2.12(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)):
     dependencies:
@@ -5265,7 +5262,6 @@ snapshots:
     transitivePeerDependencies:
       - encoding
       - supports-color
-    optional: true
 
   google-gax@4.6.1:
     dependencies:
@@ -5286,8 +5282,7 @@ snapshots:
       - supports-color
     optional: true
 
-  google-logging-utils@0.0.2:
-    optional: true
+  google-logging-utils@0.0.2: {}
 
   gopd@1.2.0:
     optional: true
@@ -5301,7 +5296,6 @@ snapshots:
     transitivePeerDependencies:
       - encoding
       - supports-color
-    optional: true
 
   h3@2.0.1-rc.20:
     dependencies:
@@ -5357,7 +5351,6 @@ snapshots:
       debug: 4.4.3
     transitivePeerDependencies:
       - supports-color
-    optional: true
 
   indent-string@4.0.0: {}
 
@@ -5369,8 +5362,7 @@ snapshots:
 
   is-potential-custom-element-name@1.0.1: {}
 
-  is-stream@2.0.1:
-    optional: true
+  is-stream@2.0.1: {}
 
   is-unsafe@2.0.0:
     optional: true
@@ -5420,7 +5412,6 @@ snapshots:
   json-bigint@1.0.0:
     dependencies:
       bignumber.js: 9.3.1
-    optional: true
 
   json5@2.2.3: {}
 
@@ -5613,7 +5604,6 @@ snapshots:
   node-fetch@2.7.0:
     dependencies:
       whatwg-url: 5.0.0
-    optional: true
 
   node-forge@1.4.0: {}
 
@@ -5968,8 +5958,7 @@ snapshots:
     dependencies:
       tldts: 7.4.9
 
-  tr46@0.0.3:
-    optional: true
+  tr46@0.0.3: {}
 
   tr46@6.0.0:
     dependencies:
@@ -6022,8 +6011,7 @@ snapshots:
 
   uuid@10.0.0: {}
 
-  uuid@9.0.1:
-    optional: true
+  uuid@9.0.1: {}
 
   vite@8.1.5(@types/node@22.20.1)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.1)(yaml@2.9.0):
     dependencies:
@@ -6077,8 +6065,7 @@ snapshots:
     dependencies:
       xml-name-validator: 5.0.0
 
-  webidl-conversions@3.0.1:
-    optional: true
+  webidl-conversions@3.0.1: {}
 
   webidl-conversions@8.0.1: {}
 
@@ -6106,7 +6093,6 @@ snapshots:
     dependencies:
       tr46: 0.0.3
       webidl-conversions: 3.0.1
-    optional: true
 
   why-is-node-running@2.3.0:
     dependencies:

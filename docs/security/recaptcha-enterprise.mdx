@@ -1,0 +1,123 @@
+---
+title: reCAPTCHA Enterprise
+description: Assess web and mobile application requests with reCAPTCHA Enterprise before model routing.
+---
+
+The `recaptcha-enterprise` verifier creates a Google Cloud assessment for every
+present token and enforces token validity, action binding, minimum risk score,
+and optional web or mobile origin allowlists. It belongs under
+`security.appAuth`; it does not replace the user identity required under
+`security.userAuth`.
+
+## Configuration
+
+```yaml
+security:
+  userAuth:
+    type: jwt
+    secret: ${OMNI_JWT_SECRET}
+    algorithms: [HS256]
+  appAuth:
+    mode: all
+    providers:
+      - type: recaptcha-enterprise
+        projectId: risk-project
+        siteKey: ${RECAPTCHA_SITE_KEY}
+        expectedAction: chat
+        minScore: 0.7
+        hostnames: [app.example.com]
+```
+
+<ParamField path="projectId" type="string" required>
+Google Cloud project that owns the reCAPTCHA Enterprise key.
+</ParamField>
+<ParamField path="siteKey" type="string" required>
+The web, Android, or iOS key used by the client SDK.
+</ParamField>
+<ParamField path="expectedAction" type="string" required>
+Exact action the client passes while generating the token. The assessment must
+report the same value.
+</ParamField>
+<ParamField path="minScore" type="number" required>
+Lowest accepted score, from `0` through `1`. Start from a policy appropriate to
+your traffic and tune it from assessment data.
+</ParamField>
+<ParamField path="apiKey" type="string">
+Server API key authorized for the assessment API. This is mutually exclusive
+with `serviceAccountKey`.
+</ParamField>
+<ParamField path="serviceAccountKey" type="string">
+Optional service-account JSON. Omit both credential fields to use Application
+Default Credentials or Workload Identity Federation in the Node container.
+</ParamField>
+<ParamField path="header" type="string" default="x-recaptcha-token">
+Header carrying a newly generated raw token.
+</ParamField>
+<ParamField path="hostnames" type="string[]">
+Allowed web hostnames.
+</ParamField>
+<ParamField path="androidPackageNames" type="string[]">
+Allowed Android application ids.
+</ParamField>
+<ParamField path="iosBundleIds" type="string[]">
+Allowed Apple bundle ids.
+</ParamField>
+
+When any origin allowlist is configured, the origin reported by Google must
+match at least one corresponding allowlist. Set the list for every client type
+you serve.
+
+The named environment profile exposes the same fields:
+
+```sh
+export OMNI_SECURITY_RECAPTCHA_ENTERPRISE_ENABLED=true
+export OMNI_SECURITY_RECAPTCHA_ENTERPRISE_PROJECT_ID=risk-project
+export OMNI_SECURITY_RECAPTCHA_ENTERPRISE_SITE_KEY="${RECAPTCHA_SITE_KEY}"
+export OMNI_SECURITY_RECAPTCHA_ENTERPRISE_EXPECTED_ACTION=chat
+export OMNI_SECURITY_RECAPTCHA_ENTERPRISE_MIN_SCORE=0.7
+export OMNI_SECURITY_RECAPTCHA_ENTERPRISE_HOSTNAMES='["app.example.com"]'
+```
+
+The Node image obtains OAuth tokens through ADC/WIF by default. Alternatively,
+set `OMNI_SECURITY_RECAPTCHA_ENTERPRISE_API_KEY` or provide
+`OMNI_SECURITY_RECAPTCHA_ENTERPRISE_SERVICE_ACCOUNT_KEY`.
+
+## Send a fresh web token
+
+Generate the token immediately before the protected request. The client and
+server action strings must be identical:
+
+```typescript
+await new Promise<void>((resolve) => grecaptcha.enterprise.ready(resolve));
+const token = await grecaptcha.enterprise.execute("YOUR_SITE_KEY", {
+  action: "chat",
+});
+
+const response = await fetch("https://proxy.example.com/v1/chat/completions", {
+  method: "POST",
+  headers: {
+    Authorization: `Bearer ${userToken}`,
+    "Content-Type": "application/json",
+    "X-Recaptcha-Token": token,
+  },
+  body: JSON.stringify({
+    model: "smart",
+    messages: [{ role: "user", content: "Hello" }],
+  }),
+});
+```
+
+Android and iOS clients use the reCAPTCHA Enterprise mobile SDK to execute the
+same action, then send the returned token in `X-Recaptcha-Token`.
+
+## Failure behavior
+
+Invalid tokens, action mismatches, scores below the threshold, and disallowed
+origins return `401`. OAuth, network, Google API, and malformed-assessment
+failures return `503 verification_unavailable`. Only curated assessment facts
+are exposed to routing claims; the submitted token is never logged or echoed.
+
+See Google's official [create assessment](https://cloud.google.com/recaptcha/docs/create-assessment-website)
+and [interpret assessment](https://cloud.google.com/recaptcha/docs/interpret-assessment-website)
+guides for key setup and score policy.
+

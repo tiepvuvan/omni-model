@@ -80,6 +80,61 @@ export const PROVIDER_SCHEMAS = [
 /** Verifier descriptors carry the layer, exactly as `GET /meta` does. */
 export const VERIFIER_SCHEMAS = [
   {
+    type: "cloudflare-turnstile",
+    layer: "app",
+    optionsSchema: {
+      type: "object",
+      properties: {
+        type: { type: "string" },
+        secret: { type: "string" },
+        header: { type: "string" },
+        action: { type: "string" },
+        hostnames: { type: "array", items: { type: "string" } },
+      },
+      required: ["secret"],
+    },
+  },
+  {
+    type: "google-play-integrity",
+    layer: "app",
+    optionsSchema: {
+      type: "object",
+      properties: {
+        type: { type: "string" },
+        packageName: { type: "string" },
+        serviceAccountKey: { type: "string" },
+        header: { type: "string" },
+        maxAge: { type: "string" },
+        clockToleranceSeconds: { type: "integer" },
+        deviceRecognitionVerdicts: { type: "array", items: { type: "string" } },
+        requireLicensed: { type: "boolean" },
+        certificateSha256Digests: { type: "array", items: { type: "string" } },
+      },
+      required: ["packageName"],
+    },
+  },
+  {
+    type: "recaptcha-enterprise",
+    layer: "app",
+    optionsSchema: {
+      type: "object",
+      properties: {
+        type: { type: "string" },
+        projectId: { type: "string" },
+        siteKey: { type: "string" },
+        apiKey: { type: "string" },
+        serviceAccountKey: { type: "string" },
+        expectedAction: { type: "string" },
+        minScore: { type: "number" },
+        header: { type: "string" },
+        hostnames: { type: "array", items: { type: "string" } },
+        androidPackageNames: { type: "array", items: { type: "string" } },
+        iosBundleIds: { type: "array", items: { type: "string" } },
+      },
+      required: ["projectId", "siteKey", "expectedAction", "minScore"],
+    },
+  },
+  {
     type: "apple-app-attest",
     layer: "app",
     optionsSchema: {

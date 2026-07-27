@@ -176,6 +176,59 @@ describe("environment configuration", () => {
     expect(config.security.appAuth.mode).toBe("all");
   });
 
+  it("builds Turnstile, reCAPTCHA Enterprise, and Play Integrity profiles", () => {
+    const document = environmentConfigDocument({
+      OMNI_SECURITY_CLOUDFLARE_TURNSTILE_ENABLED: "true",
+      OMNI_SECURITY_CLOUDFLARE_TURNSTILE_SECRET: "${TURNSTILE_SECRET}",
+      OMNI_SECURITY_CLOUDFLARE_TURNSTILE_ACTION: "chat",
+      OMNI_SECURITY_CLOUDFLARE_TURNSTILE_HOSTNAMES: '["app.example.com"]',
+      OMNI_SECURITY_RECAPTCHA_ENTERPRISE_ENABLED: "true",
+      OMNI_SECURITY_RECAPTCHA_ENTERPRISE_PROJECT_ID: "risk-project",
+      OMNI_SECURITY_RECAPTCHA_ENTERPRISE_SITE_KEY: "site-key",
+      OMNI_SECURITY_RECAPTCHA_ENTERPRISE_API_KEY: "${RECAPTCHA_API_KEY}",
+      OMNI_SECURITY_RECAPTCHA_ENTERPRISE_EXPECTED_ACTION: "chat",
+      OMNI_SECURITY_RECAPTCHA_ENTERPRISE_MIN_SCORE: "0.7",
+      OMNI_SECURITY_GOOGLE_PLAY_INTEGRITY_ENABLED: "true",
+      OMNI_SECURITY_GOOGLE_PLAY_INTEGRITY_PACKAGE_NAME: "com.example.app",
+      OMNI_SECURITY_GOOGLE_PLAY_INTEGRITY_MAX_AGE: "90s",
+      OMNI_SECURITY_GOOGLE_PLAY_INTEGRITY_DEVICE_RECOGNITION_VERDICTS:
+        '["MEETS_DEVICE_INTEGRITY","MEETS_VIRTUAL_INTEGRITY"]',
+      OMNI_SECURITY_GOOGLE_PLAY_INTEGRITY_REQUIRE_LICENSED: "true",
+      OMNI_SECURITY_GOOGLE_PLAY_INTEGRITY_CERTIFICATE_SHA256_DIGESTS: '["cert-a"]',
+    });
+
+    expect(document).toMatchObject({
+      security: {
+        appAuth: {
+          providers: [
+            {
+              type: "cloudflare-turnstile",
+              secret: "${TURNSTILE_SECRET}",
+              action: "chat",
+              hostnames: ["app.example.com"],
+            },
+            {
+              type: "recaptcha-enterprise",
+              projectId: "risk-project",
+              siteKey: "site-key",
+              apiKey: "${RECAPTCHA_API_KEY}",
+              expectedAction: "chat",
+              minScore: 0.7,
+            },
+            {
+              type: "google-play-integrity",
+              packageName: "com.example.app",
+              maxAge: "90s",
+              deviceRecognitionVerdicts: ["MEETS_DEVICE_INTEGRITY", "MEETS_VIRTUAL_INTEGRITY"],
+              requireLicensed: true,
+              certificateSha256Digests: ["cert-a"],
+            },
+          ],
+        },
+      },
+    });
+  });
+
   it("refuses two user authentication methods rather than picking one", () => {
     // Whichever won would own `user.id`, and `user.id` is whose token budget a
     // request spends — too consequential to decide by variable ordering.
