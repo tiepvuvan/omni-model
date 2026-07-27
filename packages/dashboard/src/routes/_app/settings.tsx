@@ -3,7 +3,13 @@ import { useState } from "react";
 import { ActionBar, CenteredPane, PaneTitle } from "../../components/chrome";
 import { AmountField } from "../../components/ratelimit/budget-card";
 import { Button, Callout, Card, SelectField, Switch } from "../../components/ui/primitives";
-import { api, type CacheBlock, type CacheState, type ConfigResponse } from "../../lib/api";
+import {
+  api,
+  type CacheBlock,
+  type CacheState,
+  type ConfigResponse,
+  type ServerBlock,
+} from "../../lib/api";
 
 export const Route = createFileRoute("/_app/settings")({
   loader: async (): Promise<{ config: ConfigResponse; cache: CacheState }> => {
@@ -19,6 +25,11 @@ export const Route = createFileRoute("/_app/settings")({
  * would actually do. `cache-defaults.test.ts` fails if core changes them.
  */
 export const CACHE_DEFAULTS: CacheBlock = { enabled: true, ttl: "5m", maxEntries: 10_000 };
+
+/** Core's provider-neutral per-request input-token default. */
+export const SERVER_DEFAULTS: Pick<ServerBlock, "maxInputTokens"> = {
+  maxInputTokens: 128_000,
+};
 
 /** The TTLs the select offers. Any duration the parser accepts still round-trips. */
 const TTLS: readonly { value: string; label: string }[] = [
@@ -39,6 +50,13 @@ function cacheOf(config: ConfigResponse): CacheBlock {
   };
 }
 
+function serverOf(config: ConfigResponse): ServerBlock {
+  return {
+    ...config.config?.server,
+    maxInputTokens: config.config?.server?.maxInputTokens ?? SERVER_DEFAULTS.maxInputTokens,
+  };
+}
+
 const bytes = (value: number | null): string => {
   if (value === null) return "unknown size";
   if (value < 1024) return `${value} B`;
@@ -56,23 +74,30 @@ const bytes = (value: number | null): string => {
 function SettingsScreen() {
   const { config, cache } = Route.useLoaderData();
   const router = useRouter();
-  const stored = cacheOf(config);
+  const storedCache = cacheOf(config);
+  const storedServer = serverOf(config);
 
-  const [draft, setDraft] = useState<CacheBlock>(stored);
+  const [cacheDraft, setCacheDraft] = useState<CacheBlock>(storedCache);
+  const [serverDraft, setServerDraft] = useState<ServerBlock>(storedServer);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [purged, setPurged] = useState<number | null>(null);
 
-  const dirty = JSON.stringify(draft) !== JSON.stringify(stored);
-  const ttls = TTLS.some((option) => option.value === draft.ttl)
+  const dirty =
+    JSON.stringify(cacheDraft) !== JSON.stringify(storedCache) ||
+    JSON.stringify(serverDraft) !== JSON.stringify(storedServer);
+  const ttls = TTLS.some((option) => option.value === cacheDraft.ttl)
     ? TTLS
-    : [...TTLS, { value: draft.ttl, label: draft.ttl }];
+    : [...TTLS, { value: cacheDraft.ttl, label: cacheDraft.ttl }];
 
   const save = async () => {
     setBusy(true);
     setError(null);
     try {
-      await api.patchConfig({ cache: draft }, "update response caching");
+      await api.patchConfig(
+        { cache: cacheDraft, server: serverDraft },
+        "update request limits and response caching",
+      );
       await router.invalidate();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "The change could not be saved.");
@@ -97,7 +122,15 @@ function SettingsScreen() {
 
   return (
     <>
-      <ActionBar dirty={dirty} busy={busy} onDiscard={() => setDraft(stored)} onSave={save} />
+      <ActionBar
+        dirty={dirty}
+        busy={busy}
+        onDiscard={() => {
+          setCacheDraft(storedCache);
+          setServerDraft(storedServer);
+        }}
+        onSave={save}
+      />
 
       <CenteredPane>
         <PaneTitle>Settings</PaneTitle>
@@ -116,19 +149,33 @@ function SettingsScreen() {
           </Callout>
         ) : null}
 
+        <Card title="Request limits">
+          <AmountField
+            id="server-max-input-tokens"
+            label="Maximum input tokens per request"
+            help="Requests over this provider-neutral estimate are rejected before routing. Tokenizers differ by model, so the proxy estimates four ASCII characters per token and counts each non-ASCII code point as one; upstream-reported usage remains authoritative for billing."
+            value={serverDraft.maxInputTokens}
+            onChange={(maxInputTokens) => setServerDraft((now) => ({ ...now, maxInputTokens }))}
+          />
+          <p className="type-label-12 text-foreground-secondary">
+            The default is 128,000 tokens. This limit applies to both chat completions and
+            embeddings, including the complete JSON request body.
+          </p>
+        </Card>
+
         <Card title="Response cache">
           <Switch
             label="Answer an identical request from the cache"
-            checked={draft.enabled}
-            onCheckedChange={(enabled) => setDraft((now) => ({ ...now, enabled }))}
+            checked={cacheDraft.enabled}
+            onCheckedChange={(enabled) => setCacheDraft((now) => ({ ...now, enabled }))}
             help="A request matches only when the resolved upstream, the resolved model and the whole request body are identical — so a hit is a request that would have produced the same answer. On by default, with a short window: a duplicate request is the cheapest saving there is."
           />
 
           <SelectField
             label="Keep an answer for"
-            value={draft.ttl}
+            value={cacheDraft.ttl}
             items={ttls}
-            onValueChange={(ttl) => setDraft((now) => ({ ...now, ttl }))}
+            onValueChange={(ttl) => setCacheDraft((now) => ({ ...now, ttl }))}
             help="How long an entry stays servable. Long enough to be worth having, short enough that a change upstream is not masked for days."
           />
 
@@ -136,8 +183,8 @@ function SettingsScreen() {
             id="cache-max-entries"
             label="Entries to keep"
             help="Enforced by a periodic sweep, oldest first — a budget rather than a hard ceiling, so a burst can overshoot until the next sweep."
-            value={draft.maxEntries}
-            onChange={(maxEntries) => setDraft((now) => ({ ...now, maxEntries }))}
+            value={cacheDraft.maxEntries}
+            onChange={(maxEntries) => setCacheDraft((now) => ({ ...now, maxEntries }))}
           />
 
           <p className="type-label-12 text-foreground-secondary">

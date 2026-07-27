@@ -64,23 +64,23 @@ describe("rate-limit key derivation and header spoofing", () => {
   });
 });
 
-describe("request body size limit", () => {
+describe("request input token limit", () => {
   const yaml = `
 version: 1
 server:
-  maxBodyBytes: 200
+  maxInputTokens: 100
 routing:
   rules:
     - { id: fake, when: "true", target: { type: fake } }
 `;
 
-  it("rejects a body larger than server.maxBodyBytes with a 413", async () => {
+  it("rejects a body over server.maxInputTokens with a 413", async () => {
     const { app } = await createTestApp({ yaml });
     const bigBody = { ...CHAT_BODY, messages: [{ role: "user", content: "x".repeat(500) }] };
     const response = await app.fetch(chatRequest(bigBody));
     expect(response.status).toBe(413);
     const body = (await response.json()) as { error: { code: string } };
-    expect(body.error.code).toBe("payload_too_large");
+    expect(body.error.code).toBe("input_token_limit_exceeded");
   });
 
   it("accepts a body under the limit", async () => {
@@ -88,7 +88,15 @@ routing:
     expect((await app.fetch(chatRequest(CHAT_BODY))).status).toBe(200);
   });
 
-  it("defaults to a 128 KiB limit when server.maxBodyBytes is omitted", async () => {
+  it("counts non-ASCII code points conservatively", async () => {
+    const { app } = await createTestApp({ yaml });
+    const ascii = { ...CHAT_BODY, messages: [{ role: "user", content: "x".repeat(200) }] };
+    const cjk = { ...CHAT_BODY, messages: [{ role: "user", content: "你".repeat(200) }] };
+    expect((await app.fetch(chatRequest(ascii))).status).toBe(200);
+    expect((await app.fetch(chatRequest(cjk))).status).toBe(413);
+  });
+
+  it("defaults to 128,000 input tokens", async () => {
     const defaultYaml = `
 version: 1
 routing:
@@ -96,11 +104,11 @@ routing:
     - { id: fake, when: "true", target: { type: fake } }
 `;
     const { app } = await createTestApp({ yaml: defaultYaml });
-    const body = { ...CHAT_BODY, messages: [{ role: "user", content: "x".repeat(128 * 1024) }] };
+    const body = { ...CHAT_BODY, messages: [{ role: "user", content: "x".repeat(512_000) }] };
     expect((await app.fetch(chatRequest(body))).status).toBe(413);
   });
 
-  it("rejects when content-length lies but the actual body is oversized", async () => {
+  it("rejects when content-length lies but the actual token estimate is oversized", async () => {
     const { app } = await createTestApp({ yaml });
     const bigBody = JSON.stringify({
       ...CHAT_BODY,

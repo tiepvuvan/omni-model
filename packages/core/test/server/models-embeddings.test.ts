@@ -159,6 +159,24 @@ describe("POST /v1/embeddings", () => {
     expect(((await noInput.json()) as { error: { param: string } }).error.param).toBe("input");
   });
 
+  it("enforces the configured input-token limit before routing", async () => {
+    const { app, providers } = await createTestApp({
+      yaml: `${EMBED_YAML}
+server:
+  maxInputTokens: 50
+`,
+      behaviors: {
+        embeddings: { embeddingsResult: { kind: "embeddings", response: EMBED_RESPONSE } },
+      },
+    });
+    const response = await app.fetch(embeddingsRequest({ model: "embed", input: "x".repeat(500) }));
+    expect(response.status).toBe(413);
+    expect(((await response.json()) as { error: { code: string } }).error.code).toBe(
+      "input_token_limit_exceeded",
+    );
+    expect(providers.get("embeddings")?.embeddingsCalls).toHaveLength(0);
+  });
+
   it("redacts provider embedding error details", async () => {
     const errorBody = {
       error: {

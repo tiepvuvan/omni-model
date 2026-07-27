@@ -154,7 +154,7 @@ describe.skipIf(!POSTGRES_URL)("E2E: the admin API from an empty database", () =
         note: "initial setup",
         config: {
           version: 1,
-          server: { logLevel: "silent" },
+          server: { logLevel: "silent", maxInputTokens: 128 },
           storage: { type: "postgres", url: "${OMNI_STORAGE_POSTGRES_URL}" },
           security: {
             requireWriteKey: true,
@@ -243,6 +243,15 @@ describe.skipIf(!POSTGRES_URL)("E2E: the admin API from an empty database", () =
     const body = (await answered.json()) as { choices: { message: { content: string } }[] };
     expect(body.choices[0]?.message.content).toContain("fake upstream");
     requestId = answered.headers.get("x-omni-request-id") ?? "";
+
+    const oversized = await chat(
+      { authorization: token, "x-omni-key": secret },
+      { messages: [{ role: "user", content: "x".repeat(1000) }] },
+    );
+    expect(oversized.status).toBe(413);
+    expect(await oversized.json()).toMatchObject({
+      error: { code: "input_token_limit_exceeded" },
+    });
   }, 30_000);
 
   it("step 7: the request is in the logs, attributed and costed", async () => {

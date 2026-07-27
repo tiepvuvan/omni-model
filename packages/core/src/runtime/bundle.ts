@@ -100,7 +100,7 @@ export interface RuntimeBundle {
    * caching on and off without rebuilding the store.
    */
   readonly cache: { store: PromptCache; ttlSeconds: number; config: CacheConfig } | null;
-  readonly maxBodyBytes: number;
+  readonly maxInputTokens: number;
   readonly allowedModels: readonly string[];
   readonly trustProxyHeaders: boolean;
   /** Prebuilt CORS middleware, or null when CORS is not configured. */
@@ -216,7 +216,7 @@ export function buildBundle(input: BuildBundleInput): RuntimeBundle {
     logging: config.logging,
     concurrency,
     cache,
-    maxBodyBytes: config.server.maxBodyBytes,
+    maxInputTokens: config.server.maxInputTokens,
     allowedModels: config.routing.allowedModels,
     trustProxyHeaders: config.server.trustProxyHeaders,
     corsMiddleware: config.server.cors === undefined ? null : cors(corsOptions(config.server.cors)),

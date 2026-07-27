@@ -15,7 +15,7 @@ function context(fetchImpl: typeof fetch): VerifyContext {
     log: silentLogger,
     storage: new MemoryStorageAdapter(),
     clientIp: "203.0.113.7",
-    maxBodyBytes: 1024,
+    maxInputTokens: 1024,
   };
 }
 

@@ -101,13 +101,13 @@ describe("reloading configuration", () => {
     expect(reopened.status).toBe(200);
   });
 
-  it("applies a changed maxBodyBytes", async () => {
+  it("applies a changed maxInputTokens", async () => {
     const proxy = await createTestProxy({ yaml: BASE });
     const body = { ...CHAT_BODY, messages: [{ role: "user", content: "x".repeat(2000) }] };
     expect((await proxy.app.fetch(chatRequest(body))).status).toBe(200);
 
     await proxy.reload(`${BASE}server:
-  maxBodyBytes: 100
+  maxInputTokens: 100
 `);
 
     expect((await proxy.app.fetch(chatRequest(body))).status).toBe(413);
@@ -237,7 +237,7 @@ concurrency: { perUser: 0 }
       if (i % 10 === 0) {
         // Alternate between two valid configurations mid-flight.
         void proxy.reload(
-          i % 20 === 0 ? `${unlimited}server:\n  maxBodyBytes: 65536\n` : unlimited,
+          i % 20 === 0 ? `${unlimited}server:\n  maxInputTokens: 65536\n` : unlimited,
         );
       }
     }

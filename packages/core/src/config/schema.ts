@@ -25,12 +25,14 @@ export const serverConfigSchema = z.strictObject({
    * these headers; otherwise a client can spoof its rate-limit key.
    */
   trustProxyHeaders: z.boolean().default(false),
-  /** Maximum accepted request body size in bytes; larger bodies get a 413. */
-  maxBodyBytes: z
-    .number()
-    .int()
-    .positive()
-    .default(128 * 1024),
+  /**
+   * Maximum provider-neutral input-token estimate accepted per request.
+   *
+   * Exact tokenization differs by provider and model, so enforcement uses the
+   * stable estimator in `util/input-tokens.ts`; upstream usage remains the
+   * authority for billing and rate-limit accounting.
+   */
+  maxInputTokens: z.number().int().positive().default(128_000),
 });
 
 /**

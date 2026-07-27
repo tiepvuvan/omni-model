@@ -67,7 +67,7 @@ describe("configuration read and write", () => {
     const { call, holder, configStore } = await createTestAdmin({ config: baseConfig() });
     const good = await call("/admin/api/config/validate", {
       method: "POST",
-      body: JSON.stringify({ config: baseConfig({ server: { maxBodyBytes: 1024 } }) }),
+      body: JSON.stringify({ config: baseConfig({ server: { maxInputTokens: 1024 } }) }),
     });
     expect(await good.json()).toEqual({ valid: true });
 

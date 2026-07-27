@@ -45,13 +45,13 @@ describe("environment configuration", () => {
   it("uses JSON literals for arrays, booleans, numbers and ambiguous strings", () => {
     const document = environmentConfigDocument({
       OMNI__SERVER__TRUST_PROXY_HEADERS: "true",
-      OMNI__SERVER__MAX_BODY_BYTES: "3000000",
+      OMNI__SERVER__MAX_INPUT_TOKENS: "3000000",
       OMNI__ROUTING__ALLOWED_MODELS: '["smart"]',
       OMNI__ROUTING__RULES: '[{"id":"a","when":"true","target":{"type":"openai"}}]',
     });
 
     expect(document).toEqual({
-      server: { trustProxyHeaders: true, maxBodyBytes: 3_000_000 },
+      server: { trustProxyHeaders: true, maxInputTokens: 3_000_000 },
       routing: {
         allowedModels: ["smart"],
         rules: [{ id: "a", when: "true", target: { type: "openai" } }],
@@ -77,6 +77,7 @@ describe("environment configuration", () => {
         },
       }),
       OMNI_SERVER_JSON: '{"logLevel":"warn","cors":{"allowOrigins":["https://base.example"]}}',
+      OMNI_SERVER_MAX_INPUT_TOKENS: "256000",
       OMNI_ROUTING_JSON: `{"rules":[{"id":"fast","when":"true","target":{"type":"openai-compatible","baseUrl":"https://api.example.com/v1","apiKey":"${OPENAI_API_KEY_REFERENCE}"}}]}`,
       OMNI_LOG_LEVEL: "error",
       OMNI__SERVER__CORS__ALLOW_ORIGINS: '["https://override.example"]',
@@ -85,6 +86,7 @@ describe("environment configuration", () => {
 
     expect(config.server).toMatchObject({
       logLevel: "error",
+      maxInputTokens: 256_000,
       cors: { allowOrigins: ["https://override.example"] },
     });
     // The named JSON block replaced the whole-document rules, and the path

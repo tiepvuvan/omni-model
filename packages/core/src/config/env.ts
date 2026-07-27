@@ -25,7 +25,7 @@ const SIMPLE_VALUES: ReadonlyArray<readonly [name: string, path: readonly string
   ["OMNI_LOGGING_CONTENT_RETENTION", ["logging", "contentRetention"]],
   ["OMNI_SERVER_LOG_LEVEL", ["server", "logLevel"]],
   ["OMNI_SERVER_TRUST_PROXY_HEADERS", ["server", "trustProxyHeaders"]],
-  ["OMNI_SERVER_MAX_BODY_BYTES", ["server", "maxBodyBytes"]],
+  ["OMNI_SERVER_MAX_INPUT_TOKENS", ["server", "maxInputTokens"]],
   ["OMNI_SERVER_CORS", ["server", "cors"]],
   ["OMNI_STORAGE_TYPE", ["storage", "type"]],
   ["OMNI_SECURITY_APP_AUTH_MODE", ["security", "appAuth", "mode"]],
@@ -712,7 +712,7 @@ export function hasEnvironmentConfig(env: Record<string, string | undefined>): b
  * `OMNI__...` paths then override those blocks. Double underscores separate
  * object keys and numeric segments create array entries. SCREAMING_SNAKE_CASE
  * segments are converted to lowerCamelCase, so
- * `OMNI__SERVER__MAX_BODY_BYTES=3000000` becomes `server.maxBodyBytes: 3000000`.
+ * `OMNI__SERVER__MAX_INPUT_TOKENS=128000` becomes `server.maxInputTokens: 128000`.
  *
  * Values use JSON literals when their type matters: arrays and objects use
  * JSON, while `true`, `false`, `null`, and JSON numbers are converted to their

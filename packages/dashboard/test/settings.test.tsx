@@ -8,7 +8,10 @@ let fake: FakeApi;
 
 beforeEach(() => {
   fake = createFakeApi({
-    config: { cache: { enabled: true, ttl: "1h", maxEntries: 10_000 } },
+    config: {
+      server: { maxInputTokens: 64_000, logLevel: "warn" },
+      cache: { enabled: true, ttl: "1h", maxEntries: 10_000 },
+    },
     cache: { available: true, entries: 42, oldestAt: 1_700_000_000_000, bytes: 2048 },
   });
   fake.install();
@@ -24,6 +27,16 @@ function lastCache(): Record<string, unknown> {
   return body.value.cache;
 }
 
+/** The `server` block the last save sent. */
+function lastServer(): Record<string, unknown> {
+  const calls = fake.callsTo("PATCH", "/config");
+  const body = calls[calls.length - 1]?.body as
+    | { value: { server: Record<string, unknown> } }
+    | undefined;
+  if (body === undefined) throw new Error("nothing was saved");
+  return body.value.server;
+}
+
 const save = async (user: ReturnType<typeof userEvent.setup>) => {
   await user.click(screen.getByRole("button", { name: "Save Changes" }));
   await waitFor(() => {
@@ -37,10 +50,13 @@ function card(title: string): HTMLElement {
   return section;
 }
 
-describe("the response cache settings", () => {
+describe("settings", () => {
   it("shows the applied settings and what is actually stored", async () => {
     await renderAt("/settings");
 
+    expect(
+      within(card("Request limits")).getByLabelText("Maximum input tokens per request"),
+    ).toHaveValue("64,000");
     expect(within(card("Response cache")).getByRole("switch")).toBeChecked();
     expect(within(card("Response cache")).getByLabelText("Keep an answer for")).toHaveTextContent(
       "1 hour",
@@ -63,6 +79,20 @@ describe("the response cache settings", () => {
     // and the size disagreeing about what the operator asked for.
     expect(fake.callsTo("PATCH", "/config")).toHaveLength(1);
     expect(lastCache()).toEqual({ enabled: true, ttl: "1d", maxEntries: 10_000 });
+    expect(lastServer()).toEqual({ maxInputTokens: 64_000, logLevel: "warn" });
+  });
+
+  it("updates the token limit without dropping other server settings", async () => {
+    const user = userEvent.setup();
+    await renderAt("/settings");
+
+    const limit = within(card("Request limits")).getByLabelText("Maximum input tokens per request");
+    await user.clear(limit);
+    await user.type(limit, "256000");
+    await save(user);
+
+    expect(lastServer()).toEqual({ maxInputTokens: 256_000, logLevel: "warn" });
+    expect(fake.callsTo("PATCH", "/config")).toHaveLength(1);
   });
 
   it("turns caching off without touching what is stored", async () => {
@@ -127,6 +157,9 @@ describe("the response cache settings", () => {
       "5 minutes",
     );
     expect(within(card("Response cache")).getByLabelText("Entries to keep")).toHaveValue("10,000");
+    expect(
+      within(card("Request limits")).getByLabelText("Maximum input tokens per request"),
+    ).toHaveValue("128,000");
     expect(screen.getByRole("button", { name: "Save Changes" })).toBeDisabled();
   });
 });

@@ -10,6 +10,7 @@ import type { ChatCompletionRequest } from "../../openai/types.js";
 import type { RequestFacts } from "../../routing/types.js";
 import type { RuntimeBundle } from "../../runtime/bundle.js";
 import type { RuntimeContext } from "../../types.js";
+import { estimateInputTokens, inputTokenBodyByteCeiling } from "../../util/input-tokens.js";
 import { shouldCaptureContent, writeKeyAllowsModel } from "../../writekeys/types.js";
 import { buildRequestFacts } from "../facts.js";
 import { draftOf, type RequestLogDraft } from "../logging.js";
@@ -49,19 +50,35 @@ export interface RouteDeps {
   clientIp: (c: Context<AppEnv>, trustProxyHeaders: boolean) => string | null;
 }
 
-function payloadTooLarge(maxBodyBytes: number): OmniError {
-  return new OmniError(413, `request body exceeds the ${maxBodyBytes}-byte limit`, {
-    code: "payload_too_large",
-  });
+function inputTokenLimitExceeded(maxInputTokens: number): OmniError {
+  return new OmniError(
+    413,
+    `request input exceeds the configured limit of ${maxInputTokens} tokens`,
+    {
+      code: "input_token_limit_exceeded",
+    },
+  );
 }
 
 /**
- * Read a request stream up to `maxBodyBytes`, cancelling it as soon as the
- * limit is crossed. The content-length preflight is cheaper when available,
- * while this protects chunked bodies and lying headers without buffering the
- * whole payload first.
+ * Reject a parsed request whose provider-neutral token estimate exceeds the
+ * configured per-request limit.
  */
-async function readBodyText(c: Context<AppEnv>, maxBodyBytes: number): Promise<string> {
+export function enforceInputTokenLimit(
+  body: Record<string, unknown>,
+  maxInputTokens: number,
+): void {
+  if (estimateInputTokens(body) > maxInputTokens) {
+    throw inputTokenLimitExceeded(maxInputTokens);
+  }
+}
+
+/**
+ * Read a request stream within the maximum UTF-8 representation that could fit
+ * `maxInputTokens`, cancelling as soon as the ceiling is crossed.
+ */
+async function readBodyText(c: Context<AppEnv>, maxInputTokens: number): Promise<string> {
+  const maxBufferedBytes = inputTokenBodyByteCeiling(maxInputTokens);
   const body = c.req.raw.body;
   if (body === null) return "";
 
@@ -74,13 +91,13 @@ async function readBodyText(c: Context<AppEnv>, maxBodyBytes: number): Promise<s
       if (done) break;
       if (value === undefined) continue;
       size += value.byteLength;
-      if (size > maxBodyBytes) {
+      if (size > maxBufferedBytes) {
         try {
           await reader.cancel();
         } catch {
           // The 413 response is still correct when cancellation fails.
         }
-        throw payloadTooLarge(maxBodyBytes);
+        throw inputTokenLimitExceeded(maxInputTokens);
       }
       chunks.push(value);
     }
@@ -99,22 +116,21 @@ async function readBodyText(c: Context<AppEnv>, maxBodyBytes: number): Promise<s
 }
 
 /**
- * Parse the request body as a JSON object, rejecting bodies over
- * `maxBodyBytes` (checked against the declared `content-length` and the
- * incrementally-read body, since the header can be absent or lie). Anything
- * non-object is a 400.
+ * Parse the request body as a JSON object, then enforce its provider-neutral
+ * input-token estimate. Anything non-object is a 400.
  */
 export async function readJsonObject(
   c: Context<AppEnv>,
-  maxBodyBytes: number,
+  maxInputTokens: number,
 ): Promise<Record<string, unknown>> {
+  const maxBufferedBytes = inputTokenBodyByteCeiling(maxInputTokens);
   const declared = Number(c.req.header("content-length"));
-  if (Number.isFinite(declared) && declared > maxBodyBytes) {
-    throw payloadTooLarge(maxBodyBytes);
+  if (Number.isFinite(declared) && declared > maxBufferedBytes) {
+    throw inputTokenLimitExceeded(maxInputTokens);
   }
   let text: string;
   try {
-    text = await readBodyText(c, maxBodyBytes);
+    text = await readBodyText(c, maxInputTokens);
   } catch (error) {
     if (error instanceof OmniError) throw error;
     throw badRequest("request body is not valid JSON", { code: "invalid_json" });
@@ -128,7 +144,9 @@ export async function readJsonObject(
   if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
     throw badRequest("request body must be a JSON object");
   }
-  return parsed as Record<string, unknown>;
+  const body = parsed as Record<string, unknown>;
+  enforceInputTokenLimit(body, maxInputTokens);
+  return body;
 }
 
 /** Build (and stash on the context) the expression facts for this request. */
@@ -274,7 +292,7 @@ export function createChatHandler(deps: RouteDeps): (c: Context<AppEnv>) => Prom
     // Captured once: this request is served entirely by this bundle, so a
     // reload cannot swap the router out from under a response already streaming.
     const bundle = deps.requireBundle();
-    const body = await readJsonObject(c, bundle.maxBodyBytes);
+    const body = await readJsonObject(c, bundle.maxInputTokens);
     if (typeof body.model !== "string" || body.model.length === 0) {
       throw badRequest("you must provide a model parameter", { param: "model" });
     }

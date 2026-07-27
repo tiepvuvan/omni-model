@@ -111,6 +111,7 @@ export interface SecurityBlock {
 export interface StoredConfig {
   routing?: Partial<RoutingBlock>;
   security?: Partial<SecurityBlock>;
+  server?: Partial<ServerBlock>;
   /** Absent is not "none": the schema supplies defaults the proxy then enforces. */
   rateLimits?: RateLimitRule[];
   concurrency?: Partial<ConcurrencyBlock>;
@@ -159,6 +160,12 @@ export interface CacheBlock {
   enabled: boolean;
   ttl: string;
   maxEntries: number;
+}
+
+/** Request-serving settings, preserving fields this screen does not edit. */
+export interface ServerBlock {
+  maxInputTokens: number;
+  [setting: string]: unknown;
 }
 
 /** Which authentication question a verifier answers. */

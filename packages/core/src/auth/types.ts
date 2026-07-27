@@ -26,11 +26,8 @@ export interface VerifyContext extends RuntimeContext {
    * Undefined only for third-party embedders that predate this field.
    */
   clientIp?: string | null;
-  /**
-   * Maximum request-body bytes configured for this immutable runtime bundle.
-   * Verifiers that inspect a cloned body must enforce this bound.
-   */
-  maxBodyBytes?: number;
+  /** Maximum provider-neutral input-token estimate for this runtime bundle. */
+  maxInputTokens?: number;
 }
 
 /**

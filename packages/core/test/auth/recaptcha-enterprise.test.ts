@@ -33,7 +33,7 @@ function context(fetchImpl: typeof fetch): VerifyContext {
     ...runtime(fetchImpl),
     storage: new MemoryStorageAdapter(),
     clientIp: "203.0.113.9",
-    maxBodyBytes: 1024,
+    maxInputTokens: 1024,
   };
 }
 

@@ -30,7 +30,7 @@ export function createEmbeddingsHandler(
 ): (c: Context<AppEnv>) => Promise<Response> {
   return async (c) => {
     const bundle = deps.requireBundle();
-    const body = await readJsonObject(c, bundle.maxBodyBytes);
+    const body = await readJsonObject(c, bundle.maxInputTokens);
     if (typeof body.model !== "string" || body.model.length === 0) {
       throw badRequest("you must provide a model parameter", { param: "model" });
     }

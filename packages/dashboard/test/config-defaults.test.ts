@@ -1,7 +1,7 @@
 import { omniConfigSchema } from "@omni-model/core";
 import { describe, expect, it } from "vitest";
 import { DEFAULT_PER_USER, SCHEMA_DEFAULTS } from "../src/routes/_app/rate-limit";
-import { CACHE_DEFAULTS } from "../src/routes/_app/settings";
+import { CACHE_DEFAULTS, SERVER_DEFAULTS } from "../src/routes/_app/settings";
 
 /**
  * Every default the dashboard mirrors, checked against the real schema.
@@ -32,5 +32,9 @@ describe("the defaults the dashboard mirrors", () => {
 
   it("matches the cache settings", () => {
     expect(CACHE_DEFAULTS).toEqual(applied.cache);
+  });
+
+  it("matches the request input-token limit", () => {
+    expect(SERVER_DEFAULTS.maxInputTokens).toBe(applied.server.maxInputTokens);
   });
 });

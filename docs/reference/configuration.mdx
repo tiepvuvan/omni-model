@@ -178,8 +178,8 @@ Use a double underscore to traverse configuration objects. Uppercase snake case 
 lower-camel-case property name. A numeric segment creates an array item.
 
 ```sh
-# server.maxBodyBytes = 3000000
-OMNI__SERVER__MAX_BODY_BYTES=3000000
+# server.maxInputTokens = 256000
+OMNI__SERVER__MAX_INPUT_TOKENS=256000
 
 # security.userAuth.type = "jwt"
 OMNI__SECURITY__USER_AUTH__TYPE=jwt
@@ -220,7 +220,7 @@ Use `OMNI_SERVER_JSON` for several values, or the individual aliases below.
 | --- | --- | --- | --- |
 | `server.logLevel` | `OMNI_SERVER_LOG_LEVEL` (or legacy `OMNI_LOG_LEVEL`) | `debug` \| `info` \| `warn` \| `error` \| `silent` | `info` |
 | `server.trustProxyHeaders` | `OMNI_SERVER_TRUST_PROXY_HEADERS` | boolean | `false` |
-| `server.maxBodyBytes` | `OMNI_SERVER_MAX_BODY_BYTES` | positive integer | `131072` (128 KiB) |
+| `server.maxInputTokens` | `OMNI_SERVER_MAX_INPUT_TOKENS` | positive integer | `128000` |
 | `server.cors` | `OMNI_SERVER_CORS` | JSON object | none |
 
 Example browser CORS policy:
@@ -236,13 +236,23 @@ OMNI_SERVER_JSON='{
 }'
 ```
 
-Requests are capped at **128 KiB** by default, measured in UTF-8 bytes. The proxy checks both
-`Content-Length` and streaming body bytes, returning `413 payload_too_large` without buffering an
-oversized chunked request. Raise the limit deliberately for large multimodal or embedding inputs:
+Requests are capped at an estimated **128,000 input tokens** by default. The limit covers the
+complete JSON body for chat completions and embeddings. Because tokenization differs by provider
+and model, omni-model uses one deterministic provider-neutral estimate: four ASCII characters per
+token and one token per non-ASCII Unicode code point. Upstream-reported usage remains authoritative
+for billing and rate-limit accounting.
+
+Requests over the limit return `413 input_token_limit_exceeded` before routing. The streaming body
+reader also stops once the raw UTF-8 representation cannot fit the configured estimate, so a
+chunked request cannot bypass the limit or require unbounded buffering. Raise the limit
+deliberately for large multimodal or embedding inputs:
 
 ```sh
-OMNI_SERVER_MAX_BODY_BYTES=524288
+OMNI_SERVER_MAX_INPUT_TOKENS=256000
 ```
+
+`server.maxBodyBytes` and `OMNI_SERVER_MAX_BODY_BYTES` are no longer accepted. Replace them with
+`server.maxInputTokens` or `OMNI_SERVER_MAX_INPUT_TOKENS` when upgrading an existing configuration.
 
 Set `trustProxyHeaders` only behind a reverse proxy or CDN that overwrites forwarding headers.
 
@@ -450,7 +460,7 @@ its own options at startup, so unsupported fields fail before the service accept
 | Root field | JSON type | Default | Notes |
 | --- | --- | --- | --- |
 | `version` | literal `1` | `1` | Compatibility marker. |
-| `server` | object | `{ logLevel: "info", trustProxyHeaders: false, maxBodyBytes: 131072 }` | HTTP and logging behavior. |
+| `server` | object | `{ logLevel: "info", trustProxyHeaders: false, maxInputTokens: 128000 }` | HTTP and logging behavior. |
 | `storage` | object | `{ type: "memory" }` | Selects a storage backend and its options. |
 | `security` | object | `{ publicPaths: [], appAuth: { mode: "all", providers: [] } }` | `userAuth` has no default and is required for an HTTP proxy. |
 | `rateLimits` | array | `[{ per-user-daily-tokens: 30000/1d }]` | Per-user token budgets. |
@@ -462,7 +472,7 @@ its own options at startup, so unsupported fields fail before the service accept
 | --- | --- | --- |
 | `logLevel` | `debug` \| `info` \| `warn` \| `error` \| `silent` | `info` |
 | `trustProxyHeaders` | boolean | `false` |
-| `maxBodyBytes` | positive integer | `131072` (128 KiB) |
+| `maxInputTokens` | positive integer | `128000` |
 | `cors.allowOrigins` | string array | `["*"]` |
 | `cors.allowMethods`, `cors.allowHeaders`, `cors.exposeHeaders` | string arrays | omitted |
 | `cors.maxAge` | positive integer seconds | omitted |

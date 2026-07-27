@@ -124,10 +124,10 @@ binding.
 
 An invalid encrypted token or a verdict that fails binding or policy returns
 `401`. OAuth, network, Google API, and malformed-response failures return `503
-verification_unavailable`. A request body beyond the configured
-`server.maxBodyBytes` is rejected before the Google call.
+verification_unavailable`. A request body beyond the safe representation of the
+configured `server.maxInputTokens` is rejected before the Google call; the parsed
+provider-neutral token estimate is enforced before routing.
 
 See Google's [Standard API request guide](https://developer.android.com/google/play/integrity/standard)
 and [verdict reference](https://developer.android.com/google/play/integrity/verdicts)
 for client initialization and Play Console configuration.
-

@@ -2,12 +2,13 @@ import { z } from "zod";
 import { ConfigError } from "../../errors.js";
 import type { RuntimeContext } from "../../types.js";
 import { parseDuration } from "../../util/duration.js";
+import { inputTokenBodyByteCeiling } from "../../util/input-tokens.js";
 import { validateGoogleServiceAccountKey } from "../google.js";
 import type { AuthResult, AuthVerifier, AuthVerifierFactory } from "../types.js";
 
 const TYPE = "google-play-integrity";
 const PLAY_INTEGRITY_SCOPE = "https://www.googleapis.com/auth/playintegrity";
-const DEFAULT_MAX_BODY_BYTES = 128 * 1024;
+const DEFAULT_MAX_INPUT_TOKENS = 128_000;
 
 const deviceVerdictSchema = z.enum([
   "MEETS_BASIC_INTEGRITY",
@@ -220,12 +221,15 @@ export const googlePlayIntegrityVerifierFactory: AuthVerifierFactory = {
         const token = request.headers.get(opts.header);
         if (token === null || token === "") return null;
 
-        const body = await boundedBody(request, ctx.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES);
+        const body = await boundedBody(
+          request,
+          inputTokenBodyByteCeiling(ctx.maxInputTokens ?? DEFAULT_MAX_INPUT_TOKENS),
+        );
         if (body === null) {
           return {
             ok: false,
             status: 413,
-            reason: `request body exceeds the configured byte limit`,
+            reason: "request input exceeds the configured token limit",
           };
         }
         const url = new URL(request.url);

@@ -230,7 +230,7 @@ export async function createOmniProxy(init: OmniProxyInit): Promise<OmniProxy> {
     ...runtimeFor(c),
     storage,
     clientIp: clientIp(c, bundle.trustProxyHeaders),
-    maxBodyBytes: bundle.maxBodyBytes,
+    maxInputTokens: bundle.maxInputTokens,
   });
 
   /**

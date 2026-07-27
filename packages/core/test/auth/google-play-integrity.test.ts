@@ -27,12 +27,12 @@ function runtime(
   };
 }
 
-function context(fetchImpl: typeof fetch, maxBodyBytes = 1024): VerifyContext {
+function context(fetchImpl: typeof fetch, maxInputTokens = 1024): VerifyContext {
   return {
     ...runtime(fetchImpl),
     storage: new MemoryStorageAdapter(),
     clientIp: null,
-    maxBodyBytes,
+    maxInputTokens,
   };
 }
 
@@ -293,10 +293,10 @@ describe("googlePlayIntegrityVerifierFactory", () => {
       { packageName: PACKAGE },
       runtime(fetchImpl, getGoogleAccessToken),
     );
-    expect(await verifier.verify(request("too-large"), context(fetchImpl, 4))).toEqual({
+    expect(await verifier.verify(request("too-large"), context(fetchImpl, 1))).toEqual({
       ok: false,
       status: 413,
-      reason: "request body exceeds the configured byte limit",
+      reason: "request input exceeds the configured token limit",
     });
     expect(getGoogleAccessToken).not.toHaveBeenCalled();
     expect(fetchImpl).not.toHaveBeenCalled();
