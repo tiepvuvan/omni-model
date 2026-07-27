@@ -33,6 +33,8 @@
           "security/recaptcha-enterprise",
           "security/google-play-integrity",
           "security/custom-jwt",
+          "security/clerk",
+          "security/aws-cognito",
           "security/verify-on-device"
         ]
       },

@@ -26,6 +26,8 @@ describe("component metadata", () => {
       expect.arrayContaining([
         "apple-app-attest",
         "apple-device-check",
+        "aws-cognito",
+        "clerk",
         "cloudflare-turnstile",
         "firebase-app-check",
         "firebase-auth",

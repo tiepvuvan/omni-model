@@ -80,6 +80,42 @@ export const PROVIDER_SCHEMAS = [
 /** Verifier descriptors carry the layer, exactly as `GET /meta` does. */
 export const VERIFIER_SCHEMAS = [
   {
+    type: "clerk",
+    layer: "user",
+    optionsSchema: {
+      type: "object",
+      properties: {
+        type: { type: "string" },
+        issuer: { type: "string" },
+        jwksUrl: { type: "string" },
+        authorizedParties: { type: "array", items: { type: "string" } },
+        audience: { type: "string" },
+        allowPendingSessions: { type: "boolean", default: false },
+        header: { type: "string" },
+        clockToleranceSeconds: { type: "integer" },
+      },
+      required: ["issuer"],
+    },
+  },
+  {
+    type: "aws-cognito",
+    layer: "user",
+    optionsSchema: {
+      type: "object",
+      properties: {
+        type: { type: "string" },
+        region: { type: "string" },
+        userPoolId: { type: "string" },
+        clientIds: { type: "array", items: { type: "string" } },
+        tokenUse: { type: "string", enum: ["access", "id", "either"], default: "access" },
+        requiredScopes: { type: "array", items: { type: "string" } },
+        header: { type: "string" },
+        clockToleranceSeconds: { type: "integer" },
+      },
+      required: ["region", "userPoolId", "clientIds"],
+    },
+  },
+  {
     type: "cloudflare-turnstile",
     layer: "app",
     optionsSchema: {

@@ -9,7 +9,7 @@ independent gates because they need external infrastructure:
 
 | Gate | Suites | Cost |
 | --- | --- | --- |
-| none | `application-verification` | Free. A real Node HTTP server with deterministic vendor and model endpoints. |
+| none | `application-verification`, `user-authentication` | Free. Real Node HTTP servers with deterministic identity/vendor and model endpoints. |
 | `TEST_POSTGRES_URL` | `admin-api`, `config-reload` | Free. A real database, no upstream. |
 | `OPENROUTER_API_KEY` | `openrouter-chat`, `auth-firebase`, `auth-apple` | A few tenths of a cent. |
 
@@ -58,6 +58,7 @@ export FIREBASE_PROJECT_NUMBER=...   # plist GCM_SENDER_ID
 | **Admin API** | `pnpm test:e2e` | The operator journey from an **empty database**, over HTTP: first-run sign-up, storing an encrypted credential, configuring the proxy from nothing, minting a write key, a real request needing both a client key and a user token, finding it in the logs with token counts, revoking the key, and an append-only rollback. Needs `TEST_POSTGRES_URL`. |
 | **Config reload** | `pnpm test:e2e` | **Two instances, one database**: a revision saved on one reaches the other with no restart, a rejected revision leaves both serving the previous one, an in-flight stream finishes on the bundle it started with, and rate-limit counters are shared rather than per instance. Needs `TEST_POSTGRES_URL`. |
 | **Application verification** | `pnpm test:e2e` | A real `@omni-model/node` HTTP server accepts Turnstile, reCAPTCHA Enterprise, and Play Integrity proofs through their production verifiers, reaches the model upstream, and rejects an invalid proof before routing. Vendor calls are deterministic fakes, so this always runs offline. |
+| **User authentication** | `pnpm test:e2e` | Real Node HTTP servers validate Clerk and Cognito JWTs through their production JWKS verifiers, reach the model upstream for accepted users, and reject a token for another Cognito app client before routing. Always runs offline. |
 | **Proxy** | `pnpm test:e2e` | Real `@omni-model/node` container → OpenRouter: chat, **streaming**, a **tool-calling round-trip**, usage, and an upstream-error case. |
 | **Firebase auth** | `pnpm test:e2e` | **Firebase Auth** (and **App Check**): a REAL ID token minted from the project via Identity Toolkit is accepted (200); no/forged credential is rejected (401). Needs Firebase env (above). |
 | **Apple auth** | `pnpm test:e2e` | **DeviceCheck** server side (the proxy's ES256 JWT is accepted by Apple → Team/Key/`.p8` valid) and the **App Attest** challenge route, with the Firebase verifiers alongside under `mode: "any"`. Needs Apple env (above). Device-signed tokens themselves are verified via the example iOS app's on-device screen. |
@@ -72,7 +73,8 @@ iOS simulator reaches the host's `localhost`).
 
 - The admin-API and config-reload suites **skip themselves** without `TEST_POSTGRES_URL`. CI's
   integration job supplies one, so they run on every push.
-- The application-verification suite is never skipped and needs no secret or external service.
+- The application-verification and user-authentication suites are never skipped and need no secret
+  or external service.
 - The proxy E2E test **skips itself** when `OPENROUTER_API_KEY` is unset — so `pnpm test:e2e` is a
   no-op in CI without the secret, and the default `pnpm test` never includes these (separate
   `vitest.e2e.config.ts`).

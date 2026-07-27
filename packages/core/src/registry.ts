@@ -4,6 +4,8 @@ import {
 } from "./auth/apple/index.js";
 import type { AuthVerifierFactory } from "./auth/types.js";
 import {
+  awsCognitoVerifierFactory,
+  clerkVerifierFactory,
   cloudflareTurnstileVerifierFactory,
   firebaseAppCheckVerifierFactory,
   firebaseAuthVerifierFactory,
@@ -47,6 +49,8 @@ export function createDefaultRegistry(): OmniRegistry {
     jwtVerifierFactory,
     firebaseAuthVerifierFactory,
     supabaseVerifierFactory,
+    clerkVerifierFactory,
+    awsCognitoVerifierFactory,
     cloudflareTurnstileVerifierFactory,
     firebaseAppCheckVerifierFactory,
     googlePlayIntegrityVerifierFactory,

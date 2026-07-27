@@ -2,8 +2,8 @@
 
 A self-hosted, OpenAI-compatible AI proxy for your mobile and web apps. Your provider API keys
 stay on your infrastructure — never inside an app binary. Clients authenticate with what they
-already have (Firebase App Check, Apple App Attest / DeviceCheck, Firebase Auth, Supabase, or any
-JWT), and can add Cloudflare Turnstile, reCAPTCHA Enterprise, or Google Play Integrity as an
+already have (Firebase App Check, Apple App Attest / DeviceCheck, Firebase Auth, Clerk, AWS
+Cognito, Supabase, or any JWT), and can add Cloudflare Turnstile, reCAPTCHA Enterprise, or Google Play Integrity as an
 application-verification layer. You configure rate limits (request windows **and** token budgets) plus CEL-expression
 model routing across OpenAI, Anthropic, Google Gemini and any OpenAI-compatible endpoint.
 
@@ -28,7 +28,7 @@ Client (any OpenAI SDK)
 ┌───────────────────────────────────────────────┐
 │  omni-model — your infrastructure             │
 │   1. authenticate   App Check / App Attest /  │
-│                     Firebase Auth / Supabase /│
+│                     Firebase / Clerk / Cognito│
 │                     JWT                       │
 │   2. rate limit     request windows +         │
 │                     token budgets             │
@@ -55,8 +55,8 @@ included.
   `/v1/embeddings`; OpenAI-style error bodies. Existing SDKs work unchanged.
 - **Client attestation, not shared secrets** — Firebase App Check, Apple App Attest (full
   challenge/register/assert flow built in), Apple DeviceCheck, Google Play Integrity, Cloudflare
-  Turnstile, reCAPTCHA Enterprise, Firebase Auth, Supabase Auth, or any custom JWT. Combine app
-  verifiers with `mode: any` or `mode: all`.
+  Turnstile, reCAPTCHA Enterprise, Firebase Auth, Clerk, AWS Cognito, Supabase Auth, or any custom
+  JWT. Combine app verifiers with `mode: any` or `mode: all`.
 - **Rate limits that understand LLMs** — fixed-window request limits *and* token budgets per
   user / device / IP / global / custom expression, with conditional rules
   (`when: 'has(user.claims.tier) && user.claims.tier == "free"'`). Fail-open on storage outages.

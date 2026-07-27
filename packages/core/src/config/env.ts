@@ -82,6 +82,34 @@ interface SecurityProfile {
 /** Built-in security verifiers exposed as easy-to-discover environment profiles. */
 const SECURITY_PROFILES: readonly SecurityProfile[] = [
   {
+    type: "clerk",
+    layer: "user",
+    enabled: "OMNI_SECURITY_CLERK_ENABLED",
+    values: [
+      ["OMNI_SECURITY_CLERK_ISSUER", "issuer"],
+      ["OMNI_SECURITY_CLERK_JWKS_URL", "jwksUrl"],
+      ["OMNI_SECURITY_CLERK_AUTHORIZED_PARTIES", "authorizedParties"],
+      ["OMNI_SECURITY_CLERK_AUDIENCE", "audience"],
+      ["OMNI_SECURITY_CLERK_ALLOW_PENDING_SESSIONS", "allowPendingSessions"],
+      ["OMNI_SECURITY_CLERK_HEADER", "header"],
+      ["OMNI_SECURITY_CLERK_CLOCK_TOLERANCE_SECONDS", "clockToleranceSeconds"],
+    ],
+  },
+  {
+    type: "aws-cognito",
+    layer: "user",
+    enabled: "OMNI_SECURITY_AWS_COGNITO_ENABLED",
+    values: [
+      ["OMNI_SECURITY_AWS_COGNITO_REGION", "region"],
+      ["OMNI_SECURITY_AWS_COGNITO_USER_POOL_ID", "userPoolId"],
+      ["OMNI_SECURITY_AWS_COGNITO_CLIENT_IDS", "clientIds"],
+      ["OMNI_SECURITY_AWS_COGNITO_TOKEN_USE", "tokenUse"],
+      ["OMNI_SECURITY_AWS_COGNITO_REQUIRED_SCOPES", "requiredScopes"],
+      ["OMNI_SECURITY_AWS_COGNITO_HEADER", "header"],
+      ["OMNI_SECURITY_AWS_COGNITO_CLOCK_TOLERANCE_SECONDS", "clockToleranceSeconds"],
+    ],
+  },
+  {
     type: "firebase-auth",
     layer: "user",
     enabled: "OMNI_SECURITY_FIREBASE_AUTH_ENABLED",
@@ -449,7 +477,11 @@ function shortcutValue(value: string, key: string): unknown {
     key.endsWith("_ANDROID_PACKAGE_NAMES") ||
     key.endsWith("_IOS_BUNDLE_IDS") ||
     key.endsWith("_DEVICE_RECOGNITION_VERDICTS") ||
-    key.endsWith("_CERTIFICATE_SHA256_DIGESTS");
+    key.endsWith("_CERTIFICATE_SHA256_DIGESTS") ||
+    key.endsWith("_AUTHORIZED_PARTIES") ||
+    key.endsWith("_ALLOW_PENDING_SESSIONS") ||
+    key.endsWith("_CLIENT_IDS") ||
+    key.endsWith("_REQUIRED_SCOPES");
   return typedValue ? parseEnvironmentValue(value, key) : value;
 }
 

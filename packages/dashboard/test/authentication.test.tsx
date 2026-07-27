@@ -57,7 +57,7 @@ describe("the two layers", () => {
     expect(screen.getByRole("heading", { name: "App Authentication" })).toBeInTheDocument();
 
     // Layer 1 is a single choice: radios, one group.
-    for (const title of ["Firebase", "Supabase Auth", "Custom JWT"]) {
+    for (const title of ["Firebase", "Clerk", "AWS Cognito", "Supabase Auth", "Custom JWT"]) {
       expect(within(card(title)).getByRole("radio")).toBeInTheDocument();
     }
     // Layer 2 is any number: checkboxes.
@@ -78,6 +78,8 @@ describe("the two layers", () => {
 
     expect(within(card("Custom JWT")).getByRole("radio")).toBeChecked();
     expect(within(card("Firebase")).getByRole("radio")).not.toBeChecked();
+    expect(within(card("Clerk")).getByRole("radio")).not.toBeChecked();
+    expect(within(card("AWS Cognito")).getByRole("radio")).not.toBeChecked();
     expect(within(card("Supabase Auth")).getByRole("radio")).not.toBeChecked();
   });
 
@@ -107,6 +109,45 @@ describe("the two layers", () => {
     // A jwt secret means nothing to Firebase Auth: carrying options across would
     // submit keys the new factory rejects.
     expect(lastSecurity().userAuth).toEqual({ type: "firebase-auth", projectId: "my-project" });
+  });
+
+  it("renders and saves Clerk and AWS Cognito from their published schemas", async () => {
+    const user = userEvent.setup();
+    await renderAt("/authentication");
+
+    await user.click(within(card("Clerk")).getByRole("radio", { name: "Use Clerk" }));
+    await user.type(
+      await within(card("Clerk")).findByLabelText("Issuer"),
+      "https://helpful-otter.clerk.accounts.dev",
+    );
+    await user.type(
+      within(card("Clerk")).getByLabelText("Authorized Parties (optional)"),
+      "https://app.example.com{Enter}",
+    );
+    await save(user);
+    expect(lastSecurity().userAuth).toEqual({
+      type: "clerk",
+      issuer: "https://helpful-otter.clerk.accounts.dev",
+      authorizedParties: ["https://app.example.com"],
+    });
+
+    await user.click(within(card("AWS Cognito")).getByRole("radio", { name: "Use AWS Cognito" }));
+    await user.type(await within(card("AWS Cognito")).findByLabelText("Region"), "us-east-1");
+    await user.type(
+      within(card("AWS Cognito")).getByLabelText("User Pool ID"),
+      "us-east-1_Example",
+    );
+    await user.type(
+      within(card("AWS Cognito")).getByLabelText("Client IDs"),
+      "app-client-id{Enter}",
+    );
+    await save(user);
+    expect(lastSecurity().userAuth).toEqual({
+      type: "aws-cognito",
+      region: "us-east-1",
+      userPoolId: "us-east-1_Example",
+      clientIds: ["app-client-id"],
+    });
   });
 
   it("keeps what is stored for a method when switching away and back", async () => {

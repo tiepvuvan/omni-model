@@ -10,7 +10,8 @@ The wire format is OpenAI's: requests carry `model` and `messages`, responses ca
 streaming emits `chat.completion.chunk` objects.
 
 Point OkHttp at your deployed proxy. Send an `Authorization: Bearer <token>` header that matches
-a [`security` verifier](/security/custom-jwt) in your config (JWT, Firebase Auth, or Supabase).
+a [`security` verifier](/security/custom-jwt) in your config (JWT, Firebase Auth, Clerk, Cognito,
+or Supabase).
 The body and responses are exactly OpenAI's.
 
 <Steps>

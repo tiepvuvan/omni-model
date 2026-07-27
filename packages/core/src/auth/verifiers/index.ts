@@ -1,3 +1,5 @@
+export { awsCognitoVerifierFactory } from "./aws-cognito.js";
+export { clerkVerifierFactory } from "./clerk.js";
 export { cloudflareTurnstileVerifierFactory } from "./cloudflare-turnstile.js";
 export { firebaseAppCheckVerifierFactory } from "./firebase-app-check.js";
 export { firebaseAuthVerifierFactory } from "./firebase-auth.js";

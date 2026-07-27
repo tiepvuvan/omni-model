@@ -229,6 +229,48 @@ describe("environment configuration", () => {
     });
   });
 
+  it("builds Clerk and AWS Cognito user-authentication profiles", () => {
+    expect(
+      environmentConfigDocument({
+        OMNI_SECURITY_CLERK_ENABLED: "true",
+        OMNI_SECURITY_CLERK_ISSUER: "https://helpful-otter.clerk.accounts.dev",
+        OMNI_SECURITY_CLERK_AUTHORIZED_PARTIES: '["https://app.example.com"]',
+        OMNI_SECURITY_CLERK_ALLOW_PENDING_SESSIONS: "false",
+      }),
+    ).toMatchObject({
+      security: {
+        userAuth: {
+          type: "clerk",
+          issuer: "https://helpful-otter.clerk.accounts.dev",
+          authorizedParties: ["https://app.example.com"],
+          allowPendingSessions: false,
+        },
+      },
+    });
+
+    expect(
+      environmentConfigDocument({
+        OMNI_SECURITY_AWS_COGNITO_ENABLED: "true",
+        OMNI_SECURITY_AWS_COGNITO_REGION: "us-east-1",
+        OMNI_SECURITY_AWS_COGNITO_USER_POOL_ID: "us-east-1_Example",
+        OMNI_SECURITY_AWS_COGNITO_CLIENT_IDS: '["app-client-1","app-client-2"]',
+        OMNI_SECURITY_AWS_COGNITO_TOKEN_USE: "access",
+        OMNI_SECURITY_AWS_COGNITO_REQUIRED_SCOPES: '["openid","models:invoke"]',
+      }),
+    ).toMatchObject({
+      security: {
+        userAuth: {
+          type: "aws-cognito",
+          region: "us-east-1",
+          userPoolId: "us-east-1_Example",
+          clientIds: ["app-client-1", "app-client-2"],
+          tokenUse: "access",
+          requiredScopes: ["openid", "models:invoke"],
+        },
+      },
+    });
+  });
+
   it("refuses two user authentication methods rather than picking one", () => {
     // Whichever won would own `user.id`, and `user.id` is whose token budget a
     // request spends — too consequential to decide by variable ordering.

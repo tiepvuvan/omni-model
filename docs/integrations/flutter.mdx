@@ -4,7 +4,7 @@ description: Call omni-model from a Flutter app over HTTP.
 ---
 
 Point the app at your deployed proxy's `POST /v1/chat/completions`. Authenticate with a bearer
-token your app already has — a Firebase Auth ID token, Supabase session, or any JWT your
+token your app already has — a Firebase Auth, Clerk, Cognito, or Supabase token, or any JWT your
 [security config](/security/custom-jwt) accepts.
 
 ### Non-streaming
@@ -33,7 +33,8 @@ Future<String> chat(List<Map<String, String>> messages, String token) async {
 ```
 
 <Note>
-  The header depends on your verifier: `jwt` / `firebase-auth` / `supabase` use
+  The header depends on your verifier: `jwt` / `firebase-auth` / `clerk` / `aws-cognito` /
+  `supabase` use
   `Authorization: Bearer <token>` (scheme configurable). App Check verifiers instead expect
   `X-Firebase-AppCheck`, and DeviceCheck expects `X-Apple-Device-Token`. See
   [Custom JWT](/security/custom-jwt) and [Firebase App Check](/security/firebase-app-check).

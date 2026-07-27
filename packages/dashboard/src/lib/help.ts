@@ -56,6 +56,33 @@ const HELP: Record<string, string> = {
     "Consume limited-use tokens through Firebase so a token cannot be replayed. Needs Firebase Admin credentials in the container and adds a round trip per request.",
   "firebase-app-check.header": "Which request header carries the App Check token.",
 
+  /* Clerk and Amazon Cognito. */
+  "clerk.issuer":
+    "Your Clerk Frontend API URL, for example https://helpful-otter.clerk.accounts.dev. It must exactly match the session token's issuer.",
+  "clerk.jwksUrl":
+    "Override Clerk's signing-key endpoint. Leave empty to use the issuer's well-known JWKS URL.",
+  "clerk.authorizedParties":
+    "Allowed frontend origins from Clerk's `azp` claim. Configure every web origin that can mint tokens to prevent cross-subdomain cookie leakage.",
+  "clerk.audience":
+    "Optional audience required in customized Clerk session tokens. Ordinary session tokens usually omit it.",
+  "clerk.allowPendingSessions":
+    "Allow an organization-required Clerk session whose status is still `pending`. Keep this off unless pending users should reach the proxy.",
+  "clerk.header": "Which request header carries the Clerk session token.",
+  "clerk.clockToleranceSeconds":
+    "How much clock skew to forgive on Clerk's short-lived session token, in seconds.",
+  "aws-cognito.region": "The AWS region containing the Cognito user pool, for example us-east-1.",
+  "aws-cognito.userPoolId":
+    "The Cognito user pool ID, including its region prefix, for example us-east-1_AbCdEf123.",
+  "aws-cognito.clientIds":
+    "App client IDs allowed to issue tokens for this proxy. Access tokens use `client_id`; ID tokens use `aud`.",
+  "aws-cognito.tokenUse":
+    "Accept OAuth access tokens, OpenID ID tokens, or either. Access tokens are recommended for authorizing API calls.",
+  "aws-cognito.requiredScopes":
+    "OAuth scopes every accepted access token must contain. This does not apply to ID tokens.",
+  "aws-cognito.header": "Which request header carries the Cognito user-pool token.",
+  "aws-cognito.clockToleranceSeconds":
+    "How much clock skew to forgive on Cognito token timestamps, in seconds.",
+
   /* Web and Android application verification. */
   "cloudflare-turnstile.secret":
     "The widget secret from Cloudflare. It is sealed into encrypted storage and used only for server-side Siteverify calls.",

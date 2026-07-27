@@ -38,6 +38,24 @@ export function invalidTokenResult(error: unknown): AuthResult {
   return { ok: false, reason: reasonFor(error) };
 }
 
+/**
+ * Whether a jose failure proves the submitted credential is invalid.
+ *
+ * Other failures, including an unreachable or malformed JWKS endpoint, are
+ * verification-service failures and must not be mislabeled as bad user input.
+ */
+export function isInvalidTokenError(error: unknown): error is errors.JOSEError {
+  return (
+    error instanceof errors.JWTExpired ||
+    error instanceof errors.JWTClaimValidationFailed ||
+    error instanceof errors.JWKSNoMatchingKey ||
+    error instanceof errors.JWSSignatureVerificationFailed ||
+    error instanceof errors.JOSEAlgNotAllowed ||
+    error instanceof errors.JWSInvalid ||
+    error instanceof errors.JWTInvalid
+  );
+}
+
 function reasonFor(error: errors.JOSEError): string {
   if (error instanceof errors.JWTExpired) return "token expired";
   // jose claim-validation messages name the offending claim, never its value.

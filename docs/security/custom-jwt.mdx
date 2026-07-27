@@ -1,13 +1,13 @@
 ---
 title: Custom JWT & JWT-family verifiers
-description: Authenticate the self-hosted proxy with any JWT issuer, Firebase Auth, or Supabase using Authorization Bearer tokens.
+description: Authenticate the self-hosted proxy with any JWT issuer, Firebase Auth, Clerk, Cognito, or Supabase using Authorization Bearer tokens.
 ---
 
-The `jwt`, `firebase-auth`, and `supabase` verifiers all authenticate the
+The `jwt`, `firebase-auth`, `clerk`, `aws-cognito`, and `supabase` verifiers all authenticate the
 self-hosted proxy by validating a **JSON Web Token** carried in a request
 header — by default `Authorization: Bearer <token>`. They share the same JWKS
-resolver and error handling; the Firebase and Supabase variants are pre-wired
-presets of the generic `jwt` verifier.
+resolver and error handling; the named variants add each issuer's required
+claim policy rather than relying on a hand-written generic JWT configuration.
 
 These verifiers are configured as `security.userAuth` — layer 1, the user. All of them validate
 tokens against the issuer's public keys (or a shared secret), so none of them
@@ -218,14 +218,20 @@ OMNI__SECURITY__PUBLIC_PATHS='["/v1/models","/v1/models*"]'
 
 <Note>
 `/healthz` and verifier-contributed routes (such as `/auth/app-attest/*`) are
-never behind authentication, regardless of `publicPaths`. With **no** providers
-configured the proxy accepts unauthenticated `/v1/*` traffic and logs a warning
-at startup.
+never behind authentication, regardless of `publicPaths`. With no `userAuth`
+configured, the proxy refuses to build a runtime bundle and `/v1/*` returns
+`503 not_configured`.
 </Note>
 
 ## Related
 
 <CardGroup cols={2}>
+  <Card title="Clerk" icon="key" href="/security/clerk">
+    Verify Clerk user sessions, authorized parties, and organization status.
+  </Card>
+  <Card title="AWS Cognito" icon="aws" href="/security/aws-cognito">
+    Verify user-pool access or ID tokens with Cognito-specific claim binding.
+  </Card>
   <Card title="Firebase App Check" icon="shield-check" href="/security/firebase-app-check">
     Attest that requests come from an authentic app instance.
   </Card>

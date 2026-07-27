@@ -19,13 +19,13 @@ The verification splits in two, because two of the four can only be produced by 
 | reCAPTCHA Enterprise | `recaptcha-enterprise` | A web or mobile SDK token is assessed by Google Cloud | Mobile SDK only |
 | Google Play Integrity | `google-play-integrity` | The Android app binds a Standard API verdict to the exact HTTP request | **Yes** |
 
-The offline `application-verification.e2e.test.ts` suite also starts the real Node server and drives
-all three remote assessment integrations through deterministic fake vendor endpoints. It verifies
-the complete header → auth layer → model-upstream path without credentials or network access:
+The offline `application-verification.e2e.test.ts` and `user-authentication.e2e.test.ts` suites
+also start real Node servers and drive Turnstile, reCAPTCHA Enterprise, Play Integrity, Clerk, and
+Cognito through deterministic identity/vendor endpoints. They verify the complete header → auth
+layer → model-upstream path without credentials or network access:
 
 ```sh
-pnpm exec vitest run --config vitest.e2e.config.ts \
-  e2e/application-verification.e2e.test.ts
+pnpm test:e2e
 ```
 
 Use the real-service checks below before production; the deterministic suite proves integration

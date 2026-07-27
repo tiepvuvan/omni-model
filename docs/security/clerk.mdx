@@ -1,0 +1,110 @@
+---
+title: Clerk
+description: Authenticate proxy users with cryptographically verified Clerk session tokens.
+---
+
+The `clerk` verifier authenticates a Clerk **user session** from an
+`Authorization: Bearer` token. It verifies the RS256 signature against your
+instance's Frontend API JWKS, pins the issuer, checks token time claims, requires
+both a user subject and session id, and optionally enforces Clerk's authorized
+party and audience claims.
+
+Clerk answers *which user is calling*, so configure it as the single
+`security.userAuth` method. Application verification such as Turnstile or App
+Attest remains a separate `security.appAuth` layer.
+
+## Configuration
+
+```yaml
+security:
+  userAuth:
+    type: clerk
+    issuer: https://helpful-otter-42.clerk.accounts.dev
+    authorizedParties:
+      - https://app.example.com
+      - http://localhost:3000
+```
+
+<ParamField path="issuer" type="string" required>
+Your Clerk Frontend API URL. Clerk puts this exact URL in the session token's
+`iss` claim. Development instances normally use
+`https://&lt;slug&gt;.clerk.accounts.dev`; production can use your Clerk custom
+domain.
+</ParamField>
+<ParamField path="jwksUrl" type="string">
+Signing-key endpoint. It defaults to
+`&lt;issuer&gt;/.well-known/jwks.json`; set this only when your deployment
+publishes keys elsewhere.
+</ParamField>
+<ParamField path="authorizedParties" type="string[]">
+Allowed frontend origins from Clerk's `azp` claim. Clerk recommends configuring
+this to protect against cross-subdomain cookie leakage. If Clerk omits `azp`
+because the original request had no Origin, verification proceeds.
+</ParamField>
+<ParamField path="audience" type="string | string[]">
+Optional `aud` allowlist for a customized Clerk session token. Standard session
+tokens commonly omit an audience.
+</ParamField>
+<ParamField path="allowPendingSessions" type="boolean" default="false">
+Allow session tokens with `sts: pending`. Keep this disabled when organization
+membership is required; otherwise a user who has not joined an organization
+could reach the proxy.
+</ParamField>
+<ParamField path="header" type="string" default="authorization">
+Header carrying `Bearer &lt;session-token&gt;`.
+</ParamField>
+<ParamField path="clockToleranceSeconds" type="integer" default="5">
+Allowed clock skew for `exp` and `nbf`.
+</ParamField>
+
+The named environment profile exposes the same settings:
+
+```sh
+export OMNI_SECURITY_CLERK_ENABLED=true
+export OMNI_SECURITY_CLERK_ISSUER=https://helpful-otter-42.clerk.accounts.dev
+export OMNI_SECURITY_CLERK_AUTHORIZED_PARTIES='["https://app.example.com"]'
+```
+
+No Clerk secret key is needed. The verifier reads only the public rotating JWKS,
+which is cached and refreshed when a token names a new signing key.
+
+## Send a session token
+
+For a cross-origin client, get the current Clerk token immediately before the
+request and send it as the bearer token:
+
+```typescript
+const token = await clerk.session?.getToken();
+if (!token) throw new Error("The user is not signed in");
+
+const response = await fetch("https://proxy.example.com/v1/chat/completions", {
+  method: "POST",
+  headers: {
+    Authorization: `Bearer ${token}`,
+    "Content-Type": "application/json",
+  },
+  body: JSON.stringify({
+    model: "smart",
+    messages: [{ role: "user", content: "Hello" }],
+  }),
+});
+```
+
+Clerk session tokens are short-lived; retrieve the current token rather than
+persisting one in application storage.
+
+## Verified identity and failures
+
+The verified `sub` becomes `user.id`. Clerk session, organization, plan, feature,
+and custom claims remain available under `user.claims` for CEL routing and token
+budgets.
+
+An invalid signature, issuer, time, authorized party, pending status, subject,
+or session id returns `401`. A failure to retrieve or parse Clerk's public key
+set returns `503 verification_unavailable`; it is not reported as a bad user
+credential.
+
+See Clerk's official [manual JWT verification](https://clerk.com/docs/guides/sessions/manual-jwt-verification)
+and [session token claims](https://clerk.com/docs/guides/sessions/session-tokens)
+documentation for instance setup and claim definitions.
+

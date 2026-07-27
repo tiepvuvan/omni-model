@@ -1,6 +1,8 @@
 import { createFileRoute, useRouter } from "@tanstack/react-router";
 import { useState } from "react";
 import vendorApple from "../../assets/vendor-apple.svg";
+import vendorAws from "../../assets/vendor-aws.svg";
+import vendorClerk from "../../assets/vendor-clerk.svg";
 import vendorCloudflare from "../../assets/vendor-cloudflare.svg";
 import vendorFirebase from "../../assets/vendor-firebase.svg";
 import vendorGoogle from "../../assets/vendor-google.svg";
@@ -40,6 +42,16 @@ export const Route = createFileRoute("/_app/authentication")({
  */
 const PRESENTATION: Record<string, { title: string; icon: string; fields: readonly string[] }> = {
   "firebase-auth": { title: "Firebase", icon: vendorFirebase, fields: ["projectId"] },
+  clerk: {
+    title: "Clerk",
+    icon: vendorClerk,
+    fields: ["issuer", "authorizedParties", "audience", "allowPendingSessions"],
+  },
+  "aws-cognito": {
+    title: "AWS Cognito",
+    icon: vendorAws,
+    fields: ["region", "userPoolId", "clientIds", "tokenUse", "requiredScopes"],
+  },
   supabase: { title: "Supabase Auth", icon: vendorSupabase, fields: ["baseUrl", "jwksUrl"] },
   jwt: {
     title: "Custom JWT",
@@ -83,6 +95,8 @@ const PRESENTATION: Record<string, { title: string; icon: string; fields: readon
 /** The design's order within each layer; anything unlisted follows, alphabetically. */
 const ORDER = [
   "firebase-auth",
+  "clerk",
+  "aws-cognito",
   "supabase",
   "jwt",
   "firebase-app-check",

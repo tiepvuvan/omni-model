@@ -84,6 +84,8 @@ function labelFor(name: string): string {
       // "Project ID", "Team ID". That is how the design writes them, and a
       // generated label that capitalises differently from a designed one is the
       // inconsistency a generated form is supposed to avoid.
+      if (lower === "ids") return "IDs";
+      if (lower === "urls") return "URLs";
       return ACRONYMS.has(lower)
         ? lower.toUpperCase()
         : lower.charAt(0).toUpperCase() + lower.slice(1);

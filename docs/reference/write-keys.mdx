@@ -20,9 +20,9 @@ curl https://your-proxy/v1/chat/completions \
   -d '{"model": "gpt-4o-mini", "messages": [{"role": "user", "content": "Hello!"}]}'
 ```
 
-The key goes in `x-omni-key`, not `Authorization`. The `jwt`, `firebase-auth` and `supabase`
-verifiers already use `Authorization` for the end user's token, and a client needs to send both at
-once.
+The key goes in `x-omni-key`, not `Authorization`. The `jwt`, `firebase-auth`, `clerk`,
+`aws-cognito`, and `supabase` verifiers already use `Authorization` for the end user's token, and a
+client needs to send both at once.
 
 ## Storage and revocation
 

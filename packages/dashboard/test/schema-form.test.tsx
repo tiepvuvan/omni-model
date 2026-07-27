@@ -12,6 +12,7 @@ const SCHEMA: JsonSchema = {
     maxTokensDefault: { type: "integer", minimum: 1 },
     includeStreamUsage: { type: "boolean" },
     models: { type: "array", items: { type: "string" } },
+    clientIds: { type: "array", items: { type: "string" } },
     headers: { type: "object" },
     scheme: { type: "string", enum: ["bearer", "raw"] },
   },
@@ -37,6 +38,7 @@ describe("generated labels", () => {
     expect(screen.getByLabelText("Base URL")).toBeInTheDocument();
     expect(screen.getByLabelText("API Key (optional)")).toBeInTheDocument();
     expect(screen.getByLabelText("Max Tokens Default (optional)")).toBeInTheDocument();
+    expect(screen.getByLabelText("Client IDs (optional)")).toBeInTheDocument();
   });
 
   it("picks a control per schema type", () => {

@@ -19,8 +19,8 @@ unchanged — you only override the base URL and supply the caller's token as th
 - API key: the end user's JWT. How the proxy validates it is set by `security.userAuth` — see
   [Custom JWT](/security/custom-jwt) and the other verifiers.
 
-The token is sent as `Authorization: Bearer <token>` for the `jwt`, `firebase-auth`, and
-`supabase` verifiers. Other verifiers use their own headers (`X-Firebase-AppCheck`,
+The token is sent as `Authorization: Bearer <token>` for the `jwt`, `firebase-auth`, `clerk`,
+`aws-cognito`, and `supabase` verifiers. Other verifiers use their own headers (`X-Firebase-AppCheck`,
 `X-Apple-Device-Token`, App Attest headers) — the OpenAI SDK's `defaultHeaders` option lets you
 set those instead.
 

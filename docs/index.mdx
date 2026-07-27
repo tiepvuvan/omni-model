@@ -6,7 +6,7 @@ description: A self-hosted, OpenAI-compatible AI proxy for your mobile and web a
 omni-model is an **OpenAI-compatible AI proxy you run yourself**. Your provider API keys stay on
 your infrastructure — never inside an app binary. Clients authenticate with what they already have
 (Firebase App Check, Apple App Attest / DeviceCheck, Google Play Integrity, Firebase Auth,
-Supabase, or any JWT), with Turnstile and reCAPTCHA Enterprise available for web/mobile
+Clerk, AWS Cognito, Supabase, or any JWT), with Turnstile and reCAPTCHA Enterprise available for web/mobile
 application verification. You
 configure rate limits (request windows **and** token budgets) plus CEL-expression model routing
 across OpenAI, Anthropic, Google Gemini, and any OpenAI-compatible endpoint.
@@ -32,7 +32,7 @@ Client (any OpenAI SDK)
 ┌─────────────────────────────────────────────┐
 │  omni-model — your infrastructure           │
 │   1. authenticate   App Check / App Attest / │
-│                     Firebase Auth / JWT      │
+│                     Firebase / Clerk / JWT   │
 │   2. rate limit     request windows +        │
 │                     token budgets            │
 │   3. route          CEL rules over model,    │
@@ -52,8 +52,8 @@ streaming included — so your client keeps speaking one protocol everywhere.
 <CardGroup cols={2}>
   <Card title="Client attestation, not shared secrets" icon="shield-check" href="/security/app-attest">
     Firebase App Check, Apple App Attest & DeviceCheck, Google Play Integrity, Turnstile,
-    reCAPTCHA Enterprise, Firebase Auth, Supabase, or any custom JWT. Combine app verifiers with
-    <code>mode: any</code> or <code>mode: all</code>.
+    reCAPTCHA Enterprise, Firebase Auth, Clerk, AWS Cognito, Supabase, or any custom JWT. Combine
+    app verifiers with <code>mode: any</code> or <code>mode: all</code>.
   </Card>
   <Card title="Rate limits that understand LLMs" icon="gauge-high" href="/reference/configuration">
     Fixed-window request limits <em>and</em> token budgets, per user / device / IP / global /
