@@ -81,6 +81,9 @@ export interface AdminAuthLike {
   handler(request: Request): Promise<Response>;
   api: {
     getSession(input: { headers: Headers }): Promise<unknown>;
+    signUpEmail(input: {
+      body: { email: string; password: string; name: string };
+    }): Promise<unknown>;
   };
 }
 
@@ -129,7 +132,7 @@ export async function adminUserCount(pool: PgPoolLike): Promise<number> {
  * the way back in once sign-up has closed.
  */
 export async function createAdminUser(
-  auth: AdminAuth,
+  auth: AdminAuthLike,
   input: { email: string; password: string; name?: string },
 ): Promise<{ id: string; email: string }> {
   const result = await auth.api.signUpEmail({

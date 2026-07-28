@@ -8,7 +8,7 @@ import {
   type RuntimeContext,
   silentLogger,
 } from "@omni-model/core";
-import type { PgPoolLike } from "@omni-model/postgres";
+import { type PgPoolLike, runMigrations } from "@omni-model/postgres";
 import { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { type AdminApp, createAdminApp, createAdminUser, grantAdminRole } from "../src/index.js";
@@ -106,6 +106,7 @@ describe.skipIf(!url)("admin auth (integration)", () => {
       runtime,
       logger: silentLogger,
     });
+    await runMigrations(pool, { logger: silentLogger });
     await admin.migrate();
   }, 30_000);
 
@@ -179,6 +180,41 @@ describe.skipIf(!url)("admin auth (integration)", () => {
       method: "POST",
       authenticated: false,
       body: JSON.stringify({ email: "first@test.local", password: PASSWORD }),
+    });
+    expect(signIn.status).toBe(200);
+    expect((await call("/admin/api/me")).status).toBe(200);
+  });
+
+  it("invites a teammate through a one-time link and gives them usable access", async () => {
+    const created = await call("/admin/api/users/invites", {
+      method: "POST",
+      body: JSON.stringify({ email: "invited@test.local" }),
+    });
+    expect(created.status).toBe(201);
+    const body = (await created.json()) as { link: string };
+    const token = new URL(body.link).searchParams.get("token");
+    expect(token).not.toBeNull();
+
+    const visible = await call(`/admin/api/invites/${token}`, { authenticated: false });
+    expect(await visible.json()).toMatchObject({ invite: { email: "invited@test.local" } });
+
+    const accepted = await call(`/admin/api/invites/${token}/accept`, {
+      method: "POST",
+      authenticated: false,
+      body: JSON.stringify({ name: "Invited", password: PASSWORD }),
+    });
+    expect(accepted.status).toBe(200);
+    expect(
+      (await owner.query('SELECT role FROM "user" WHERE email = $1', ["invited@test.local"]))
+        .rows[0]?.role,
+    ).toBe("admin");
+
+    expect((await call(`/admin/api/invites/${token}`, { authenticated: false })).status).toBe(404);
+
+    const signIn = await call("/admin/api/auth/sign-in/email", {
+      method: "POST",
+      authenticated: false,
+      body: JSON.stringify({ email: "invited@test.local", password: PASSWORD }),
     });
     expect(signIn.status).toBe(200);
     expect((await call("/admin/api/me")).status).toBe(200);

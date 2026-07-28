@@ -407,16 +407,13 @@ describe("editing", () => {
 });
 
 describe("the sidebar", () => {
-  it("lists the sections the design shows, disabling the ones with no screen", async () => {
+  it("lists every built section", async () => {
     await renderAt("/authentication");
 
     const nav = within(screen.getByRole("navigation", { name: "Sections" }));
-    for (const label of ["Authentication", "Routing", "Rate Limit", "Logs", "Settings"]) {
+    for (const label of ["Authentication", "Routing", "Rate Limit", "Logs", "Users", "Settings"]) {
       expect(nav.getByRole("link", { name: label })).toBeInTheDocument();
     }
-    // Present but not yet built: dropping them would make the built screens look
-    // like the whole product.
-    expect(nav.getByText("Users")).toHaveAttribute("aria-disabled");
     expect(nav.getByText("Admin")).toBeInTheDocument();
   });
 });

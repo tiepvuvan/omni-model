@@ -19,28 +19,25 @@ before it serves a single request, so a typo can never surface mid-request. The 
 
 ## The context reference
 
-Expressions evaluate against a fixed set of facts derived from the request, its authenticated
-identity, and the clock. The shape is defined by `RequestFacts` in
+Expressions evaluate against a fixed set of facts derived from the request and its authenticated
+identity. The shape is defined by `RequestFacts` in
 `packages/core/src/routing/types.ts`.
 
 | Fact | Type | Meaning |
 | --- | --- | --- |
 | `request.model` | string | Client-requested model (`""` if absent). |
-| `request.stream` | bool | Whether the client asked for a streamed response. |
-| `request.messageCount` | int | Number of entries in `messages`. |
+| `request.inputTokenCount` | int | Provider-neutral estimate used by `server.maxInputTokens`. |
 | `request.maxTokens` | number \| null | `max_completion_tokens` ?? `max_tokens`. |
 | `request.temperature` | number \| null | The request temperature. |
-| `request.user` | string \| null | The OpenAI `user` field. |
 | `user.id` | string \| null | Authenticated user id (verifier-dependent). |
-| `user.authenticated` | bool | Whether any verifier accepted the request. |
-| `user.provider` | string \| null | The auth verifier type that authenticated the request. |
 | `user.claims` | map | Claims from the accepted credential(s). Keys vary by verifier. |
-| `device.id` | string \| null | Device identity (App Check app id, App Attest key id, DeviceCheck token id). |
-| `http.method` | string | Request method. |
-| `http.path` | string | Request path, e.g. `/v1/chat/completions`. |
+| `user.providers` | list | Every user/app verifier type that accepted, such as `firebase-auth` and `firebase-app-check`. |
+| `client.name` | string \| null | Publishable-key reference name. |
+| `client.id` | string \| null | Publishable-key id. |
 | `http.ip` | string \| null | Best-effort client IP (see the note below). |
 | `http.headers` | map | Lowercased header names. `authorization`, `cookie`, `set-cookie`, and `x-api-key` values are redacted to `"<redacted>"`. |
-| `now` | int | Epoch **milliseconds** (a plain number). |
+| `http.path` | string | Request path, e.g. `/v1/chat/completions`. |
+| `http.method` | string | Request method. |
 
 <Warning>
   `http.ip` is derived from forwarding headers (`cf-connecting-ip`, first `x-forwarded-for` entry,
@@ -75,8 +72,8 @@ ever running when the key is absent.
 
 <Warning>
   Every expression that touches an optional claim (anything under `user.claims`) or an optional
-  header **must** be guarded. `request.*`, `user.id`, `user.authenticated`, `device.id`, and
-  `http.method`/`http.path` are always present and need no guard.
+  header **must** be guarded. Every listed field itself is always present; nullable fields use
+  `null`, maps use `{}`, and lists use `[]` when no value is available.
 </Warning>
 
 ## Operators and macros
@@ -117,41 +114,27 @@ ever running when the key is absent.
   </Accordion>
 </AccordionGroup>
 
-## Working with `now`
-
-`now` is epoch **milliseconds** as a plain integer. CEL here has **no timestamp type**, and its
-`%` operator rejects `now`, so compare against a millisecond constant instead of doing date math:
-
-```text
-now < 1893456000000
-```
-
-That constant is `2030-01-01T00:00:00Z`, so the expression reads "before 2030." To gate a route to
-a window, combine two comparisons: `now >= 1704067200000 && now < 1735689600000`.
-
 ## Examples
 
 Every example below compiles and evaluates safely for an authenticated user with **no** claims,
 because each optional-claim access is guarded.
 
 ```text
-# Streaming requests only
-request.stream
-
-# Large conversations
-request.messageCount > 20
+# Large inputs
+request.inputTokenCount > 8000
 
 # Pro-tier users (guarded)
 has(user.claims.tier) && user.claims.tier == "pro"
 
 # A specific model alias for a specific auth provider
-request.model == "smart" && user.provider == "firebase-auth"
+request.model == "smart" && "firebase-auth" in user.providers
+
+# A publishable-key reference name
+client.name == "ios-production"
 
 # Presence of a canary header
 "x-canary" in http.headers
 
-# A time-boxed rule (before 2030)
-now < 1893456000000
 ```
 
 ## Same language, two jobs

@@ -49,7 +49,7 @@ function makeClock(startMs = 1_000_000_000_000) {
 
 interface FactsOptions {
   userId?: string | null;
-  deviceId?: string | null;
+  clientId?: string | null;
   ip?: string | null;
   claims?: Record<string, unknown>;
 }
@@ -59,26 +59,22 @@ function makeFacts(options: FactsOptions = {}): RequestFacts {
   return {
     request: {
       model: "gpt-4o-mini",
-      stream: false,
-      messageCount: 1,
+      inputTokenCount: 12,
       maxTokens: null,
       temperature: null,
-      user: null,
     },
     user: {
       id: userId,
-      authenticated: userId !== null,
-      provider: userId !== null ? "jwt" : null,
       claims: options.claims ?? {},
+      providers: userId !== null ? ["jwt"] : [],
     },
-    device: { id: options.deviceId ?? null },
+    client: { id: options.clientId ?? null, name: null },
     http: {
       method: "POST",
       path: "/v1/chat/completions",
       ip: options.ip ?? null,
       headers: {},
     },
-    now: 0,
   };
 }
 
@@ -236,15 +232,15 @@ describe("createRateLimiter", () => {
       ).toBe(5);
     });
 
-    it("falls back to the device id, then the ip, then one shared bucket", async () => {
+    it("falls back to the client id, then the ip, then one shared bucket", async () => {
       const { limiter, storage, clock } = makeLimiter([perUser(100, "1h")]);
       const at = windowStart(clock.now(), 3_600_000);
 
-      await limiter.recordUsage(makeFacts({ deviceId: "device-1", ip: "1.2.3.4" }), usageOf(5));
+      await limiter.recordUsage(makeFacts({ clientId: "client-1", ip: "1.2.3.4" }), usageOf(5));
       await limiter.recordUsage(makeFacts({ ip: "1.2.3.4" }), usageOf(7));
       await limiter.recordUsage(makeFacts(), usageOf(9));
 
-      expect(await storage.getCounter(`rl:tok:per-user:device-1:${at}`)).toBe(5);
+      expect(await storage.getCounter(`rl:tok:per-user:client-1:${at}`)).toBe(5);
       expect(await storage.getCounter(`rl:tok:per-user:1.2.3.4:${at}`)).toBe(7);
       // Stricter than a per-user budget, never looser: unidentifiable callers share.
       expect(await storage.getCounter(`rl:tok:per-user:anonymous:${at}`)).toBe(9);

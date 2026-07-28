@@ -1,12 +1,12 @@
 import { type RunningServer, startServer } from "@omni-model/node";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
-  bearer,
   createScopedSchema,
   eventually,
   fakeUpstream,
   POSTGRES_URL,
   type ScopedSchema,
+  signedToken,
 } from "./support/postgres.js";
 
 /**
@@ -88,7 +88,7 @@ describe.skipIf(!POSTGRES_URL)("E2E: two instances over one database", () => {
   const chat = (base: string, token: string, body: Record<string, unknown> = {}) =>
     fetch(`${base}/v1/chat/completions`, {
       method: "POST",
-      headers: { "content-type": "application/json", authorization: token },
+      headers: { "content-type": "application/json", "x-omni-user-token": token },
       body: JSON.stringify({
         model: "mock-model",
         messages: [{ role: "user", content: "hello" }],
@@ -137,7 +137,7 @@ describe.skipIf(!POSTGRES_URL)("E2E: two instances over one database", () => {
   });
 
   it("a revision saved on one instance reaches the other", async () => {
-    const token = await bearer(JWT_SECRET);
+    const token = await signedToken(JWT_SECRET);
     expect((await chat(baseB, token)).status).toBe(200);
 
     // Restrict the models through A, exactly as the admin API would.
@@ -174,7 +174,7 @@ describe.skipIf(!POSTGRES_URL)("E2E: two instances over one database", () => {
   }, 30_000);
 
   it("a rejected revision leaves both instances serving the previous one", async () => {
-    const token = await bearer(JWT_SECRET);
+    const token = await signedToken(JWT_SECRET);
     const before = b.holder.status().revision;
 
     // Saved straight to the store, bypassing validation — which is exactly what
@@ -210,7 +210,7 @@ describe.skipIf(!POSTGRES_URL)("E2E: two instances over one database", () => {
   it("an in-flight stream finishes on the bundle it started with", async () => {
     // The reason configuration lives on an immutable bundle: a reload must be
     // invisible to a response already being written.
-    const token = await bearer(JWT_SECRET);
+    const token = await signedToken(JWT_SECRET);
     const streaming = await chat(baseB, token, { stream: true });
     expect(streaming.status).toBe(200);
 
@@ -246,27 +246,35 @@ describe.skipIf(!POSTGRES_URL)("E2E: two instances over one database", () => {
     expect(text).toContain("[DONE]");
   }, 45_000);
 
-  it("rate-limit counters are shared, not per instance", async () => {
-    // The reason counters live in the database: two replicas must not each grant
-    // a client the full budget.
+  it("token-budget usage is shared, not per instance", async () => {
+    // The reason usage lives in the database: two replicas must not each grant a
+    // client the full token budget.
     const revision = await saveOn(
       a,
       config({
-        rateLimits: [
-          { id: "shared", name: "shared", key: "user", requests: { limit: 3, window: "1m" } },
-        ],
+        rateLimits: [{ id: "shared", name: "shared", tokens: { limit: 14, window: "1m" } }],
       }),
       "tight shared limit",
     );
     await adopts(b, revision, "both instances on the rate-limited revision");
 
-    const token = await bearer(JWT_SECRET, "shared-budget-user");
-    // Alternating instances: a per-instance counter would allow six.
-    const statuses: number[] = [];
-    for (const base of [baseA, baseB, baseA, baseB]) {
-      statuses.push((await chat(base, token)).status);
-    }
-    expect(statuses.slice(0, 3)).toEqual([200, 200, 200]);
-    expect(statuses[3]).toBe(429);
+    const token = await signedToken(JWT_SECRET, "shared-budget-user");
+    expect((await chat(baseA, token, { user: "initial-spend" })).status).toBe(200);
+    // Usage is recorded after the response because its token cost is unknowable
+    // beforehand. Vary the otherwise-ignored `user` field so cache hits cannot
+    // hide real upstream usage. Once A observes exhaustion, B must see the same
+    // stored total.
+    let attempt = 0;
+    await eventually(
+      async () =>
+        (await chat(baseA, token, { user: `budget-probe-${attempt++}` })).status === 429
+          ? true
+          : null,
+      {
+        label: "instance A to observe the spent token budget",
+        timeoutMs: 15_000,
+      },
+    );
+    expect((await chat(baseB, token, { user: "other-instance" })).status).toBe(429);
   }, 45_000);
 });

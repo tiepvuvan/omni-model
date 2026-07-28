@@ -61,11 +61,13 @@ OpenAI SDK can hit.
     See [Installation → Docker](/installation/docker) for Compose, health checks, and scaling out.
   </Step>
   <Step title="Make a request">
-    Sign an HS256 JWT with `OMNI_JWT_SECRET` and send it as a bearer token:
+    Generate a publishable key in the dashboard, sign an HS256 JWT with `OMNI_JWT_SECRET`, and send
+    both credentials:
 
     ```sh
     curl http://localhost:8787/v1/chat/completions \
-      -H "authorization: Bearer $YOUR_JWT" \
+      -H "authorization: Bearer $PUBLISHABLE_KEY" \
+      -H "x-omni-user-token: $YOUR_JWT" \
       -H "content-type: application/json" \
       -d '{"model": "gpt-4o-mini", "messages": [{"role": "user", "content": "Hello!"}]}'
     ```

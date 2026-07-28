@@ -12,10 +12,10 @@ const optionsSchema = z
   .strictObject({
     type: z.literal(TYPE).optional(),
     name: z.string().optional(),
-    /** Header carrying the token. */
-    header: z.string().min(1).default("authorization"),
+    /** Header carrying the token. Authorization is reserved for publishable keys. */
+    header: z.string().min(1).default("x-omni-user-token"),
     /** "bearer" strips a `Bearer ` prefix; "none" uses the raw header value. */
-    scheme: z.enum(["bearer", "none"]).default("bearer"),
+    scheme: z.enum(["bearer", "none"]).default("none"),
     /** Remote JWKS endpoint for asymmetric keys. */
     jwksUrl: z.url().optional(),
     /** Shared secret for HS* algorithms. */

@@ -16,13 +16,53 @@ const createSchema = z.object({
   expiresAt: z.number().int().positive().nullable().optional(),
 });
 
+interface UsageSummary {
+  totalTokens: number;
+  lastUsedAt: number | null;
+  lastModel: string | null;
+}
+
+async function usageByWriteKey(deps: AdminDeps): Promise<Map<string, UsageSummary>> {
+  if (deps.pool === null) return new Map();
+  const result = await deps.pool.query(
+    "SELECT write_key_id, coalesce(sum(total_tokens), 0)::bigint AS total_tokens, " +
+      "max(ts) AS last_used_at, " +
+      "(array_agg(model_requested ORDER BY ts DESC) " +
+      "FILTER (WHERE model_requested <> ''))[1] AS last_model " +
+      "FROM omni_request_logs WHERE write_key_id IS NOT NULL GROUP BY write_key_id",
+  );
+  return new Map(
+    result.rows.map((row) => [
+      String(row.write_key_id),
+      {
+        totalTokens: Number(row.total_tokens),
+        lastUsedAt:
+          row.last_used_at instanceof Date
+            ? row.last_used_at.getTime()
+            : new Date(String(row.last_used_at)).getTime(),
+        lastModel: row.last_model === null ? null : String(row.last_model),
+      },
+    ]),
+  );
+}
+
 export function createWriteKeyRoutes(deps: AdminDeps): Hono<AdminEnv> {
   const app = new Hono<AdminEnv>();
 
   app.get("/write-keys", async (c) => {
     // Descriptions only. There is no endpoint that returns a key, because after
     // creation the plaintext does not exist anywhere.
-    return c.json({ writeKeys: await deps.writeKeys.list() });
+    const [writeKeys, usage] = await Promise.all([deps.writeKeys.list(), usageByWriteKey(deps)]);
+    return c.json({
+      writeKeys: writeKeys.map((writeKey) => ({
+        ...writeKey,
+        usage: usage.get(writeKey.id) ?? {
+          totalTokens: 0,
+          lastUsedAt: null,
+          lastModel: null,
+        },
+      })),
+    });
   });
 
   app.post("/write-keys", async (c) => {

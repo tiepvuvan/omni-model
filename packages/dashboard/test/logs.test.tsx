@@ -38,7 +38,7 @@ function requestLog(overrides: Partial<RequestLog> = {}): RequestLog {
       headers: {
         authorization: "[REDACTED]",
         "content-type": "application/json",
-        "x-omni-key": "[REDACTED]",
+        "x-firebase-id-token": "[REDACTED]",
       },
       body: {
         model: "smart",

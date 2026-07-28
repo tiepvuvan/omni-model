@@ -68,6 +68,7 @@ describe.skipIf(!url)("postgres integration", () => {
     expect(result.applied).toEqual(MIGRATIONS.map((migration) => migration.version));
     expect(result.version).toBe(LATEST_VERSION);
     expect(await tableNames(pool)).toEqual([
+      "omni_admin_invites",
       "omni_config_revisions",
       "omni_kv",
       "omni_migrations",

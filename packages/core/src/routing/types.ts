@@ -27,20 +27,17 @@ export interface ExpressionEngine {
 export interface RequestFacts {
   request: {
     model: string;
-    stream: boolean;
-    messageCount: number;
+    /** Provider-neutral estimate used by the per-request input-token limit. */
+    inputTokenCount: number;
     maxTokens: number | null;
     temperature: number | null;
-    user: string | null;
   };
   user: {
     id: string | null;
-    authenticated: boolean;
-    /** Auth verifier type that authenticated the request. */
-    provider: string | null;
     claims: Record<string, unknown>;
+    /** Every user/app verifier that accepted this request, in evaluation order. */
+    providers: string[];
   };
-  device: { id: string | null };
   /**
    * The calling application, identified by its write key — a different question
    * from `user`, which is who is using that application.
@@ -50,7 +47,6 @@ export interface RequestFacts {
     id: string | null;
     /** Write key name, for readable expressions: `client.name == "ios-app"`. */
     name: string | null;
-    authenticated: boolean;
   };
   http: {
     method: string;
@@ -59,8 +55,6 @@ export interface RequestFacts {
     /** Lowercased header names. `authorization` and cookie values are redacted. */
     headers: Record<string, string>;
   };
-  /** Epoch milliseconds. */
-  now: number;
 }
 
 export interface RouteDecision {

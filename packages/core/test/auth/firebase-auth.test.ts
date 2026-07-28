@@ -70,7 +70,7 @@ describe("firebaseAuthVerifierFactory", () => {
     const ctx = makeCtx(jwksFetch(calls));
     const verifier = firebaseAuthVerifierFactory.create(options, ctx);
     const token = await signIdToken({ email: "a@example.com" });
-    const result = await verifier.verify(withHeader("authorization", `Bearer ${token}`), ctx);
+    const result = await verifier.verify(withHeader("x-firebase-id-token", token), ctx);
     if (result === null || !result.ok) throw new Error("expected success");
     expect(result.identity.provider).toBe("firebase-auth");
     expect(result.identity.userId).toBe("uid-123");
@@ -89,7 +89,7 @@ describe("firebaseAuthVerifierFactory", () => {
     const ctx = makeCtx(jwksFetch([]));
     const verifier = firebaseAuthVerifierFactory.create(options, ctx);
     const token = await signIdToken({ aud: "other-project" });
-    const result = await verifier.verify(withHeader("authorization", `Bearer ${token}`), ctx);
+    const result = await verifier.verify(withHeader("x-firebase-id-token", token), ctx);
     if (result === null || result.ok) throw new Error("expected rejection");
     expect(result.reason).toContain("aud");
   });
@@ -98,7 +98,7 @@ describe("firebaseAuthVerifierFactory", () => {
     const ctx = makeCtx(jwksFetch([]));
     const verifier = firebaseAuthVerifierFactory.create(options, ctx);
     const token = await signIdToken({ iss: "https://securetoken.google.com/other-project" });
-    const result = await verifier.verify(withHeader("authorization", `Bearer ${token}`), ctx);
+    const result = await verifier.verify(withHeader("x-firebase-id-token", token), ctx);
     if (result === null || result.ok) throw new Error("expected rejection");
     expect(result.reason).toContain("iss");
   });
@@ -107,7 +107,7 @@ describe("firebaseAuthVerifierFactory", () => {
     const ctx = makeCtx(jwksFetch([]));
     const verifier = firebaseAuthVerifierFactory.create(options, ctx);
     const token = await signIdToken({}, NOW_SEC - 3600);
-    const result = await verifier.verify(withHeader("authorization", `Bearer ${token}`), ctx);
+    const result = await verifier.verify(withHeader("x-firebase-id-token", token), ctx);
     if (result === null || result.ok) throw new Error("expected rejection");
     expect(result.reason).toContain("expired");
   });
@@ -116,20 +116,30 @@ describe("firebaseAuthVerifierFactory", () => {
     const ctx = makeCtx(jwksFetch([]));
     const verifier = firebaseAuthVerifierFactory.create(options, ctx);
     const token = await signIdToken({ sub: "" });
-    const result = await verifier.verify(withHeader("authorization", `Bearer ${token}`), ctx);
+    const result = await verifier.verify(withHeader("x-firebase-id-token", token), ctx);
     if (result === null || result.ok) throw new Error("expected rejection");
     expect(result.reason).toContain("subject");
   });
 
   it("reads the token from an overridden header", async () => {
     const ctx = makeCtx(jwksFetch([]));
-    const verifier = firebaseAuthVerifierFactory.create({ ...options, header: "x-id-token" }, ctx);
+    const verifier = firebaseAuthVerifierFactory.create(
+      { ...options, header: "x-id-token", scheme: "bearer" },
+      ctx,
+    );
     const token = await signIdToken({});
     const result = await verifier.verify(withHeader("x-id-token", `Bearer ${token}`), ctx);
     expect(result?.ok).toBe(true);
     // The default header is no longer consulted.
-    const viaDefault = await verifier.verify(withHeader("authorization", `Bearer ${token}`), ctx);
+    const viaDefault = await verifier.verify(withHeader("x-firebase-id-token", token), ctx);
     expect(viaDefault).toBeNull();
+  });
+
+  it("does not consume the Authorization header reserved for publishable keys", async () => {
+    const ctx = makeCtx(rejectFetch);
+    const verifier = firebaseAuthVerifierFactory.create(options, ctx);
+    const token = await signIdToken({});
+    expect(await verifier.verify(withHeader("authorization", `Bearer ${token}`), ctx)).toBeNull();
   });
 
   it("requires projectId and rejects unknown options", () => {

@@ -1,12 +1,12 @@
 import { type RunningServer, startServer } from "@omni-model/node";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
-  bearer,
   createScopedSchema,
   eventually,
   fakeUpstream,
   POSTGRES_URL,
   type ScopedSchema,
+  signedToken,
 } from "./support/postgres.js";
 
 /**
@@ -126,6 +126,46 @@ describe.skipIf(!POSTGRES_URL)("E2E: the admin API from an empty database", () =
     expect(second.status).toBe(403);
   }, 30_000);
 
+  it("step 1b: an email-bound invite creates a second usable operator", async () => {
+    const operatorCookie = cookie;
+    const invited = { email: "teammate@e2e.local", password: "another long e2e passphrase" };
+    const created = await admin("/admin/api/users/invites", {
+      method: "POST",
+      body: JSON.stringify({ email: invited.email }),
+    });
+    expect(created.status).toBe(201);
+    const { link } = (await created.json()) as { link: string };
+    const token = new URL(link).searchParams.get("token");
+    expect(token).not.toBeNull();
+
+    const stored = await schema.owner.query(
+      `SELECT token_hash FROM ${schema.name}.omni_admin_invites`,
+    );
+    expect(String(stored.rows[0]?.token_hash)).not.toBe(token);
+    expect(String(stored.rows[0]?.token_hash)).toMatch(/^[a-f0-9]{64}$/);
+
+    const accepted = await admin(`/admin/api/invites/${token}/accept`, {
+      method: "POST",
+      anonymous: true,
+      body: JSON.stringify({ name: "Team Mate", password: invited.password }),
+    });
+    expect(accepted.status).toBe(200);
+    expect((await admin(`/admin/api/invites/${token}`, { anonymous: true })).status).toBe(404);
+
+    const signIn = await admin("/admin/api/auth/sign-in/email", {
+      method: "POST",
+      anonymous: true,
+      body: JSON.stringify(invited),
+    });
+    expect(signIn.status).toBe(200);
+    expect(await (await admin("/admin/api/me")).json()).toMatchObject({
+      actor: { email: invited.email, role: "admin" },
+    });
+
+    // Continue the operator journey as the original account.
+    cookie = operatorCookie;
+  }, 30_000);
+
   it("step 2: the upstream credential is stored encrypted, never readable", async () => {
     const stored = await admin("/admin/api/secrets", {
       method: "PUT",
@@ -166,7 +206,7 @@ describe.skipIf(!POSTGRES_URL)("E2E: the admin API from an empty database", () =
                 id: "main",
                 when: "true",
                 target: {
-                  type: "openai-compatible",
+                  type: "deepseek",
                   baseUrl: "https://upstream.invalid/v1",
                   apiKey: { $secret: secretId },
                   models: ["mock-model"],
@@ -230,14 +270,17 @@ describe.skipIf(!POSTGRES_URL)("E2E: the admin API from an empty database", () =
     };
     expect(keys.writeKeys.map((key) => key.name)).toEqual(["ios app"]);
 
-    const token = await bearer(JWT_SECRET);
+    const token = await signedToken(JWT_SECRET);
     const secret = mintedSecret;
 
     // Each axis alone is refused: "which app" and "which user" are separate.
-    expect((await chat({ authorization: token })).status).toBe(401);
-    expect((await chat({ "x-omni-key": secret })).status).toBe(401);
+    expect((await chat({ "x-omni-user-token": token })).status).toBe(401);
+    expect((await chat({ authorization: `Bearer ${secret}` })).status).toBe(401);
 
-    const answered = await chat({ authorization: token, "x-omni-key": secret });
+    const answered = await chat({
+      authorization: `Bearer ${secret}`,
+      "x-omni-user-token": token,
+    });
     expect(answered.status).toBe(200);
     expect(answered.headers.get("x-omni-request-id")).toMatch(/^[0-9a-f-]{36}$/);
     const body = (await answered.json()) as { choices: { message: { content: string } }[] };
@@ -245,7 +288,7 @@ describe.skipIf(!POSTGRES_URL)("E2E: the admin API from an empty database", () =
     requestId = answered.headers.get("x-omni-request-id") ?? "";
 
     const oversized = await chat(
-      { authorization: token, "x-omni-key": secret },
+      { authorization: `Bearer ${secret}`, "x-omni-user-token": token },
       { messages: [{ role: "user", content: "x".repeat(1000) }] },
     );
     expect(oversized.status).toBe(413);
@@ -271,7 +314,7 @@ describe.skipIf(!POSTGRES_URL)("E2E: the admin API from an empty database", () =
       modelRequested: "mock-model",
       // The provider *type*, not a rule id: a log row wants to say "this went to
       // an OpenAI-compatible upstream". Which rule matched is `routeName`.
-      providerId: "openai-compatible",
+      providerId: "deepseek",
       routeName: "main",
       userId: "user-e2e",
       writeKeyName: "ios app",
@@ -283,7 +326,7 @@ describe.skipIf(!POSTGRES_URL)("E2E: the admin API from an empty database", () =
     expect(log.log.content).toMatchObject({
       headers: {
         authorization: "[REDACTED]",
-        "x-omni-key": "[REDACTED]",
+        "x-omni-user-token": "[REDACTED]",
       },
       body: {
         model: "mock-model",
@@ -294,6 +337,18 @@ describe.skipIf(!POSTGRES_URL)("E2E: the admin API from an empty database", () =
     const usage = await admin("/admin/api/usage/summary?hours=1");
     const summary = (await usage.json()) as { clients: { writeKeyName: string | null }[] };
     expect(summary.clients.map((client) => client.writeKeyName)).toContain("ios app");
+
+    const listed = (await (await admin("/admin/api/write-keys")).json()) as {
+      writeKeys: {
+        name: string;
+        usage: { totalTokens: number; lastUsedAt: number | null; lastModel: string | null };
+      }[];
+    };
+    expect(listed.writeKeys[0]).toMatchObject({
+      name: "ios app",
+      usage: { totalTokens: 14, lastModel: "mock-model" },
+    });
+    expect(listed.writeKeys[0]?.usage.lastUsedAt).not.toBeNull();
   }, 30_000);
 
   it("step 8: revoking the key stops that client without touching users", async () => {
@@ -303,11 +358,14 @@ describe.skipIf(!POSTGRES_URL)("E2E: the admin API from an empty database", () =
     const id = keys.writeKeys[0]?.id as string;
     expect((await admin(`/admin/api/write-keys/${id}`, { method: "DELETE" })).status).toBe(200);
 
-    const token = await bearer(JWT_SECRET);
+    const token = await signedToken(JWT_SECRET);
     // Each replica caches key lookups briefly, so revocation is eventual here.
     await eventually(
       async () => {
-        const response = await chat({ authorization: token, "x-omni-key": mintedSecret });
+        const response = await chat({
+          authorization: `Bearer ${mintedSecret}`,
+          "x-omni-user-token": token,
+        });
         return response.status === 401 ? true : null;
       },
       { label: "the revoked key to be refused", timeoutMs: 20_000 },

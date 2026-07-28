@@ -26,10 +26,9 @@ import type {
   ProviderFactory,
 } from "./types.js";
 
-const commonOptionsShape = {
+const openAICompatibleOptionsShape = {
   /** The discriminating `type` from the config block; accepted and ignored. */
   type: z.string().optional(),
-  organization: z.string().min(1).optional(),
   /** Extra headers merged over the computed ones (auth, content-type). */
   headers: z.record(z.string(), z.string()).optional(),
   /** Static model list served when the upstream `/models` call fails. */
@@ -42,17 +41,28 @@ const commonOptionsShape = {
 };
 
 const openAIOptionsSchema = z.strictObject({
-  ...commonOptionsShape,
+  ...openAICompatibleOptionsShape,
   apiKey: z.string().min(1),
   baseUrl: z.url().default("https://api.openai.com/v1"),
+  organization: z.string().min(1).optional(),
 });
 
 // Local OpenAI-compatible servers (Ollama, vLLM, ...) often need no API key,
 // but there is no sensible default endpoint.
 const openAICompatibleOptionsSchema = z.strictObject({
-  ...commonOptionsShape,
+  ...openAICompatibleOptionsShape,
   apiKey: z.string().min(1).optional(),
   baseUrl: z.url(),
+  organization: z.string().min(1).optional(),
+});
+
+// DeepSeek implements OpenAI Chat Completions and model discovery at this
+// endpoint. It has no embeddings API, so its provider deliberately exposes
+// only chat and listModels even though the shared transport implements both.
+const deepSeekOptionsSchema = z.strictObject({
+  ...openAICompatibleOptionsShape,
+  apiKey: z.string().min(1),
+  baseUrl: z.url().default("https://api.deepseek.com"),
 });
 
 interface ResolvedOptions {
@@ -65,7 +75,10 @@ interface ResolvedOptions {
 }
 
 function parseOptions(
-  schema: typeof openAIOptionsSchema | typeof openAICompatibleOptionsSchema,
+  schema:
+    | typeof openAIOptionsSchema
+    | typeof openAICompatibleOptionsSchema
+    | typeof deepSeekOptionsSchema,
   id: string,
   type: string,
   options: Record<string, unknown>,
@@ -80,7 +93,7 @@ function parseOptions(
   return {
     apiKey: parsed.apiKey,
     baseUrl: parsed.baseUrl,
-    organization: parsed.organization,
+    organization: "organization" in parsed ? parsed.organization : undefined,
     headers: parsed.headers ?? {},
     models: parsed.models ?? [],
     includeStreamUsage: parsed.includeStreamUsage,
@@ -352,5 +365,31 @@ export const openAICompatibleProviderFactory: ProviderFactory = {
       "openai-compatible",
       parseOptions(openAICompatibleOptionsSchema, id, "openai-compatible", options),
     );
+  },
+};
+
+/**
+ * DeepSeek's OpenAI-compatible Chat Completions API.
+ *
+ * The official API root is the default, while `baseUrl` remains configurable
+ * for private gateways and deterministic tests. DeepSeek does not offer an
+ * embeddings endpoint, so the wrapper intentionally leaves that optional
+ * provider capability absent.
+ */
+export const deepSeekProviderFactory: ProviderFactory = {
+  type: "deepseek",
+  optionsSchema: deepSeekOptionsSchema,
+  create(id, options) {
+    const delegate = new OpenAICompatibleProvider(
+      id,
+      "deepseek",
+      parseOptions(deepSeekOptionsSchema, id, "deepseek", options),
+    );
+    return {
+      id,
+      type: "deepseek",
+      chat: (request, ctx, callOptions) => delegate.chat(request, ctx, callOptions),
+      listModels: (ctx) => delegate.listModels(ctx),
+    };
   },
 };

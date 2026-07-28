@@ -8,8 +8,9 @@ untampered instance of your app rather than an automated script or a stolen key.
 The `firebase-app-check` verifier validates the App Check token that the
 Firebase SDK attaches, on the **self-hosted HTTP proxy**.
 
-App Check tokens carry no user identity — they attest the app *instance*. The
-Firebase app id (`sub`) becomes `device.id`, and `user.id` stays unset. Pair
+App Check tokens carry no user identity — they attest the app *instance*.
+`user.providers` includes `firebase-app-check`, its verified token claims are
+available under `user.claims.<verifier-name>`, and `user.id` stays unset. Pair
 this verifier with a user token verifier such as
 [`firebase-auth`](/security/custom-jwt) when you need both.
 
@@ -134,8 +135,9 @@ export OMNI_SECURITY_JSON='{
 ```
 
 With `mode: all`, a missing credential fails with `credential missing for
-<name>`, and the merged identity carries both `device.id` (from App Check) and
-`user.id` (from Firebase Auth) into [routing and rate-limit rules](/model-routing/routing).
+<name>`, and the merged identity carries `firebase-app-check` and `firebase-auth`
+in `user.providers`, plus `user.id` from Firebase Auth, into
+[routing and rate-limit rules](/model-routing/routing).
 Set `projectNumber` (App Check) and `projectId` (Firebase Auth) explicitly —
 they are different values from the same Firebase project.
 

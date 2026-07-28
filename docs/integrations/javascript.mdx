@@ -3,8 +3,9 @@ title: JavaScript & Web
 description: Call omni-model from browsers and Node with the official OpenAI SDK.
 ---
 
-Point the official `openai` SDK (or plain `fetch`) at your proxy origin and send the end user's JWT
-as the bearer token. This works identically in the browser and in Node.
+Point the official `openai` SDK (or plain `fetch`) at your proxy origin. Use an omni-model
+publishable key as the SDK API key and send the signed-in user's token in the dedicated header for
+your authentication integration.
 
 <Warning>
   Never put a provider API key (OpenAI, Anthropic, Gemini) in browser or mobile code. Keeping those
@@ -13,16 +14,16 @@ as the bearer token. This works identically in the browser and in Node.
 </Warning>
 
 A self-hosted proxy exposes standard OpenAI HTTP endpoints, so the official `openai` SDK works
-unchanged — you only override the base URL and supply the caller's token as the API key.
+unchanged — you override the base URL, use the publishable key as `apiKey`, and add the user header.
 
 - Base URL: your proxy origin plus `/v1` (e.g. `https://proxy.example.com/v1`).
-- API key: the end user's JWT. How the proxy validates it is set by `security.userAuth` — see
-  [Custom JWT](/security/custom-jwt) and the other verifiers.
+- API key: an omni-model publishable key generated in the dashboard.
+- User header: selected by `security.userAuth` — see [Custom JWT](/security/custom-jwt).
 
-The token is sent as `Authorization: Bearer <token>` for the `jwt`, `firebase-auth`, `clerk`,
-`aws-cognito`, and `supabase` verifiers. Other verifiers use their own headers (`X-Firebase-AppCheck`,
-`X-Apple-Device-Token`, App Attest headers) — the OpenAI SDK's `defaultHeaders` option lets you
-set those instead.
+The SDK sends the publishable key as `Authorization: Bearer <key>`. User defaults are
+`X-Firebase-ID-Token`, `X-Clerk-Session-Token`, `X-Cognito-ID-Token`,
+`X-Supabase-Access-Token`, and `X-Omni-User-Token`. App-verification headers can be added to the
+same `defaultHeaders` object.
 
 ### OpenAI SDK
 
@@ -32,7 +33,8 @@ import OpenAI from "openai";
 
 const client = new OpenAI({
   baseURL: "https://proxy.example.com/v1",
-  apiKey: userJwt, // the signed-in user's token, NOT a provider key
+  apiKey: publishableKey,
+  defaultHeaders: { "X-Omni-User-Token": userJwt },
 });
 
 const stream = await client.chat.completions.create({
@@ -51,7 +53,8 @@ import OpenAI from "openai";
 
 const client = new OpenAI({
   baseURL: "https://proxy.example.com/v1",
-  apiKey: userJwt,
+  apiKey: publishableKey,
+  defaultHeaders: { "X-Omni-User-Token": userJwt },
 });
 
 const res = await client.chat.completions.create({
@@ -66,7 +69,8 @@ import OpenAI from "openai";
 
 const client = new OpenAI({
   baseURL: "https://proxy.example.com/v1",
-  apiKey: userJwt,
+  apiKey: publishableKey,
+  defaultHeaders: { "X-Omni-User-Token": userJwt },
 });
 
 const res = await client.embeddings.create({
@@ -79,8 +83,8 @@ console.log(res.data[0].embedding);
 
 <Warning>
   In a browser, `openai` requires `dangerouslyAllowBrowser: true`. That is only safe here because
-  `apiKey` is the **user's own JWT**, not a provider secret — never ship a provider key to the
-  client.
+  `apiKey` is an omni-model publishable key, not a provider secret. Never ship an OpenAI,
+  Anthropic, or Gemini provider key to the client.
 </Warning>
 
 ### Raw fetch + SSE
@@ -93,7 +97,8 @@ const res = await fetch("https://proxy.example.com/v1/chat/completions", {
   method: "POST",
   headers: {
     "Content-Type": "application/json",
-    Authorization: `Bearer ${userJwt}`,
+    Authorization: `Bearer ${publishableKey}`,
+    "X-Omni-User-Token": userJwt,
   },
   body: JSON.stringify({
     model: "gpt-4o-mini",

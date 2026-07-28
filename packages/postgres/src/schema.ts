@@ -231,6 +231,32 @@ export const promptCache = pgTable(
   ],
 );
 
+/**
+ * One-time links that let an operator add another dashboard administrator.
+ *
+ * Only a SHA-256 hash of the bearer token is stored. The email is deliberately
+ * bound to the row: possessing a link authorizes creating or promoting exactly
+ * that account, never an arbitrary address supplied at acceptance time.
+ */
+export const adminInvites = pgTable(
+  "omni_admin_invites",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    email: text("email").notNull(),
+    tokenHash: text("token_hash").notNull(),
+    invitedBy: text("invited_by").notNull(),
+    createdAt: instant("created_at").notNull().defaultNow(),
+    expiresAt: instant("expires_at").notNull(),
+    acceptedAt: instant("accepted_at"),
+    revokedAt: instant("revoked_at"),
+  },
+  (table) => [
+    uniqueIndex("omni_admin_invites_token_idx").on(table.tokenHash),
+    index("omni_admin_invites_email_idx").on(table.email),
+    index("omni_admin_invites_expires_idx").on(table.expiresAt),
+  ],
+);
+
 // `omni_migrations` is deliberately absent. It is the runner's own bookkeeping,
 // created before any migration runs (`migrations/run.ts`), so a schema that
 // declared it would make every `drizzle-kit generate` try to create it again.

@@ -1,4 +1,4 @@
-import { screen } from "@testing-library/react";
+import { screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it } from "vitest";
 import { createFakeApi, type FakeApi } from "./support/fake-api";
@@ -48,6 +48,24 @@ describe("the session guard", () => {
     expect(currentPath(router)).toBe("/routing");
     // The design gives this screen no title, so its own control is the anchor.
     expect(await screen.findByRole("button", { name: "Matching Rule" })).toBeInTheDocument();
+  });
+
+  it("shows the operator email without a healthy revision badge", async () => {
+    await renderAt("/routing");
+
+    const header = screen.getByText("ops@example.test").closest("header");
+    if (header === null) throw new Error("operator email is not in the application header");
+    expect(within(header).getByText("ops@example.test")).toBeInTheDocument();
+    expect(header).not.toHaveTextContent(/revision\s+\d+/i);
+  });
+
+  it("renders navigation glyphs as theme-aware masks", async () => {
+    await renderAt("/routing");
+
+    const authentication = screen.getByRole("link", { name: "Authentication" });
+    const icon = authentication.querySelector<HTMLElement>("span[style*='mask-image']");
+    expect(icon).not.toBeNull();
+    expect(icon).toHaveClass("bg-current");
   });
 });
 

@@ -9,7 +9,7 @@ your infrastructure — never inside an app binary. Clients authenticate with wh
 Clerk, AWS Cognito, Supabase, or any JWT), with Turnstile and reCAPTCHA Enterprise available for web/mobile
 application verification. You
 configure rate limits (request windows **and** token budgets) plus CEL-expression model routing
-across OpenAI, Anthropic, Google Gemini, and any OpenAI-compatible endpoint.
+across OpenAI, DeepSeek, Anthropic, Google Gemini, and any OpenAI-compatible endpoint.
 
 ## How to run it
 
@@ -39,9 +39,9 @@ Client (any OpenAI SDK)
 │                     user claims, headers     │
 └───────────────┬─────────────────────────────┘
                 │  translated on the fly
-      ┌─────────┼───────────────┬───────────────────────┐
-      ▼         ▼               ▼                       ▼
-   OpenAI   Anthropic   Google Gemini   any OpenAI-compatible endpoint
+      ┌─────────┼──────────┬───────────────┬───────────────────────┐
+      ▼         ▼          ▼               ▼                       ▼
+   OpenAI   DeepSeek   Anthropic   Google Gemini   any OpenAI-compatible endpoint
 ```
 
 Requests to Anthropic and Gemini are translated to and from the OpenAI wire format automatically —

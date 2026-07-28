@@ -42,9 +42,9 @@ function jwksFetch(calls: string[] = []): typeof fetch {
   };
 }
 
-function bearer(token: string): Request {
+function tokenRequest(token: string): Request {
   return new Request("https://proxy.example/v1/chat/completions", {
-    headers: { authorization: `Bearer ${token}` },
+    headers: { "x-cognito-id-token": token },
   });
 }
 
@@ -93,7 +93,7 @@ describe("awsCognitoVerifierFactory", () => {
       { ...baseOptions, requiredScopes: ["openid", "models:invoke"] },
       ctx,
     );
-    const result = await verifier.verify(bearer(await sign("access")), ctx);
+    const result = await verifier.verify(tokenRequest(await sign("access")), ctx);
 
     expect(result).toEqual({
       ok: true,
@@ -113,7 +113,7 @@ describe("awsCognitoVerifierFactory", () => {
   it("verifies an ID token against its aud app-client claim", async () => {
     const ctx = context(jwksFetch());
     const verifier = awsCognitoVerifierFactory.create({ ...baseOptions, tokenUse: "id" }, ctx);
-    expect(await verifier.verify(bearer(await sign("id")), ctx)).toMatchObject({
+    expect(await verifier.verify(tokenRequest(await sign("id")), ctx)).toMatchObject({
       ok: true,
       identity: { userId: "cognito-user-id" },
     });
@@ -126,14 +126,16 @@ describe("awsCognitoVerifierFactory", () => {
         { ...baseOptions, tokenUse: "either" },
         ctx,
       );
-      expect(await verifier.verify(bearer(await sign(tokenUse)), ctx)).toMatchObject({ ok: true });
+      expect(await verifier.verify(tokenRequest(await sign(tokenUse)), ctx)).toMatchObject({
+        ok: true,
+      });
     }
   });
 
   it("rejects the wrong token kind", async () => {
     const ctx = context(jwksFetch());
     const verifier = awsCognitoVerifierFactory.create(baseOptions, ctx);
-    expect(await verifier.verify(bearer(await sign("id")), ctx)).toMatchObject({
+    expect(await verifier.verify(tokenRequest(await sign("id")), ctx)).toMatchObject({
       ok: false,
       reason: "Cognito id token is not accepted",
     });
@@ -151,7 +153,7 @@ describe("awsCognitoVerifierFactory", () => {
       { ...baseOptions, tokenUse: "either", requiredScopes: ["models:invoke"] },
       ctx,
     );
-    expect(await verifier.verify(bearer(await sign(kind, overrides)), ctx)).toMatchObject({
+    expect(await verifier.verify(tokenRequest(await sign(kind, overrides)), ctx)).toMatchObject({
       ok: false,
       reason: expect.stringContaining(reason),
     });
@@ -169,7 +171,7 @@ describe("awsCognitoVerifierFactory", () => {
       const ctx = context(jwksFetch());
       const verifier = awsCognitoVerifierFactory.create(baseOptions, ctx);
       expect(
-        await verifier.verify(bearer(await sign("access", overrides, expiration)), ctx),
+        await verifier.verify(tokenRequest(await sign("access", overrides, expiration)), ctx),
       ).toMatchObject({ ok: false, reason: expect.stringContaining(reason) });
     }
   });
@@ -184,7 +186,7 @@ describe("awsCognitoVerifierFactory", () => {
     const changed = `${parts[0]}.${parts[1]}.${signature[0] === "a" ? "b" : "a"}${signature.slice(1)}`;
     const ctx = context(jwksFetch());
     const verifier = awsCognitoVerifierFactory.create(baseOptions, ctx);
-    expect(await verifier.verify(bearer(changed), ctx)).toMatchObject({
+    expect(await verifier.verify(tokenRequest(changed), ctx)).toMatchObject({
       ok: false,
       reason: expect.stringContaining("signature"),
     });
@@ -208,7 +210,7 @@ describe("awsCognitoVerifierFactory", () => {
     ]) {
       const ctx = context(fetchImpl);
       const verifier = awsCognitoVerifierFactory.create(baseOptions, ctx);
-      expect(await verifier.verify(bearer(await sign("access")), ctx)).toEqual({
+      expect(await verifier.verify(tokenRequest(await sign("access")), ctx)).toEqual({
         ok: false,
         status: 503,
         reason: "AWS Cognito verification unavailable",

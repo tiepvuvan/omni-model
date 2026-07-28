@@ -136,11 +136,41 @@ describe.skipIf(!url)("PostgresPromptCache (integration)", () => {
       await store.put("stale", { kind: "completion", completion: {}, usage: null }, 0);
 
       // One expired plus two over the cap of two.
-      expect(await store.evict(2)).toBe(3);
+      expect(await store.evict(2, Number.MAX_SAFE_INTEGER)).toBe(3);
       expect((await store.stats()).entries).toBe(2);
       // Oldest first, so the two most recent survive.
       expect(await store.get("a")).toBeNull();
       expect(await store.get("d")).not.toBeNull();
+    } finally {
+      await admin.query(`DROP SCHEMA IF EXISTS ${own} CASCADE`);
+    }
+  });
+
+  test("evicts the oldest entries until the byte budget fits", async () => {
+    const own = `omni_evict_bytes_${Date.now().toString(36)}`;
+    await admin.query(`CREATE SCHEMA IF NOT EXISTS ${own}`);
+    try {
+      const isolated = new Pool({ connectionString: url, options: `-c search_path=${own}` });
+      pools.push(isolated);
+      const scoped = isolated as unknown as PgPoolLike;
+      await runMigrations(scoped, { logger: silentLogger });
+      const store = new PostgresPromptCache(scoped, silentLogger);
+
+      for (const key of ["old", "middle", "new"]) {
+        await store.put(
+          key,
+          { kind: "completion", completion: { value: key.repeat(20) }, usage: null },
+          60,
+        );
+      }
+      const before = await store.stats();
+      expect(before.bytes).toBeGreaterThan(0);
+      const budget = Math.floor((before.bytes ?? 0) / 2);
+
+      expect(await store.evict(100, budget)).toBeGreaterThan(0);
+      expect((await store.stats()).bytes).toBeLessThanOrEqual(budget);
+      expect(await store.get("old")).toBeNull();
+      expect(await store.get("new")).not.toBeNull();
     } finally {
       await admin.query(`DROP SCHEMA IF EXISTS ${own} CASCADE`);
     }

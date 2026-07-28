@@ -133,7 +133,7 @@ export function ModelField({
           aria-describedby={`${id}-help`}
           autoComplete="off"
           spellCheck={false}
-          placeholder="gpt-4o-mini"
+          placeholder={target.type === "deepseek" ? "deepseek-v4-flash" : "gpt-4o-mini"}
           className="w-full rounded-[var(--radius-field)] border border-solid border-border bg-input-background p-[10px] type-mono-12 text-foreground-primary"
           onChange={(event) => {
             onChange(event.target.value);

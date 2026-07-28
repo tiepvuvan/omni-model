@@ -1,13 +1,13 @@
 ---
 title: Custom JWT & JWT-family verifiers
-description: Authenticate the self-hosted proxy with any JWT issuer, Firebase Auth, Clerk, Cognito, or Supabase using Authorization Bearer tokens.
+description: Authenticate proxy users with dedicated JWT headers for any issuer, Firebase Auth, Clerk, Cognito, or Supabase.
 ---
 
 The `jwt`, `firebase-auth`, `clerk`, `aws-cognito`, and `supabase` verifiers all authenticate the
 self-hosted proxy by validating a **JSON Web Token** carried in a request
-header — by default `Authorization: Bearer <token>`. They share the same JWKS
-resolver and error handling; the named variants add each issuer's required
-claim policy rather than relying on a hand-written generic JWT configuration.
+header. Each integration has a dedicated default `X-*` header so
+`Authorization: Bearer <publishable-key>` remains available to OpenAI SDKs. They share the same
+JWKS resolver and error handling; the named variants add each issuer's required claim policy.
 
 These verifiers are configured as `security.userAuth` — layer 1, the user. All of them validate
 tokens against the issuer's public keys (or a shared secret), so none of them
@@ -27,22 +27,19 @@ Verifies arbitrary JWTs from any issuer against a JWKS endpoint, a shared secret
 `secret`, or `publicKey`.
 
 ```sh
-export OMNI_SECURITY_JSON='{
-  "mode":"any",
-  "providers":[{
+export OMNI_SECURITY_USER_AUTH_JSON='{
     "type":"jwt",
     "jwksUrl":"https://auth.example.com/.well-known/jwks.json",
     "issuer":"https://auth.example.com",
     "audience":"omni-model",
     "algorithms":["RS256"]
-  }]
 }'
 ```
 
-<ParamField path="header" type="string" default="authorization">
+<ParamField path="header" type="string" default="x-omni-user-token">
 Header carrying the token.
 </ParamField>
-<ParamField path="scheme" type="bearer | none" default="bearer">
+<ParamField path="scheme" type="bearer | none" default="none">
 `bearer` strips a case-insensitive `Bearer ` prefix; `none` uses the raw,
 trimmed header value.
 </ParamField>
@@ -68,7 +65,7 @@ Expected `aud` claim. Unchecked when omitted.
 Claim mapped to `user.id`.
 </ParamField>
 <ParamField path="deviceIdClaim" type="string">
-Claim mapped to `device.id`, if present.
+Claim retained as the request-log device id, if present. Device ids are not exposed to CEL.
 </ParamField>
 <ParamField path="clockToleranceSeconds" type="integer" default="60">
 Allowed clock skew, in seconds.
@@ -84,7 +81,7 @@ exactly one algorithm.
 
 Verifies Firebase Authentication ID tokens (RS256) against Google's
 secure-token JWKS. The Firebase uid (`sub`) becomes `user.id`. Clients send
-`Authorization: Bearer <ID token>`.
+the raw token in `X-Firebase-ID-Token`.
 
 ```sh
 export OMNI_SECURITY_USER_AUTH_JSON='{"type":"firebase-auth","projectId":"my-app-12345"}'
@@ -94,8 +91,11 @@ export OMNI_SECURITY_USER_AUTH_JSON='{"type":"firebase-auth","projectId":"my-app
 Firebase project id, e.g. `my-app-12345`. The verifier pins the issuer to
 `https://securetoken.google.com/<projectId>` and the audience to `<projectId>`.
 </ParamField>
-<ParamField path="header" type="string" default="authorization">
-Header carrying the ID token as `Bearer <token>`.
+<ParamField path="header" type="string" default="x-firebase-id-token">
+Header carrying the raw ID token.
+</ParamField>
+<ParamField path="scheme" type="bearer | none" default="none">
+How to extract the token from the configured header.
 </ParamField>
 <ParamField path="clockToleranceSeconds" type="integer" default="60">
 Allowed clock skew, in seconds.
@@ -128,8 +128,11 @@ Expected issuer.
 <ParamField path="audience" type="string | string[]" default="authenticated">
 Expected audience.
 </ParamField>
-<ParamField path="header" type="string" default="authorization">
-Header carrying the access token as `Bearer <token>`.
+<ParamField path="header" type="string" default="x-supabase-access-token">
+Header carrying the raw access token.
+</ParamField>
+<ParamField path="scheme" type="bearer | none" default="none">
+How to extract the token from the configured header.
 </ParamField>
 <ParamField path="clockToleranceSeconds" type="integer" default="60">
 Allowed clock skew, in seconds.
@@ -142,13 +145,14 @@ so the JWKS endpoint and issuer can be derived.
 
 ## Sending the token
 
-All three verifiers read `Authorization: Bearer <token>` by default. Point any
-OpenAI SDK at the proxy and pass the token as the API key.
+Set the OpenAI SDK API key to an omni-model publishable key. Send the end-user token through the
+default header for the selected verifier.
 
 <CodeGroup>
 ```bash cURL
 curl https://your-proxy.example.com/v1/chat/completions \
-  -H "Authorization: Bearer $ID_TOKEN" \
+  -H "Authorization: Bearer $PUBLISHABLE_KEY" \
+  -H "X-Firebase-ID-Token: $ID_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"model":"gpt-4o-mini","messages":[{"role":"user","content":"hi"}]}'
 ```
@@ -158,7 +162,8 @@ from openai import OpenAI
 
 client = OpenAI(
     base_url="https://your-proxy.example.com/v1",
-    api_key=id_token,  # sent as Authorization: Bearer <id_token>
+    api_key=publishable_key,
+    default_headers={"X-Firebase-ID-Token": id_token},
 )
 client.chat.completions.create(
     model="gpt-4o-mini",
@@ -171,43 +176,23 @@ An invalid or expired token is rejected with a token-free reason (for example
 `token expired`, `token signature verification failed`) and an OpenAI-style
 error body. The raw token is never logged or echoed.
 
-## Combining verifiers
+## User and application verification
 
-`security.mode` controls how multiple verifiers combine, and `publicPaths`
-exempts specific routes from authentication.
+`security.userAuth` contains exactly one user verifier. Optional application-verification methods
+belong in `security.appAuth.providers`; its `mode` controls whether any or all app proofs must pass.
+The two layers are merged only after they verify successfully.
 
-<Tabs>
-<Tab title="mode: any (explicit)">
-Verifiers are consulted in config order. The first one that **accepts** wins;
-a verifier whose credential is absent is skipped. Use this to accept tokens
-from more than one issuer. This mode must be selected explicitly; the default is `all`.
-
-```sh
-export OMNI_SECURITY_JSON='{
-  "mode":"any",
-  "providers":[
-    {"type":"firebase-auth","projectId":"my-app-12345"},
-    {"type":"supabase","url":"https://abcdefgh.supabase.co"}
-  ]
-}'
+```yaml
+security:
+  userAuth:
+    type: firebase-auth
+    projectId: my-app-12345
+  appAuth:
+    mode: any
+    providers:
+      - type: firebase-app-check
+        projectNumber: "1234567890"
 ```
-</Tab>
-<Tab title="mode: all">
-**Every** configured verifier must accept — for example, require a valid user
-token *and* an app-attestation credential on the same request. Identities are
-merged; the first defined `user.id`/`device.id` in config order wins.
-
-```sh
-export OMNI_SECURITY_JSON='{
-  "mode":"all",
-  "providers":[
-    {"type":"firebase-auth","projectId":"my-app-12345"},
-    {"type":"firebase-app-check","projectNumber":"1234567890"}
-  ]
-}'
-```
-</Tab>
-</Tabs>
 
 `publicPaths` bypasses authentication for exact paths, or by prefix when the
 pattern ends with `*`:

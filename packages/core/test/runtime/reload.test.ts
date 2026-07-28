@@ -113,6 +113,20 @@ describe("reloading configuration", () => {
     expect((await proxy.app.fetch(chatRequest(body))).status).toBe(413);
   });
 
+  it("applies changed operator-console identity settings", async () => {
+    const proxy = await createTestProxy({ yaml: BASE });
+    expect(proxy.holder.current()?.organizationName).toBeNull();
+    expect(proxy.holder.current()?.customDomain).toBeNull();
+
+    await proxy.reload(`${BASE}server:
+  organizationName: Northstar
+  customDomain: ai.northstar.example
+`);
+
+    expect(proxy.holder.current()?.organizationName).toBe("Northstar");
+    expect(proxy.holder.current()?.customDomain).toBe("ai.northstar.example");
+  });
+
   it("adds and removes CORS", async () => {
     const proxy = await createTestProxy({ yaml: BASE });
     const origin = { origin: "https://app.example" };

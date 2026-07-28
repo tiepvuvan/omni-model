@@ -5,7 +5,7 @@ stay on your infrastructure — never inside an app binary. Clients authenticate
 already have (Firebase App Check, Apple App Attest / DeviceCheck, Firebase Auth, Clerk, AWS
 Cognito, Supabase, or any JWT), and can add Cloudflare Turnstile, reCAPTCHA Enterprise, or Google Play Integrity as an
 application-verification layer. You configure rate limits (request windows **and** token budgets) plus CEL-expression
-model routing across OpenAI, Anthropic, Google Gemini and any OpenAI-compatible endpoint.
+model routing across OpenAI, DeepSeek, Anthropic, Google Gemini and any OpenAI-compatible endpoint.
 
 It ships as **one container image backed by PostgreSQL** — run it anywhere that runs containers.
 
@@ -36,9 +36,9 @@ Client (any OpenAI SDK)
 │                     user claims, headers, ... │
 └───────────────┬───────────────────────────────┘
                 │  translated on the fly
-      ┌─────────┼─────────────┬──────────────────────────┐
-      ▼         ▼             ▼                          ▼
-   OpenAI   Anthropic   Google Gemini   any OpenAI-compatible endpoint
+      ┌─────────┼──────────┬─────────────┬──────────────────────────┐
+      ▼         ▼          ▼             ▼                          ▼
+   OpenAI   DeepSeek   Anthropic   Google Gemini   any OpenAI-compatible endpoint
 ```
 
 Point any OpenAI SDK at your proxy URL and keep using the OpenAI wire format everywhere —
@@ -178,8 +178,11 @@ import OpenAI from "openai";
 
 const client = new OpenAI({
   baseURL: "https://ai.example.com/v1",
-  apiKey: "unused", // the proxy holds the real provider keys
-  defaultHeaders: { "X-Firebase-AppCheck": await getAppCheckToken() },
+  apiKey: publishableKey,
+  defaultHeaders: {
+    "X-Firebase-ID-Token": await getIdToken(),
+    "X-Firebase-AppCheck": await getAppCheckToken(),
+  },
 });
 
 const completion = await client.chat.completions.create({
@@ -188,15 +191,15 @@ const completion = await client.chat.completions.create({
 });
 ```
 
-**Python** (Firebase Auth / Supabase / custom JWT — the SDK's `api_key` becomes the
-`Authorization: Bearer` token your verifier checks):
+**Python** (publishable key plus Firebase Auth):
 
 ```python
 from openai import OpenAI
 
 client = OpenAI(
     base_url="https://ai.example.com/v1",
-    api_key=user_id_token,  # Firebase ID token, Supabase access token, or your JWT
+    api_key=publishable_key,
+    default_headers={"X-Firebase-ID-Token": user_id_token},
 )
 
 completion = client.chat.completions.create(

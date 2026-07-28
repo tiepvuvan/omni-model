@@ -188,11 +188,29 @@ ALTER TABLE "omni_request_contents" ADD COLUMN "body" jsonb;
 ALTER TABLE "omni_request_contents" ADD COLUMN "headers" jsonb;
 `;
 
+/** Email-bound, one-time links for adding dashboard administrators. */
+const ADMIN_INVITES = `
+CREATE TABLE "omni_admin_invites" (
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+	"email" text NOT NULL,
+	"token_hash" text NOT NULL,
+	"invited_by" text NOT NULL,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"expires_at" timestamp with time zone NOT NULL,
+	"accepted_at" timestamp with time zone,
+	"revoked_at" timestamp with time zone
+);
+CREATE UNIQUE INDEX "omni_admin_invites_token_idx" ON "omni_admin_invites" USING btree ("token_hash");
+CREATE INDEX "omni_admin_invites_email_idx" ON "omni_admin_invites" USING btree ("email");
+CREATE INDEX "omni_admin_invites_expires_idx" ON "omni_admin_invites" USING btree ("expires_at");
+`;
+
 /** Every migration, in application order. */
 export const MIGRATIONS: readonly Migration[] = [
   { version: 1, name: "baseline", sql: `${BASELINE_TABLES}\n${CONFIG_CHANGE_FEED}` },
   { version: 2, name: "prompt_cache", sql: PROMPT_CACHE },
   { version: 3, name: "request_details", sql: REQUEST_DETAILS },
+  { version: 4, name: "admin_invites", sql: ADMIN_INVITES },
 ];
 
 /** Highest version this build knows how to apply. */

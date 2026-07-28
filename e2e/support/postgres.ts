@@ -92,8 +92,8 @@ export function fakeUpstream(options: { model?: string } = {}): {
   };
 }
 
-/** A HS256 bearer token the `jwt` verifier accepts for `secret`. */
-export async function bearer(secret: string, subject = "user-e2e"): Promise<string> {
+/** A raw HS256 token the default `jwt` verifier accepts for `secret`. */
+export async function signedToken(secret: string, subject = "user-e2e"): Promise<string> {
   const { createHmac } = await import("node:crypto");
   const encode = (value: object): string =>
     Buffer.from(JSON.stringify(value)).toString("base64url");
@@ -101,7 +101,7 @@ export async function bearer(secret: string, subject = "user-e2e"): Promise<stri
   const head = encode({ alg: "HS256", typ: "JWT" });
   const payload = encode({ sub: subject, iat: now, exp: now + 3600 });
   const signature = createHmac("sha256", secret).update(`${head}.${payload}`).digest("base64url");
-  return `Bearer ${head}.${payload}.${signature}`;
+  return `${head}.${payload}.${signature}`;
 }
 
 /** Poll until `check` passes, or fail with what it last saw. */

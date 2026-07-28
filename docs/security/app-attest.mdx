@@ -14,10 +14,11 @@ build of your app running on real Apple hardware. Both apply to the
   against Apple's `validate_device_token` endpoint.
 
 <Info>
-On success the credential identity becomes `device.id` (the App Attest key id,
-or a hash of the DeviceCheck token). Neither verifier establishes a user, so
-pair it with a [JWT-family verifier](/security/custom-jwt) under `mode: all`
-when you also need `user.id`.
+On success, `user.providers` includes `apple-app-attest` or `apple-device-check`.
+The device identifier is retained for request-log attribution but is not part of
+the CEL context. Neither verifier establishes a user, so pair it with a
+[JWT-family verifier](/security/custom-jwt) under `mode: all` when you also need
+`user.id`.
 </Info>
 
 For the client-side Swift implementation, see [the Swift integration
@@ -115,7 +116,7 @@ three headers alongside the normal request body:
 
 The server verifies the ECDSA signature with the registered key, checks the App
 ID hash, requires the sign counter to **strictly increase**, and deletes the
-challenge. The key id becomes `device.id`.
+challenge. The key id is retained for request-log attribution.
 </Step>
 </Steps>
 

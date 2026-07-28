@@ -15,7 +15,7 @@ final class MacPawE2ETests: XCTestCase {
   private func makeClient() async throws -> OpenAI {
     let box = OmniAuthBox()
     // The E2E proxy has no auth; send a throwaway bearer it will ignore.
-    try await box.refresh(from: BearerTokenAuth(staticToken: "e2e"))
+    try await box.refresh(from: PublishableKeyAuth(staticKey: "e2e"))
     return OmniModel.makeOpenAI(endpoint: OmniEndpoint(baseURL), box: box)
   }
 

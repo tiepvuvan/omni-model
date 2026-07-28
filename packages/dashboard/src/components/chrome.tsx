@@ -4,34 +4,34 @@ import { useCallback, useEffect, useState } from "react";
 import chevronIcon from "../assets/chevron.svg";
 import navAuthentication from "../assets/nav-authentication.svg";
 import navLogs from "../assets/nav-logs.svg";
+import navPublishableKeys from "../assets/nav-publishable-keys.svg";
 import navRateLimit from "../assets/nav-rate-limit.svg";
 import navRouting from "../assets/nav-routing.svg";
 import navSettings from "../assets/nav-settings.svg";
 import navUsers from "../assets/nav-users.svg";
 import { type Actor, api, type StatusState } from "../lib/api";
-import { Badge, Button, cx } from "./ui/primitives";
+import { Badge, Button, cx, ThemedIcon } from "./ui/primitives";
 
 /**
  * The chrome from the design: a 60px header bar over a 300px sidebar and the
  * content pane.
  *
- * Navigation lists what the deployment has, in the design's order. `Users`
- * appears in the file and has no screen yet, so it renders disabled rather than
- * being dropped — the sidebar is the map of the product.
+ * Navigation lists what the deployment has, in the design's order.
  */
 const NAV: readonly {
   label: string;
   icon: string;
-  to?: "/routing" | "/authentication" | "/rate-limit" | "/logs" | "/settings";
+  to?: "/publishable-keys" | "/routing" | "/authentication" | "/rate-limit" | "/logs" | "/settings";
 }[] = [
+  { label: "Public API Keys", icon: navPublishableKeys, to: "/publishable-keys" },
   { label: "Authentication", icon: navAuthentication, to: "/authentication" },
   { label: "Routing", icon: navRouting, to: "/routing" },
   { label: "Rate Limit", icon: navRateLimit, to: "/rate-limit" },
   { label: "Logs", icon: navLogs, to: "/logs" },
 ];
 
-const ADMIN_NAV: readonly { label: string; icon: string; to?: "/settings" }[] = [
-  { label: "Users", icon: navUsers },
+const ADMIN_NAV: readonly { label: string; icon: string; to: "/users" | "/settings" }[] = [
+  { label: "Users", icon: navUsers, to: "/users" },
   { label: "Settings", icon: navSettings, to: "/settings" },
 ];
 
@@ -61,14 +61,7 @@ const NAV_ITEM =
   "flex w-full items-center gap-[8px] rounded-[var(--radius-nav)] p-[8px] type-copy-14";
 
 function NavIcon({ src }: { src: string }) {
-  return (
-    <img
-      src={src}
-      alt=""
-      aria-hidden
-      className="size-[20px] shrink-0 overflow-clip rounded-[4px]"
-    />
-  );
+  return <ThemedIcon src={src} className="size-[20px] overflow-clip rounded-[4px]" />;
 }
 
 function Sidebar() {
@@ -102,7 +95,7 @@ function Sidebar() {
       )}
 
       <div className="flex w-full items-center gap-[6px] pb-[6px] pl-[2px] pr-[8px] pt-[12px]">
-        <img src={chevronIcon} alt="" aria-hidden className="h-[11px] w-[10px] shrink-0" />
+        <ThemedIcon src={chevronIcon} className="h-[11px] w-[10px] text-foreground-secondary" />
         <span className="type-strong-13 text-foreground-secondary">Admin</span>
       </div>
 
@@ -133,26 +126,6 @@ function Sidebar() {
   );
 }
 
-/**
- * The operator's initial in the design's 32px circle.
- *
- * The file shows a photograph here, which is a placeholder for whoever is signed
- * in rather than an asset to ship — there is no avatar in the data model, and
- * shipping a stock portrait of a stranger would be worse than wrong.
- */
-function Avatar({ actor }: { actor: Actor }) {
-  const initial = (actor.name ?? actor.email).trim().charAt(0).toUpperCase();
-  return (
-    <span
-      aria-hidden
-      title={actor.email}
-      className="flex size-[32px] items-center justify-center rounded-full bg-item-selection type-strong-13 text-foreground-secondary"
-    >
-      {initial}
-    </span>
-  );
-}
-
 export function AppChrome({
   actor,
   status,
@@ -178,17 +151,14 @@ export function AppChrome({
   return (
     <div className="flex h-dvh flex-col overflow-hidden bg-background-l1">
       <header className="flex h-[60px] shrink-0 items-center justify-between border-b border-solid border-border bg-background-l1 px-[12px] py-[10px]">
-        <span className="type-heading-14 text-foreground-primary">Omni Model</span>
+        <span className="type-heading-14 text-foreground-primary">
+          {status?.organizationName ?? "Omni Model"}
+        </span>
 
         <div className="flex items-center gap-[8px]">
-          {status !== null ? (
-            status.lastError != null ? (
-              <Badge tone="danger">revision rejected</Badge>
-            ) : (
-              <Badge tone={status.configured ? "success" : "warning"}>
-                {status.configured ? `revision ${status.revision ?? "—"}` : "not configured"}
-              </Badge>
-            )
+          {status?.lastError != null ? <Badge tone="danger">configuration rejected</Badge> : null}
+          {status !== null && !status.configured ? (
+            <Badge tone="warning">not configured</Badge>
           ) : null}
           <Button
             size="medium"
@@ -200,7 +170,7 @@ export function AppChrome({
           <Button size="medium" onClick={signOut}>
             Sign out
           </Button>
-          <Avatar actor={actor} />
+          <span className="type-label-12 text-foreground-secondary">{actor.email}</span>
         </div>
       </header>
 
@@ -225,20 +195,26 @@ export function ActionBar({
   busy,
   onDiscard,
   onSave,
+  actions,
 }: {
   dirty: boolean;
   busy: boolean;
   onDiscard: () => void;
   onSave: () => void;
+  /** Screen-specific actions placed immediately before Save Changes. */
+  actions?: ReactNode;
 }) {
   return (
     <div className="sticky top-0 z-20 flex w-full items-center justify-between border-b border-solid border-border bg-background-l2 p-[12px]">
       <Button onClick={onDiscard} disabled={!dirty || busy}>
         Discard
       </Button>
-      <Button variant="primary" onClick={onSave} disabled={!dirty || busy}>
-        {busy ? "Saving…" : "Save Changes"}
-      </Button>
+      <div className="flex h-[36px] items-center gap-[12px]">
+        {actions}
+        <Button variant="primary" onClick={onSave} disabled={!dirty || busy}>
+          {busy ? "Saving…" : "Save Changes"}
+        </Button>
+      </div>
     </div>
   );
 }

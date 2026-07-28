@@ -75,8 +75,9 @@ async function submitChat(turnstileToken: string) {
   return fetch("https://proxy.example.com/v1/chat/completions", {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${userToken}`,
+      Authorization: `Bearer ${publishableKey}`,
       "Content-Type": "application/json",
+      "X-Omni-User-Token": userToken,
       "X-Turnstile-Token": turnstileToken,
     },
     body: JSON.stringify({
@@ -101,4 +102,3 @@ verification_unavailable`; they are not mislabeled as client failures.
 See Cloudflare's official [client-side rendering](https://developers.cloudflare.com/turnstile/get-started/client-side-rendering/)
 and [Siteverify](https://developers.cloudflare.com/turnstile/get-started/server-side-validation/)
 documentation for widget configuration and token lifecycle details.
-

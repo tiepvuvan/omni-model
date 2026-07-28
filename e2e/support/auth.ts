@@ -22,7 +22,7 @@ function base64url(bytes: Uint8Array): string {
 
 let cached: string | undefined;
 
-/** A bearer token the e2e configs' `jwt` verifier accepts (HS256). */
+/** A raw token the e2e configs' `jwt` verifier accepts (HS256). */
 export async function e2eToken(): Promise<string> {
   if (cached !== undefined) return cached;
   const now = Math.floor(Date.now() / 1000);
@@ -46,5 +46,5 @@ export async function e2eToken(): Promise<string> {
 
 /** Headers carrying the e2e credential, to spread into a fetch init. */
 export async function authHeaders(): Promise<Record<string, string>> {
-  return { authorization: `Bearer ${await e2eToken()}` };
+  return { "x-omni-user-token": await e2eToken() };
 }

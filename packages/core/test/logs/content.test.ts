@@ -36,11 +36,11 @@ describe("request-detail capture", () => {
   it("retains header names while redacting credentials", () => {
     const captured = captureRequestHeaders(
       new Headers({
-        authorization: "Bearer secret-user-token",
+        authorization: "Bearer secret-publishable-key",
         cookie: "session=secret-cookie",
         "content-type": "application/json",
         "x-firebase-appcheck": "secret-app-check",
-        "x-omni-key": "omni_secret-write-key",
+        "x-firebase-id-token": "secret-user-token",
         "x-request-trace": "trace-1",
       }),
       4_096,
@@ -51,13 +51,13 @@ describe("request-detail capture", () => {
       "content-type": "application/json",
       cookie: "[REDACTED]",
       "x-firebase-appcheck": "[REDACTED]",
-      "x-omni-key": "[REDACTED]",
+      "x-firebase-id-token": "[REDACTED]",
       "x-request-trace": "trace-1",
     });
     expect(JSON.stringify(captured)).not.toContain("secret-user-token");
     expect(JSON.stringify(captured)).not.toContain("secret-cookie");
     expect(JSON.stringify(captured)).not.toContain("secret-app-check");
-    expect(JSON.stringify(captured)).not.toContain("secret-write-key");
+    expect(JSON.stringify(captured)).not.toContain("secret-publishable-key");
   });
 
   it("caps large bodies and marks them as partial", () => {

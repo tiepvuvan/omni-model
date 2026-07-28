@@ -2,8 +2,6 @@ import { describe, expect, it } from "vitest";
 import type { Identity } from "../../src/auth/types.js";
 import { buildRequestFacts, extractClientIp } from "../../src/server/facts.js";
 
-const NOW = 1_750_000_000_000;
-
 function build(overrides: Partial<Parameters<typeof buildRequestFacts>[0]> = {}) {
   return buildRequestFacts({
     method: "POST",
@@ -12,7 +10,6 @@ function build(overrides: Partial<Parameters<typeof buildRequestFacts>[0]> = {})
     ip: null,
     body: null,
     identity: null,
-    now: NOW,
     ...overrides,
   });
 }
@@ -68,13 +65,10 @@ describe("buildRequestFacts", () => {
     });
     expect(facts.request).toEqual({
       model: "gpt-4o",
-      stream: true,
-      messageCount: 2,
+      inputTokenCount: 42,
       maxTokens: 100,
       temperature: 0.5,
-      user: "client-user",
     });
-    expect(facts.now).toBe(NOW);
   });
 
   it("prefers max_completion_tokens over max_tokens", () => {
@@ -88,15 +82,13 @@ describe("buildRequestFacts", () => {
     const facts = build({ body: null });
     expect(facts.request).toEqual({
       model: "",
-      stream: false,
-      messageCount: 0,
+      inputTokenCount: 0,
       maxTokens: null,
       temperature: null,
-      user: null,
     });
     const embedFacts = build({ body: { model: "embed-1" } });
     expect(embedFacts.request.model).toBe("embed-1");
-    expect(embedFacts.request.messageCount).toBe(0);
+    expect(embedFacts.request.inputTokenCount).toBeGreaterThan(0);
   });
 
   it("redacts sensitive headers but keeps them present", () => {
@@ -131,15 +123,15 @@ describe("buildRequestFacts", () => {
     expect(facts.http.headers["x-appattest-keyid"]).toBe("<redacted>");
   });
 
-  it("maps an anonymous request to unauthenticated facts", () => {
+  it("maps a request without identity to an empty user fact", () => {
     const facts = build({});
-    expect(facts.user).toEqual({ id: null, authenticated: false, provider: null, claims: {} });
-    expect(facts.device.id).toBeNull();
+    expect(facts.user).toEqual({ id: null, claims: {}, providers: [] });
   });
 
-  it("maps identity to user/device facts", () => {
+  it("maps identity to the exact user fact surface", () => {
     const identity: Identity = {
       provider: "fake-auth",
+      providers: ["fake-auth", "firebase-app-check"],
       userId: "u1",
       deviceId: "d1",
       claims: { tier: "pro" },
@@ -147,13 +139,16 @@ describe("buildRequestFacts", () => {
     const facts = build({ identity, ip: "9.9.9.9" });
     expect(facts.user).toEqual({
       id: "u1",
-      authenticated: true,
-      provider: "fake-auth",
       claims: { tier: "pro" },
+      providers: ["fake-auth", "firebase-app-check"],
     });
-    expect(facts.device.id).toBe("d1");
     expect(facts.http.ip).toBe("9.9.9.9");
     expect(facts.http.method).toBe("POST");
     expect(facts.http.path).toBe("/v1/chat/completions");
+  });
+
+  it("allows a routing simulation to override the measured input token count", () => {
+    const facts = build({ body: { model: "m" }, inputTokenCount: 12_345 });
+    expect(facts.request.inputTokenCount).toBe(12_345);
   });
 });

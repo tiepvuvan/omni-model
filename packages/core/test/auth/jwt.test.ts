@@ -86,7 +86,7 @@ describe("jwtVerifierFactory", () => {
         { ...basePayload, device_id: "dev-9", tier: "pro" },
         { alg: "ES256", kid: "key-1" },
       );
-      const result = await verifier.verify(withHeader("authorization", `Bearer ${token}`), ctx);
+      const result = await verifier.verify(withHeader("x-omni-user-token", token), ctx);
       if (result === null || !result.ok) throw new Error("expected success");
       expect(result.identity.provider).toBe("jwt");
       expect(result.identity.userId).toBe("user-1");
@@ -97,9 +97,12 @@ describe("jwtVerifierFactory", () => {
 
     it("accepts a case-insensitive bearer prefix", async () => {
       const ctx = makeCtx(jwksFetch(JWKS_URL, [jwk], []));
-      const verifier = jwtVerifierFactory.create(options, ctx);
+      const verifier = jwtVerifierFactory.create(
+        { ...options, header: "x-user-token", scheme: "bearer" },
+        ctx,
+      );
       const token = await sign(privateKey, basePayload, { alg: "ES256", kid: "key-1" });
-      const result = await verifier.verify(withHeader("authorization", `bEaReR ${token}`), ctx);
+      const result = await verifier.verify(withHeader("x-user-token", `bEaReR ${token}`), ctx);
       expect(result?.ok).toBe(true);
     });
 
@@ -110,10 +113,13 @@ describe("jwtVerifierFactory", () => {
       expect(await verifier.verify(request, ctx)).toBeNull();
     });
 
-    it("returns null for a non-bearer authorization header", async () => {
+    it("does not consume Authorization, which is reserved for publishable keys", async () => {
       const ctx = makeCtx(rejectFetch);
       const verifier = jwtVerifierFactory.create(options, ctx);
-      const result = await verifier.verify(withHeader("authorization", "Basic dXNlcjpwYXNz"), ctx);
+      const result = await verifier.verify(
+        withHeader("authorization", "Bearer omk_publishable-key"),
+        ctx,
+      );
       expect(result).toBeNull();
     });
 
@@ -126,7 +132,7 @@ describe("jwtVerifierFactory", () => {
         { alg: "ES256", kid: "key-1" },
         NOW_SEC - 3600,
       );
-      const result = await verifier.verify(withHeader("authorization", `Bearer ${token}`), ctx);
+      const result = await verifier.verify(withHeader("x-omni-user-token", token), ctx);
       if (result === null || result.ok) throw new Error("expected rejection");
       expect(result.reason).toContain("expired");
       expect(result.reason).not.toContain(token);
@@ -141,7 +147,7 @@ describe("jwtVerifierFactory", () => {
         { alg: "ES256", kid: "key-1" },
         NOW_SEC - 30,
       );
-      const result = await verifier.verify(withHeader("authorization", `Bearer ${token}`), ctx);
+      const result = await verifier.verify(withHeader("x-omni-user-token", token), ctx);
       expect(result?.ok).toBe(true);
     });
 
@@ -153,7 +159,7 @@ describe("jwtVerifierFactory", () => {
         { ...basePayload, iss: "https://evil.example.com" },
         { alg: "ES256", kid: "key-1" },
       );
-      const result = await verifier.verify(withHeader("authorization", `Bearer ${token}`), ctx);
+      const result = await verifier.verify(withHeader("x-omni-user-token", token), ctx);
       if (result === null || result.ok) throw new Error("expected rejection");
       expect(result.reason).toContain("iss");
     });
@@ -166,7 +172,7 @@ describe("jwtVerifierFactory", () => {
         { ...basePayload, aud: "someone-else" },
         { alg: "ES256", kid: "key-1" },
       );
-      const result = await verifier.verify(withHeader("authorization", `Bearer ${token}`), ctx);
+      const result = await verifier.verify(withHeader("x-omni-user-token", token), ctx);
       if (result === null || result.ok) throw new Error("expected rejection");
       expect(result.reason).toContain("aud");
     });
@@ -178,7 +184,7 @@ describe("jwtVerifierFactory", () => {
         alg: "ES256",
         kid: "key-1",
       });
-      const result = await verifier.verify(withHeader("authorization", `Bearer ${token}`), ctx);
+      const result = await verifier.verify(withHeader("x-omni-user-token", token), ctx);
       if (result === null || result.ok) throw new Error("expected rejection");
       expect(result.reason).toContain("signature");
     });
@@ -186,7 +192,7 @@ describe("jwtVerifierFactory", () => {
     it("rejects a malformed token", async () => {
       const ctx = makeCtx(rejectFetch);
       const verifier = jwtVerifierFactory.create(options, ctx);
-      const result = await verifier.verify(withHeader("authorization", "Bearer not-a-jwt"), ctx);
+      const result = await verifier.verify(withHeader("x-omni-user-token", "not-a-jwt"), ctx);
       if (result === null || result.ok) throw new Error("expected rejection");
       expect(result.reason).toBe("malformed token");
     });
@@ -229,7 +235,7 @@ describe("jwtVerifierFactory", () => {
         ctx,
       );
       const token = await sign(privateKey, { iss: ISSUER, sub: "user-3" }, { alg: "ES256" });
-      const result = await verifier.verify(withHeader("authorization", `Bearer ${token}`), ctx);
+      const result = await verifier.verify(withHeader("x-omni-user-token", token), ctx);
       if (result === null || !result.ok) throw new Error("expected success");
       expect(result.identity.userId).toBe("user-3");
     });
@@ -241,7 +247,7 @@ describe("jwtVerifierFactory", () => {
       const verifier = jwtVerifierFactory.create({ secret: "s", userIdClaim: "uid" }, ctx);
       const key = new TextEncoder().encode("s");
       const token = await sign(key, { uid: 42 }, { alg: "HS256" });
-      const result = await verifier.verify(withHeader("authorization", `Bearer ${token}`), ctx);
+      const result = await verifier.verify(withHeader("x-omni-user-token", token), ctx);
       if (result === null || !result.ok) throw new Error("expected success");
       expect(result.identity.userId).toBe("42");
     });
@@ -251,7 +257,7 @@ describe("jwtVerifierFactory", () => {
       const verifier = jwtVerifierFactory.create({ secret: "s" }, ctx);
       const key = new TextEncoder().encode("s");
       const token = await sign(key, { scope: "chat" }, { alg: "HS256" });
-      const result = await verifier.verify(withHeader("authorization", `Bearer ${token}`), ctx);
+      const result = await verifier.verify(withHeader("x-omni-user-token", token), ctx);
       if (result === null || !result.ok) throw new Error("expected success");
       expect(result.identity.userId).toBeUndefined();
     });

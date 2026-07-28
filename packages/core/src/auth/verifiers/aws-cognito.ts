@@ -21,8 +21,10 @@ const optionsSchema = z
     tokenUse: z.enum(["access", "id", "either"]).default("access"),
     /** OAuth scopes that every accepted access token must contain. */
     requiredScopes: z.array(z.string().min(1)).min(1).optional(),
-    /** Header carrying the token as `Bearer <token>`. */
-    header: z.string().min(1).default("authorization"),
+    /** Header carrying the token. Authorization is reserved for publishable keys. */
+    header: z.string().min(1).default("x-cognito-id-token"),
+    /** "bearer" strips a `Bearer ` prefix; "none" uses the raw header value. */
+    scheme: z.enum(["bearer", "none"]).default("none"),
     clockToleranceSeconds: z.number().int().nonnegative().default(60),
   })
   .superRefine((options, issues) => {
@@ -85,7 +87,7 @@ export const awsCognitoVerifierFactory: AuthVerifierFactory = {
       type: TYPE,
       name: opts.name ?? TYPE,
       async verify(request, ctx): Promise<AuthResult | null> {
-        const token = extractToken(request, opts.header, "bearer");
+        const token = extractToken(request, opts.header, opts.scheme);
         if (token === null) return null;
         try {
           const { payload } = await jwtVerify(token, jwks, {

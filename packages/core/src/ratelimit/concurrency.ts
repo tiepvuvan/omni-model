@@ -41,7 +41,7 @@ const SLOT_TTL_SECONDS = 15 * 60;
 
 /** Whose slots these are: the same identity a token budget is counted against. */
 function keyFor(facts: RequestFacts): string {
-  const owner = facts.user.id ?? facts.device.id ?? facts.http.ip ?? "anonymous";
+  const owner = facts.user.id ?? facts.client.id ?? facts.http.ip ?? "anonymous";
   return `rl:conc:${owner}`;
 }
 

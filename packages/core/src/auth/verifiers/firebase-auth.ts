@@ -16,8 +16,10 @@ const optionsSchema = z.strictObject({
   name: z.string().optional(),
   /** Firebase project id, e.g. "my-app-12345". */
   projectId: z.string().min(1),
-  /** Header carrying the ID token as `Bearer <token>`. */
-  header: z.string().min(1).default("authorization"),
+  /** Header carrying the ID token. Authorization is reserved for publishable keys. */
+  header: z.string().min(1).default("x-firebase-id-token"),
+  /** "bearer" strips a `Bearer ` prefix; "none" uses the raw header value. */
+  scheme: z.enum(["bearer", "none"]).default("none"),
   clockToleranceSeconds: z.number().int().nonnegative().default(60),
 });
 
@@ -43,7 +45,7 @@ export const firebaseAuthVerifierFactory: AuthVerifierFactory = {
       type: TYPE,
       name: opts.name ?? TYPE,
       async verify(request, ctx): Promise<AuthResult | null> {
-        const token = extractToken(request, opts.header, "bearer");
+        const token = extractToken(request, opts.header, opts.scheme);
         if (token === null) return null;
         try {
           const { payload } = await jwtVerify(token, jwks, {

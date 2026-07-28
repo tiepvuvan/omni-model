@@ -66,16 +66,51 @@ public protocol OmniAuthProvider: Sendable {
   func headers() async throws -> [String: String]
 }
 
-/// Any bearer token — a custom JWT, a Supabase access token, or a Firebase Auth
-/// ID token. Matches the proxy's `jwt` / `firebase-auth` / `supabase` verifiers.
-public struct BearerTokenAuth: OmniAuthProvider {
-  private let token: @Sendable () async throws -> String
-  public init(_ token: @escaping @Sendable () async throws -> String) { self.token = token }
-  public init(staticToken value: String) { self.token = { value } }
+/// An omni-model publishable key sent through OpenAI's standard bearer header.
+public struct PublishableKeyAuth: OmniAuthProvider {
+  private let key: @Sendable () async throws -> String
+  public init(_ key: @escaping @Sendable () async throws -> String) { self.key = key }
+  public init(staticKey value: String) { self.key = { value } }
   public func headers() async throws -> [String: String] {
-    ["Authorization": "Bearer \(try await token())"]
+    ["Authorization": "Bearer \(try await key())"]
   }
 }
+
+/// A raw end-user token sent in a verifier-specific header.
+public struct UserTokenAuth: OmniAuthProvider {
+  private let header: String
+  private let token: @Sendable () async throws -> String
+  public init(
+    header: String = "X-Omni-User-Token",
+    _ token: @escaping @Sendable () async throws -> String
+  ) {
+    self.header = header
+    self.token = token
+  }
+  public init(header: String = "X-Omni-User-Token", staticToken value: String) {
+    self.header = header
+    self.token = { value }
+  }
+  public func headers() async throws -> [String: String] {
+    [header: try await token()]
+  }
+}
+
+/// Combines a publishable key, user token, and optional app-verification provider.
+public struct CombinedAuth: OmniAuthProvider {
+  private let providers: [any OmniAuthProvider]
+  public init(_ providers: [any OmniAuthProvider]) { self.providers = providers }
+  public func headers() async throws -> [String: String] {
+    var result: [String: String] = [:]
+    for provider in providers {
+      result.merge(try await provider.headers()) { _, latest in latest }
+    }
+    return result
+  }
+}
+
+@available(*, deprecated, renamed: "PublishableKeyAuth")
+public typealias BearerTokenAuth = PublishableKeyAuth
 
 /// An arbitrary custom header — e.g. `X-Firebase-AppCheck` (fetch the App Check
 /// token yourself and pass it here) for the proxy's `firebase-app-check` verifier.

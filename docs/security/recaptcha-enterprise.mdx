@@ -96,8 +96,9 @@ const token = await grecaptcha.enterprise.execute("YOUR_SITE_KEY", {
 const response = await fetch("https://proxy.example.com/v1/chat/completions", {
   method: "POST",
   headers: {
-    Authorization: `Bearer ${userToken}`,
+    Authorization: `Bearer ${publishableKey}`,
     "Content-Type": "application/json",
+    "X-Omni-User-Token": userToken,
     "X-Recaptcha-Token": token,
   },
   body: JSON.stringify({
@@ -120,4 +121,3 @@ are exposed to routing claims; the submitted token is never logged or echoed.
 See Google's official [create assessment](https://cloud.google.com/recaptcha/docs/create-assessment-website)
 and [interpret assessment](https://cloud.google.com/recaptcha/docs/interpret-assessment-website)
 guides for key setup and score policy.
-

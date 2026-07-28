@@ -1,5 +1,11 @@
 import { vi } from "vitest";
-import type { ProbeResponse, RequestLog } from "../../src/lib/api";
+import type {
+  ProbeResponse,
+  PublishableKey,
+  RequestLog,
+  TeamInvite,
+  TeamUser,
+} from "../../src/lib/api";
 
 /**
  * A stand-in for the admin API, wired in as `globalThis.fetch`.
@@ -38,6 +44,12 @@ export interface FakeState {
   cache: { available: boolean; entries: number; oldestAt: number | null; bytes: number | null };
   /** Request metadata and content returned by the log endpoints. */
   logs: RequestLog[];
+  /** Publishable-key descriptions; plaintext is never retained here. */
+  writeKeys: PublishableKey[];
+  /** Dashboard accounts. */
+  users: TeamUser[];
+  /** Pending dashboard invitations. */
+  invites: TeamInvite[];
   /** What `POST /providers/models` should answer for a candidate target. */
   upstreamModels: {
     ok: boolean | null;
@@ -49,6 +61,21 @@ export interface FakeState {
 }
 
 export const PROVIDER_SCHEMAS = [
+  {
+    type: "deepseek",
+    optionsSchema: {
+      type: "object",
+      properties: {
+        type: { type: "string" },
+        apiKey: { type: "string" },
+        baseUrl: { type: "string", default: "https://api.deepseek.com" },
+        headers: { type: "object" },
+        models: { type: "array", items: { type: "string" } },
+        includeStreamUsage: { type: "boolean" },
+      },
+      required: ["apiKey"],
+    },
+  },
   {
     type: "anthropic",
     optionsSchema: {
@@ -93,7 +120,8 @@ export const VERIFIER_SCHEMAS = [
         authorizedParties: { type: "array", items: { type: "string" } },
         audience: { type: "string" },
         allowPendingSessions: { type: "boolean", default: false },
-        header: { type: "string" },
+        header: { type: "string", default: "x-clerk-session-token" },
+        scheme: { type: "string", enum: ["bearer", "none"], default: "none" },
         clockToleranceSeconds: { type: "integer" },
       },
       required: ["issuer"],
@@ -111,7 +139,8 @@ export const VERIFIER_SCHEMAS = [
         clientIds: { type: "array", items: { type: "string" } },
         tokenUse: { type: "string", enum: ["access", "id", "either"], default: "access" },
         requiredScopes: { type: "array", items: { type: "string" } },
-        header: { type: "string" },
+        header: { type: "string", default: "x-cognito-id-token" },
+        scheme: { type: "string", enum: ["bearer", "none"], default: "none" },
         clockToleranceSeconds: { type: "integer" },
       },
       required: ["region", "userPoolId", "clientIds"],
@@ -218,7 +247,12 @@ export const VERIFIER_SCHEMAS = [
     layer: "user",
     optionsSchema: {
       type: "object",
-      properties: { type: { type: "string" }, projectId: { type: "string" } },
+      properties: {
+        type: { type: "string" },
+        projectId: { type: "string" },
+        header: { type: "string", default: "x-firebase-id-token" },
+        scheme: { type: "string", enum: ["bearer", "none"], default: "none" },
+      },
       required: ["projectId"],
     },
   },
@@ -233,6 +267,8 @@ export const VERIFIER_SCHEMAS = [
         algorithms: { type: "array", items: { type: "string" } },
         issuer: { type: "string" },
         audience: { type: "string" },
+        header: { type: "string", default: "x-omni-user-token" },
+        scheme: { type: "string", enum: ["bearer", "none"], default: "none" },
       },
     },
   },
@@ -246,6 +282,8 @@ export const VERIFIER_SCHEMAS = [
         baseUrl: { type: "string" },
         jwksUrl: { type: "string" },
         jwtSecret: { type: "string" },
+        header: { type: "string", default: "x-supabase-access-token" },
+        scheme: { type: "string", enum: ["bearer", "none"], default: "none" },
       },
     },
   },
@@ -273,6 +311,17 @@ export function createFakeApi(initial: Partial<FakeState> = {}) {
     upstreamModels: { ok: true, models: ["gpt-4o", "gpt-4o-mini", "o3"] },
     cache: { available: true, entries: 0, oldestAt: null, bytes: null },
     logs: [],
+    writeKeys: [],
+    users: [
+      {
+        id: "u1",
+        email: "ops@example.test",
+        name: "Ops",
+        role: "admin",
+        createdAt: 1_700_000_000_000,
+      },
+    ],
+    invites: [],
     ...initial,
   };
 
@@ -340,6 +389,38 @@ export function createFakeApi(initial: Partial<FakeState> = {}) {
       return json({ success: true });
     }
 
+    const inviteMatch = path.match(/^\/invites\/([^/]+)$/);
+    if (inviteMatch !== null && method === "GET") {
+      const token = decodeURIComponent(inviteMatch[1] ?? "");
+      const invite = state.invites.find(
+        (candidate) => candidate.id === token.replace("token-", ""),
+      );
+      return invite === undefined
+        ? error(404, "this invitation is invalid, expired, or has already been used")
+        : json({ invite: { email: invite.email, expiresAt: invite.expiresAt } });
+    }
+
+    const acceptMatch = path.match(/^\/invites\/([^/]+)\/accept$/);
+    if (acceptMatch !== null && method === "POST") {
+      const token = decodeURIComponent(acceptMatch[1] ?? "");
+      const at = state.invites.findIndex(
+        (candidate) => candidate.id === token.replace("token-", ""),
+      );
+      if (at === -1) {
+        return error(404, "this invitation is invalid, expired, or has already been used");
+      }
+      const invite = state.invites[at] as TeamInvite;
+      state.users.push({
+        id: `user-${state.users.length + 1}`,
+        email: invite.email,
+        name: isRecord(body) && typeof body.name === "string" ? body.name : invite.email,
+        role: "admin",
+        createdAt: Date.now(),
+      });
+      state.invites.splice(at, 1);
+      return json({ email: invite.email });
+    }
+
     // Everything past here needs a session, exactly like the real app.
     if (!state.signedIn) {
       return error(401, "sign in to use the admin API", "admin_unauthenticated");
@@ -357,6 +438,15 @@ export function createFakeApi(initial: Partial<FakeState> = {}) {
           providers: routing().rules.map((rule, index) => String(rule.id ?? index)),
           verifiers: ["jwt"],
           requireWriteKey: false,
+          organizationName:
+            isRecord(state.config.server) &&
+            typeof state.config.server.organizationName === "string"
+              ? state.config.server.organizationName
+              : null,
+          customDomain:
+            isRecord(state.config.server) && typeof state.config.server.customDomain === "string"
+              ? state.config.server.customDomain
+              : null,
         });
 
       case path === "/meta":
@@ -382,6 +472,72 @@ export function createFakeApi(initial: Partial<FakeState> = {}) {
         return log === undefined
           ? error(404, `no request logged with id "${requestId}"`)
           : json({ log });
+      }
+
+      case path === "/write-keys" && method === "GET":
+        return json({ writeKeys: clone(state.writeKeys) });
+
+      case path === "/users" && method === "GET":
+        return json({ users: clone(state.users), invites: clone(state.invites) });
+
+      case path === "/users/invites" && method === "POST": {
+        const email = isRecord(body) && typeof body.email === "string" ? body.email : "";
+        if (email.trim() === "") return error(400, "email is required", "invalid_body");
+        const id = `invite-${state.invites.length + 1}`;
+        const invite: TeamInvite = {
+          id,
+          email: email.trim().toLowerCase(),
+          invitedBy: "ops@example.test",
+          createdAt: 1_700_000_000_000,
+          expiresAt: 1_700_604_800_000,
+        };
+        state.invites.push(invite);
+        return json(
+          { invite, link: `http://admin.test/admin/accept-invite?token=token-${id}` },
+          201,
+        );
+      }
+
+      case /^\/users\/invites\/[^/]+$/.test(path) && method === "DELETE": {
+        const id = decodeURIComponent(path.split("/")[3] ?? "");
+        const at = state.invites.findIndex((invite) => invite.id === id);
+        if (at === -1) return error(404, "that invitation does not exist");
+        state.invites.splice(at, 1);
+        return json({ revoked: true });
+      }
+
+      case path === "/write-keys" && method === "POST": {
+        const referenceName = isRecord(body) && typeof body.name === "string" ? body.name : "";
+        if (referenceName.trim() === "") return error(400, "name is required", "invalid_body");
+        const id = `key-${state.writeKeys.length + 1}`;
+        const writeKey: PublishableKey = {
+          id,
+          name: referenceName,
+          prefix: "omk_test",
+          last4: "test",
+          allowedModels: null,
+          captureContent: null,
+          metadata: {},
+          createdBy: "ops@example.test",
+          createdAt: 1_700_000_000_000 + state.writeKeys.length,
+          expiresAt: null,
+          disabledAt: null,
+          usage: { totalTokens: 0, lastUsedAt: null, lastModel: null },
+        };
+        state.writeKeys.push(writeKey);
+        const { usage: _usage, ...description } = writeKey;
+        return json({ writeKey: description, secret: `omk_test_secret_${id}` }, 201);
+      }
+
+      case /^\/write-keys\/[^/]+$/.test(path) && method === "DELETE": {
+        const id = decodeURIComponent(path.split("/")[2] ?? "");
+        const writeKey = state.writeKeys.find((candidate) => candidate.id === id);
+        if (writeKey === undefined) return error(404, `write key "${id}" does not exist`);
+        if (writeKey.disabledAt !== null) {
+          return json({ revoked: false, alreadyRevoked: true });
+        }
+        writeKey.disabledAt = 1_700_000_001_000;
+        return json({ revoked: true });
       }
 
       // Method-qualified: an unqualified `/config` case would swallow the PATCH
@@ -423,6 +579,7 @@ export function createFakeApi(initial: Partial<FakeState> = {}) {
           enabled: cacheBlock.enabled === true,
           ttl: typeof cacheBlock.ttl === "string" ? cacheBlock.ttl : null,
           maxEntries: typeof cacheBlock.maxEntries === "number" ? cacheBlock.maxEntries : null,
+          maxBytes: typeof cacheBlock.maxBytes === "number" ? cacheBlock.maxBytes : null,
         });
       }
 

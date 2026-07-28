@@ -101,6 +101,10 @@ export interface RuntimeBundle {
    */
   readonly cache: { store: PromptCache; ttlSeconds: number; config: CacheConfig } | null;
   readonly maxInputTokens: number;
+  /** Operator-console name, or null to use the product name. */
+  readonly organizationName: string | null;
+  /** Public reverse-proxy hostname configured for this deployment. */
+  readonly customDomain: string | null;
   readonly allowedModels: readonly string[];
   readonly trustProxyHeaders: boolean;
   /** Prebuilt CORS middleware, or null when CORS is not configured. */
@@ -217,6 +221,8 @@ export function buildBundle(input: BuildBundleInput): RuntimeBundle {
     concurrency,
     cache,
     maxInputTokens: config.server.maxInputTokens,
+    organizationName: config.server.organizationName ?? null,
+    customDomain: config.server.customDomain ?? null,
     allowedModels: config.routing.allowedModels,
     trustProxyHeaders: config.server.trustProxyHeaders,
     corsMiddleware: config.server.cors === undefined ? null : cors(corsOptions(config.server.cors)),

@@ -44,6 +44,7 @@ describe("mergeIdentities", () => {
     expect(merged.deviceId).toBe("d1");
     // Provider comes from the identity that supplied the userId.
     expect(merged.provider).toBe("firebase-auth");
+    expect(merged.providers).toEqual(["app-check", "firebase-auth"]);
     // First identity's claims are flattened; every verifier is namespaced.
     expect(merged.claims).toEqual({
       app: "ios",
@@ -60,6 +61,7 @@ describe("mergeIdentities", () => {
       { verifier: verifier("second"), identity: b },
     ]);
     expect(merged.provider).toBe("a");
+    expect(merged.providers).toEqual(["a", "b"]);
     expect(merged.deviceId).toBe("d2");
     expect(merged.userId).toBeUndefined();
   });
@@ -190,7 +192,7 @@ security:
         header: x-device-a
 routing:
   rules:
-    - { id: merged, name: merged, when: 'user.claims.tier == "pro" && device.id == "dev-1"', target: { type: fake, model: merged-model } }
+    - { id: merged, name: merged, when: 'user.claims.tier == "pro" && "fake-app-auth" in user.providers', target: { type: fake, model: merged-model } }
 `;
 
   it("accepts when both layers accept, and merges their identities", async () => {
@@ -199,8 +201,8 @@ routing:
       chatRequest(CHAT_BODY, { "x-user-a": "pro", "x-device-a": "dev-1" }),
     );
 
-    // The rule only matches when the user's claims *and* the device id from the
-    // app layer are both visible, which is what proves the merge.
+    // The rule only matches when the user's claims and the accepted app verifier
+    // are both visible, which is what proves the merge.
     expect(response.status).toBe(200);
     expect(providers.get("merged")?.chatCalls[0]?.request.model).toBe("merged-model");
   });

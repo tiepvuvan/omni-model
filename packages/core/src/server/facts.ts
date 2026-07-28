@@ -1,6 +1,7 @@
 import type { Identity } from "../auth/types.js";
 import type { ChatCompletionRequest } from "../openai/types.js";
 import type { RequestFacts } from "../routing/types.js";
+import { estimateInputTokens } from "../util/input-tokens.js";
 import type { WriteKey } from "../writekeys/types.js";
 
 /**
@@ -71,8 +72,8 @@ export interface RequestFactsInput {
   identity: Identity | null;
   /** The calling application's write key, when one was presented. */
   writeKey: WriteKey | null;
-  /** Epoch milliseconds. */
-  now: number;
+  /** Override used only for an operator's hypothetical routing simulation. */
+  inputTokenCount?: number;
 }
 
 function finiteNumberOrNull(value: unknown): number | null {
@@ -86,7 +87,6 @@ function finiteNumberOrNull(value: unknown): number | null {
  */
 export function buildRequestFacts(input: RequestFactsInput): RequestFacts {
   const body = (input.body ?? {}) as Record<string, unknown>;
-  const messages = body.messages;
 
   const headers: Record<string, string> = {};
   input.headers.forEach((value, key) => {
@@ -97,26 +97,22 @@ export function buildRequestFacts(input: RequestFactsInput): RequestFacts {
   return {
     request: {
       model: typeof body.model === "string" ? body.model : "",
-      stream: body.stream === true,
-      messageCount: Array.isArray(messages) ? messages.length : 0,
+      inputTokenCount:
+        input.inputTokenCount ?? (input.body === null ? 0 : estimateInputTokens(input.body)),
       maxTokens:
         finiteNumberOrNull(body.max_completion_tokens) ?? finiteNumberOrNull(body.max_tokens),
       temperature: finiteNumberOrNull(body.temperature),
-      user: typeof body.user === "string" ? body.user : null,
     },
     user: {
       id: input.identity?.userId ?? null,
-      authenticated: input.identity !== null,
-      provider: input.identity?.provider ?? null,
       claims: input.identity?.claims ?? {},
+      providers:
+        input.identity === null ? [] : (input.identity.providers ?? [input.identity.provider]),
     },
-    device: { id: input.identity?.deviceId ?? null },
     client: {
       id: input.writeKey?.id ?? null,
       name: input.writeKey?.name ?? null,
-      authenticated: input.writeKey !== null,
     },
     http: { method: input.method, path: input.path, ip: input.ip, headers },
-    now: input.now,
   };
 }

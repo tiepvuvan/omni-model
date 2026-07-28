@@ -33,9 +33,9 @@ function jwksFetch(calls: string[] = []): typeof fetch {
   };
 }
 
-function bearer(token: string, header = "authorization"): Request {
+function tokenRequest(token: string, header = "x-clerk-session-token", bearer = false): Request {
   return new Request("https://proxy.example/v1/chat/completions", {
-    headers: { [header]: `Bearer ${token}` },
+    headers: { [header]: bearer ? `Bearer ${token}` : token },
   });
 }
 
@@ -80,7 +80,7 @@ describe("clerkVerifierFactory", () => {
       { issuer: `${ISSUER}/`, authorizedParties: ["https://app.example.com"] },
       ctx,
     );
-    const result = await verifier.verify(bearer(await sign()), ctx);
+    const result = await verifier.verify(tokenRequest(await sign()), ctx);
 
     expect(result).toEqual({
       ok: true,
@@ -101,11 +101,16 @@ describe("clerkVerifierFactory", () => {
     const calls: string[] = [];
     const fetchImpl = jwksFetch(calls);
     const ctx = context(fetchImpl);
-    const verifier = clerkVerifierFactory.create({ issuer: ISSUER, header: "x-clerk-token" }, ctx);
+    const verifier = clerkVerifierFactory.create(
+      { issuer: ISSUER, header: "x-clerk-token", scheme: "bearer" },
+      ctx,
+    );
 
     expect(await verifier.verify(new Request("https://proxy.example/v1/models"), ctx)).toBeNull();
     expect(calls).toEqual([]);
-    expect(await verifier.verify(bearer(await sign(), "x-clerk-token"), ctx)).toMatchObject({
+    expect(
+      await verifier.verify(tokenRequest(await sign(), "x-clerk-token", true), ctx),
+    ).toMatchObject({
       ok: true,
     });
   });
@@ -120,7 +125,7 @@ describe("clerkVerifierFactory", () => {
     for (const [overrides, expiration, reason] of cases) {
       const ctx = context(jwksFetch());
       const verifier = clerkVerifierFactory.create({ issuer: ISSUER }, ctx);
-      const result = await verifier.verify(bearer(await sign(overrides, expiration)), ctx);
+      const result = await verifier.verify(tokenRequest(await sign(overrides, expiration)), ctx);
       expect(result).toMatchObject({ ok: false, reason: expect.stringContaining(reason) });
     }
   });
@@ -135,7 +140,7 @@ describe("clerkVerifierFactory", () => {
     const changed = `${parts[0]}.${parts[1]}.${signature[0] === "a" ? "b" : "a"}${signature.slice(1)}`;
     const ctx = context(jwksFetch());
     const verifier = clerkVerifierFactory.create({ issuer: ISSUER }, ctx);
-    expect(await verifier.verify(bearer(changed), ctx)).toMatchObject({
+    expect(await verifier.verify(tokenRequest(changed), ctx)).toMatchObject({
       ok: false,
       reason: expect.stringContaining("signature"),
     });
@@ -148,7 +153,7 @@ describe("clerkVerifierFactory", () => {
       ctx,
     );
     for (const azp of ["https://evil.example", ["https://app.example.com"]]) {
-      expect(await verifier.verify(bearer(await sign({ azp })), ctx)).toMatchObject({
+      expect(await verifier.verify(tokenRequest(await sign({ azp })), ctx)).toMatchObject({
         ok: false,
         reason: expect.stringContaining("authorized party"),
       });
@@ -161,7 +166,7 @@ describe("clerkVerifierFactory", () => {
       { issuer: ISSUER, authorizedParties: ["https://app.example.com"] },
       ctx,
     );
-    expect(await verifier.verify(bearer(await sign({ azp: undefined })), ctx)).toMatchObject({
+    expect(await verifier.verify(tokenRequest(await sign({ azp: undefined })), ctx)).toMatchObject({
       ok: true,
     });
   });
@@ -170,7 +175,7 @@ describe("clerkVerifierFactory", () => {
     const token = await sign({ sts: "pending" });
     const strictCtx = context(jwksFetch());
     const strict = clerkVerifierFactory.create({ issuer: ISSUER }, strictCtx);
-    expect(await strict.verify(bearer(token), strictCtx)).toMatchObject({
+    expect(await strict.verify(tokenRequest(token), strictCtx)).toMatchObject({
       ok: false,
       reason: "Clerk session is pending",
     });
@@ -180,7 +185,7 @@ describe("clerkVerifierFactory", () => {
       { issuer: ISSUER, allowPendingSessions: true },
       allowedCtx,
     );
-    expect(await allowed.verify(bearer(token), allowedCtx)).toMatchObject({ ok: true });
+    expect(await allowed.verify(tokenRequest(token), allowedCtx)).toMatchObject({ ok: true });
   });
 
   it("returns 503 when the Clerk JWKS is unreachable or invalid", async () => {
@@ -193,7 +198,7 @@ describe("clerkVerifierFactory", () => {
     ]) {
       const ctx = context(fetchImpl);
       const verifier = clerkVerifierFactory.create({ issuer: ISSUER }, ctx);
-      expect(await verifier.verify(bearer(await sign()), ctx)).toEqual({
+      expect(await verifier.verify(tokenRequest(await sign()), ctx)).toEqual({
         ok: false,
         status: 503,
         reason: "Clerk verification unavailable",

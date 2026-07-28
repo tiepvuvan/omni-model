@@ -6,7 +6,7 @@ import type { AppEnv } from "./types.js";
 
 function authError(reason: string, status = 401): OmniError {
   if (status === 401) {
-    return unauthorized(reason, { headers: { "WWW-Authenticate": "Bearer" } });
+    return unauthorized(reason);
   }
   return new OmniError(status, reason, {
     ...(status === 503 ? { code: "verification_unavailable" } : {}),
@@ -32,6 +32,7 @@ export function isPublicPath(path: string, publicPaths: readonly string[]): bool
  * - `userId` / `deviceId`: the first defined value wins.
  * - `provider`: taken from the identity that supplied `userId`, falling back
  *   to the first identity.
+ * - `providers`: every accepted verifier type, in verifier config order.
  * - `claims`: the first identity's claims are flattened at the top level,
  *   then every verifier's claims are added namespaced under its `name`
  *   (`claims[verifierName] = thatVerifiersClaims`). A namespaced key
@@ -55,6 +56,9 @@ export function mergeIdentities(
 
   return {
     provider: (withUser ?? first).identity.provider,
+    providers: [
+      ...new Set(entries.flatMap((entry) => entry.identity.providers ?? [entry.identity.provider])),
+    ],
     userId: withUser?.identity.userId,
     deviceId: withDevice?.identity.deviceId,
     claims,
@@ -88,7 +92,7 @@ export interface AuthMiddlewareOptions {
  * wants, since a client can only satisfy its own platform's scheme.
  *
  * Identities from both layers are combined with `mergeIdentities`, so `user.id`
- * comes from layer 1 and `device.id` from whichever app scheme supplied one.
+ * comes from layer 1 and `user.providers` records every verifier that accepted.
  *
  * Public paths (exact or trailing-`*` prefix) bypass verification entirely.
  *

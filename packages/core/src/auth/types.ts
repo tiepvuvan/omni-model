@@ -6,6 +6,11 @@ import type { RuntimeContext } from "../types.js";
 export interface Identity {
   /** Verifier type that authenticated the request, e.g. "firebase-auth". */
   provider: string;
+  /**
+   * Every verifier type that accepted the request. Set by the server when it
+   * merges user and application verification identities.
+   */
+  providers?: string[];
   /** Stable user identifier (JWT `sub`, Firebase uid, ...). */
   userId?: string;
   /** Stable device identifier (App Check app id, App Attest key id, ...). */

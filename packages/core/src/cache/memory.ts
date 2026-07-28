@@ -67,18 +67,19 @@ export class MemoryPromptCache implements PromptCache {
     return { entries, oldestAt, bytes };
   }
 
-  async evict(maxEntries: number): Promise<number> {
+  async evict(maxEntries: number, maxBytes: number): Promise<number> {
     let removed = 0;
     for (const key of [...this.rows.keys()]) {
       if (this.live(key) === null) removed += 1;
     }
+    let bytes = 0;
+    for (const row of this.rows.values()) bytes += row.bytes;
     // Oldest first: `Map` iterates in insertion order, and `put` re-inserts.
-    const excess = this.rows.size - maxEntries;
-    if (excess > 0) {
-      for (const key of [...this.rows.keys()].slice(0, excess)) {
-        this.rows.delete(key);
-        removed += 1;
-      }
+    for (const [key, row] of this.rows) {
+      if (this.rows.size <= maxEntries && bytes <= maxBytes) break;
+      this.rows.delete(key);
+      bytes -= row.bytes;
+      removed += 1;
     }
     return removed;
   }

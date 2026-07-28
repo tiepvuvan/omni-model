@@ -115,6 +115,38 @@ services:
       OMNI_TARGET_API_KEY: ${OPENAI_API_KEY}
 ```
 
+## Custom domain with Caddy
+
+The repository includes a production-shaped Compose stack at
+`examples/docker-compose.custom-domain.yml`. Caddy is the only public service: it listens on ports
+80 and 443, obtains and renews the TLS certificate automatically, and proxies to omni-model on the
+private Compose network.
+
+```sh
+cp examples/custom-domain.env.example examples/.env
+# Edit examples/.env: set OMNI_DOMAIN and generate the three stable secrets.
+docker compose \
+  --env-file examples/.env \
+  -f examples/docker-compose.custom-domain.yml \
+  config
+docker compose \
+  --env-file examples/.env \
+  -f examples/docker-compose.custom-domain.yml \
+  up -d
+```
+
+Before starting it:
+
+1. Point the domain's public `A` and/or `AAAA` records at the host.
+2. Allow inbound TCP 80 and 443, plus UDP 443 for HTTP/3.
+3. Keep `OMNI_ADMIN_SECRET`, `OMNI_ENCRYPTION_KEY`, and the named volumes stable.
+
+The stack threads `OMNI_DOMAIN` through Caddy, `OMNI_ADMIN_BASE_URL`,
+`OMNI_ADMIN_ALLOWED_ORIGINS`, and the initial `server.customDomain` setting. The value saved in
+Settings is intentionally not allowed to rewrite Caddy's files from inside the application. If the
+hostname changes later, update `OMNI_DOMAIN`, recreate the Caddy and omni-model containers, then
+save the same hostname in Settings.
+
 ## Configuration lives in the database
 
 The environment is only a **first-boot seed**. On an empty database, the `OMNI_*` variables above

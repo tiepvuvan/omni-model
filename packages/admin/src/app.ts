@@ -20,6 +20,7 @@ import { createConfigRoutes } from "./routes/config.js";
 import { createLogRoutes } from "./routes/logs.js";
 import { createMetaRoutes } from "./routes/meta.js";
 import { createSecretRoutes } from "./routes/secrets.js";
+import { createInviteAcceptanceRoutes, createUserRoutes } from "./routes/users.js";
 import { createWriteKeyRoutes } from "./routes/writekeys.js";
 import { type AdminEnv, requireAdmin } from "./session.js";
 
@@ -70,7 +71,7 @@ function buildAuth(options: AdminAppOptions): AdminAuth {
  * The admin surface, mounted at `/admin`.
  *
  * Everything under `/admin/api` requires an operator session except Better
- * Auth's own routes, which have to be reachable in order to sign in.
+ * Auth's sign-in routes and one-time invitation acceptance.
  */
 export function createAdminApp(options: AdminAppOptions): AdminApp {
   const own = options.auth === undefined ? buildAuth(options) : null;
@@ -95,8 +96,11 @@ export function createAdminApp(options: AdminAppOptions): AdminApp {
         400,
       );
     }
+    // Invite tokens are bearer credentials embedded in the path. An unexpected
+    // database failure must not turn one into a log field.
+    const path = c.req.path.replace(/(\/admin\/api\/invites\/)[^/]+/, "$1[INVITE_TOKEN_REDACTED]");
     options.logger?.error("admin request failed", {
-      path: c.req.path,
+      path,
       error: error instanceof Error ? error.message : String(error),
     });
     return c.json(
@@ -168,6 +172,10 @@ export function createAdminApp(options: AdminAppOptions): AdminApp {
     return c.json({ needsFirstOperator: users === 0, operators: users });
   });
 
+  // Invite links are bearer credentials. They must be usable before a session
+  // exists, but they expose only the email they are bound to and expire after use.
+  app.route("/admin/api", createInviteAcceptanceRoutes(options.pool, auth));
+
   app.on(["GET", "POST"], "/admin/api/auth/*", (c) => auth.handler(c.req.raw));
 
   // Everything past here needs an operator session.
@@ -187,6 +195,8 @@ export function createAdminApp(options: AdminAppOptions): AdminApp {
       appAuth: bundle === null ? [] : bundle.appVerifiers.map((verifier) => verifier.name),
       requireWriteKey: bundle?.requireWriteKey ?? null,
       logging: bundle?.logging ?? null,
+      organizationName: bundle?.organizationName ?? null,
+      customDomain: bundle?.customDomain ?? null,
     });
   });
 
@@ -198,6 +208,7 @@ export function createAdminApp(options: AdminAppOptions): AdminApp {
   api.route("/", createLogRoutes(deps));
   api.route("/", createMetaRoutes(deps));
   api.route("/", createCacheRoutes(deps));
+  api.route("/", createUserRoutes(options.pool, { baseURL: options.baseURL }));
   app.route("/admin/api", api);
 
   return {

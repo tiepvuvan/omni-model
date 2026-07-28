@@ -56,7 +56,7 @@ const CONFIG = {
 };
 
 /** A HS256 token the configured jwt verifier accepts. */
-async function bearer(): Promise<string> {
+async function userToken(): Promise<string> {
   const { createHmac } = await import("node:crypto");
   const encode = (value: object): string =>
     Buffer.from(JSON.stringify(value)).toString("base64url");
@@ -66,7 +66,7 @@ async function bearer(): Promise<string> {
   const signature = createHmac("sha256", "a-test-shared-secret-value")
     .update(`${head}.${payload}`)
     .digest("base64url");
-  return `Bearer ${head}.${payload}.${signature}`;
+  return `${head}.${payload}.${signature}`;
 }
 
 describe("graceful shutdown", () => {
@@ -98,7 +98,7 @@ describe("graceful shutdown", () => {
 
     const response = await fetch(`${base}/v1/chat/completions`, {
       method: "POST",
-      headers: { "content-type": "application/json", authorization: await bearer() },
+      headers: { "content-type": "application/json", "x-omni-user-token": await userToken() },
       body: JSON.stringify({
         model: "gpt-4o",
         stream: true,
@@ -127,7 +127,7 @@ describe("graceful shutdown", () => {
 
     const streaming = await fetch(`${base}/v1/chat/completions`, {
       method: "POST",
-      headers: { "content-type": "application/json", authorization: await bearer() },
+      headers: { "content-type": "application/json", "x-omni-user-token": await userToken() },
       body: JSON.stringify({
         model: "gpt-4o",
         stream: true,
@@ -149,7 +149,7 @@ describe("graceful shutdown", () => {
 
     const refused = await fetch(`${base}/v1/chat/completions`, {
       method: "POST",
-      headers: { "content-type": "application/json", authorization: await bearer() },
+      headers: { "content-type": "application/json", "x-omni-user-token": await userToken() },
       body: JSON.stringify({ model: "gpt-4o", messages: [{ role: "user", content: "hi" }] }),
     });
     expect(refused.status).toBe(503);
@@ -170,7 +170,7 @@ describe("graceful shutdown", () => {
 
     const response = await fetch(`${base}/v1/chat/completions`, {
       method: "POST",
-      headers: { "content-type": "application/json", authorization: await bearer() },
+      headers: { "content-type": "application/json", "x-omni-user-token": await userToken() },
       body: JSON.stringify({
         model: "gpt-4o",
         stream: true,

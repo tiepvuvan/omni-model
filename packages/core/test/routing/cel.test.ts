@@ -12,7 +12,11 @@ describe("CelExpressionEngine", () => {
   it("compiles and evaluates boolean expressions", () => {
     expect(engine.compile("1 < 2").evaluate({})).toBe(true);
     expect(engine.compile("true && false").evaluate({})).toBe(false);
-    expect(engine.compile("request.stream").evaluate({ request: { stream: true } })).toBe(true);
+    expect(
+      engine
+        .compile("request.inputTokenCount > 100")
+        .evaluate({ request: { inputTokenCount: 101 } }),
+    ).toBe(true);
   });
 
   it("supports string operations: startsWith and contains", () => {
@@ -37,10 +41,12 @@ describe("CelExpressionEngine", () => {
     expect(compiled.evaluate({ user: { claims: {} } })).toBe(false);
   });
 
-  it("supports numeric comparison on now", () => {
-    const compiled = engine.compile("now > 1700000000000");
-    expect(compiled.evaluate({ now: 1700000000001 })).toBe(true);
-    expect(compiled.evaluate({ now: 1699999999999 })).toBe(false);
+  it("supports membership checks on user providers", () => {
+    const compiled = engine.compile('"firebase-app-check" in user.providers');
+    expect(
+      compiled.evaluate({ user: { providers: ["firebase-auth", "firebase-app-check"] } }),
+    ).toBe(true);
+    expect(compiled.evaluate({ user: { providers: ["firebase-auth"] } })).toBe(false);
   });
 
   it("throws ConfigError with the source on a syntax error", () => {

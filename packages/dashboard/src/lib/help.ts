@@ -22,6 +22,8 @@ const HELP: Record<string, string> = {
     "The upstream model name to forward as. Leave blank to pass the client's own model through unchanged.",
   "*.name":
     "A label for your own reference, recorded on each request as the provider that authenticated it. Defaults to the type.",
+  "*.scheme":
+    "How the token is encoded — `bearer` strips a Bearer prefix from the configured header; `none` uses the raw value.",
 
   /* Custom JWT. */
   "jwt.secret":
@@ -35,9 +37,9 @@ const HELP: Record<string, string> = {
   "jwt.issuer": "Reject any token whose `iss` claim is not this. Leave empty to skip the check.",
   "jwt.audience":
     "Reject any token whose `aud` claim does not include this. Leave empty to skip the check.",
-  "jwt.header": "Which request header carries the token. Defaults to Authorization.",
+  "jwt.header": "Which request header carries the token. Defaults to X-Omni-User-Token.",
   "jwt.scheme":
-    "The scheme in front of the token — `bearer` for `Authorization: Bearer <token>`, or `raw` for a bare token.",
+    "How the token is encoded — `bearer` strips a Bearer prefix from a custom header; `none` uses the raw value.",
   "jwt.userIdClaim": "Which claim identifies the user. Defaults to `sub`.",
   "jwt.deviceIdClaim": "Which claim identifies the device, if your tokens carry one.",
   "jwt.clockToleranceSeconds":
@@ -133,6 +135,7 @@ const HELP: Record<string, string> = {
     "Override where signing keys are fetched from. Defaults to your project's well-known JWKS endpoint.",
   "supabase.jwtSecret":
     "The legacy JWT secret from your project's API settings, for projects still signing with HS256. Sealed into encrypted storage on save.",
+  "supabase.header": "Which request header carries the Supabase access token.",
   "supabase.audience": "Reject tokens whose `aud` is not this. Supabase issues `authenticated`.",
 
   /* Apple. */

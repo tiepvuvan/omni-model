@@ -221,6 +221,8 @@ Use `OMNI_SERVER_JSON` for several values, or the individual aliases below.
 | `server.logLevel` | `OMNI_SERVER_LOG_LEVEL` (or legacy `OMNI_LOG_LEVEL`) | `debug` \| `info` \| `warn` \| `error` \| `silent` | `info` |
 | `server.trustProxyHeaders` | `OMNI_SERVER_TRUST_PROXY_HEADERS` | boolean | `false` |
 | `server.maxInputTokens` | `OMNI_SERVER_MAX_INPUT_TOKENS` | positive integer | `128000` |
+| `server.organizationName` | `OMNI_SERVER_ORGANIZATION_NAME` | non-empty string | none |
+| `server.customDomain` | `OMNI_SERVER_CUSTOM_DOMAIN` | hostname | none |
 | `server.cors` | `OMNI_SERVER_CORS` | JSON object | none |
 
 Example browser CORS policy:
@@ -255,6 +257,9 @@ OMNI_SERVER_MAX_INPUT_TOKENS=256000
 `server.maxInputTokens` or `OMNI_SERVER_MAX_INPUT_TOKENS` when upgrading an existing configuration.
 
 Set `trustProxyHeaders` only behind a reverse proxy or CDN that overwrites forwarding headers.
+`organizationName` replaces “Omni Model” in the operator-console header. `customDomain` records the
+public hostname operators should use; the reverse proxy itself is deployment infrastructure, so
+configure it with the [Caddy Compose setup](/installation/docker#custom-domain-with-caddy).
 
 ## Storage
 
@@ -284,15 +289,15 @@ profiles; `OMNI_SECURITY_APP_AUTH_MODE` determines whether any or all of the app
 
 | Verifier | Enable and required configuration | Optional configuration |
 | --- | --- | --- |
-| Firebase Auth | `OMNI_SECURITY_FIREBASE_AUTH_ENABLED=true`<br/>`OMNI_SECURITY_FIREBASE_AUTH_PROJECT_ID=my-project` | `OMNI_SECURITY_FIREBASE_AUTH_HEADER`<br/>`OMNI_SECURITY_FIREBASE_AUTH_CLOCK_TOLERANCE_SECONDS` |
-| Clerk | `OMNI_SECURITY_CLERK_ENABLED=true`<br/>`OMNI_SECURITY_CLERK_ISSUER=https://instance.clerk.accounts.dev` | `OMNI_SECURITY_CLERK_JWKS_URL`<br/>`OMNI_SECURITY_CLERK_AUTHORIZED_PARTIES` (JSON array)<br/>`OMNI_SECURITY_CLERK_AUDIENCE` (string or JSON array)<br/>`OMNI_SECURITY_CLERK_ALLOW_PENDING_SESSIONS`<br/>`OMNI_SECURITY_CLERK_HEADER`<br/>`OMNI_SECURITY_CLERK_CLOCK_TOLERANCE_SECONDS` |
-| AWS Cognito | `OMNI_SECURITY_AWS_COGNITO_ENABLED=true`<br/>`OMNI_SECURITY_AWS_COGNITO_REGION=us-east-1`<br/>`OMNI_SECURITY_AWS_COGNITO_USER_POOL_ID=us-east-1_Example`<br/>`OMNI_SECURITY_AWS_COGNITO_CLIENT_IDS='["app-client-id"]'` | `OMNI_SECURITY_AWS_COGNITO_TOKEN_USE` (`access`, `id`, or `either`)<br/>`OMNI_SECURITY_AWS_COGNITO_REQUIRED_SCOPES` (JSON array)<br/>`OMNI_SECURITY_AWS_COGNITO_HEADER`<br/>`OMNI_SECURITY_AWS_COGNITO_CLOCK_TOLERANCE_SECONDS` |
+| Firebase Auth | `OMNI_SECURITY_FIREBASE_AUTH_ENABLED=true`<br/>`OMNI_SECURITY_FIREBASE_AUTH_PROJECT_ID=my-project` | `OMNI_SECURITY_FIREBASE_AUTH_HEADER`<br/>`OMNI_SECURITY_FIREBASE_AUTH_SCHEME` (`bearer` or `none`)<br/>`OMNI_SECURITY_FIREBASE_AUTH_CLOCK_TOLERANCE_SECONDS` |
+| Clerk | `OMNI_SECURITY_CLERK_ENABLED=true`<br/>`OMNI_SECURITY_CLERK_ISSUER=https://instance.clerk.accounts.dev` | `OMNI_SECURITY_CLERK_JWKS_URL`<br/>`OMNI_SECURITY_CLERK_AUTHORIZED_PARTIES` (JSON array)<br/>`OMNI_SECURITY_CLERK_AUDIENCE` (string or JSON array)<br/>`OMNI_SECURITY_CLERK_ALLOW_PENDING_SESSIONS`<br/>`OMNI_SECURITY_CLERK_HEADER`<br/>`OMNI_SECURITY_CLERK_SCHEME` (`bearer` or `none`)<br/>`OMNI_SECURITY_CLERK_CLOCK_TOLERANCE_SECONDS` |
+| AWS Cognito | `OMNI_SECURITY_AWS_COGNITO_ENABLED=true`<br/>`OMNI_SECURITY_AWS_COGNITO_REGION=us-east-1`<br/>`OMNI_SECURITY_AWS_COGNITO_USER_POOL_ID=us-east-1_Example`<br/>`OMNI_SECURITY_AWS_COGNITO_CLIENT_IDS='["app-client-id"]'` | `OMNI_SECURITY_AWS_COGNITO_TOKEN_USE` (`access`, `id`, or `either`)<br/>`OMNI_SECURITY_AWS_COGNITO_REQUIRED_SCOPES` (JSON array)<br/>`OMNI_SECURITY_AWS_COGNITO_HEADER`<br/>`OMNI_SECURITY_AWS_COGNITO_SCHEME` (`bearer` or `none`)<br/>`OMNI_SECURITY_AWS_COGNITO_CLOCK_TOLERANCE_SECONDS` |
 | Firebase App Check | `OMNI_SECURITY_FIREBASE_APPCHECK_ENABLED=true`<br/>`OMNI_SECURITY_FIREBASE_APPCHECK_PROJECT_NUMBER=1234567890` | `OMNI_SECURITY_FIREBASE_APPCHECK_APP_ID` (one)<br/>`OMNI_SECURITY_FIREBASE_APPCHECK_APP_IDS` (JSON array)<br/>`OMNI_SECURITY_FIREBASE_APPCHECK_HEADER`<br/>`OMNI_SECURITY_FIREBASE_APPCHECK_CONSUME` (default `false`)<br/>`OMNI_SECURITY_FIREBASE_APPCHECK_CLOCK_TOLERANCE_SECONDS`<br/><br/>`OMNI_GCP_PROJECT_NUMBER` is an alternative source for the project number. |
 | Cloudflare Turnstile | `OMNI_SECURITY_CLOUDFLARE_TURNSTILE_ENABLED=true`<br/>`OMNI_SECURITY_CLOUDFLARE_TURNSTILE_SECRET` | `OMNI_SECURITY_CLOUDFLARE_TURNSTILE_HEADER`<br/>`OMNI_SECURITY_CLOUDFLARE_TURNSTILE_ACTION`<br/>`OMNI_SECURITY_CLOUDFLARE_TURNSTILE_HOSTNAMES` (JSON array) |
 | reCAPTCHA Enterprise | `OMNI_SECURITY_RECAPTCHA_ENTERPRISE_ENABLED=true`<br/>`OMNI_SECURITY_RECAPTCHA_ENTERPRISE_PROJECT_ID`<br/>`OMNI_SECURITY_RECAPTCHA_ENTERPRISE_SITE_KEY`<br/>`OMNI_SECURITY_RECAPTCHA_ENTERPRISE_EXPECTED_ACTION`<br/>`OMNI_SECURITY_RECAPTCHA_ENTERPRISE_MIN_SCORE` | `OMNI_SECURITY_RECAPTCHA_ENTERPRISE_API_KEY` or `OMNI_SECURITY_RECAPTCHA_ENTERPRISE_SERVICE_ACCOUNT_KEY` (omit both for ADC/WIF)<br/>`OMNI_SECURITY_RECAPTCHA_ENTERPRISE_HEADER`<br/>`OMNI_SECURITY_RECAPTCHA_ENTERPRISE_HOSTNAMES`<br/>`OMNI_SECURITY_RECAPTCHA_ENTERPRISE_ANDROID_PACKAGE_NAMES`<br/>`OMNI_SECURITY_RECAPTCHA_ENTERPRISE_IOS_BUNDLE_IDS` (allowlists are JSON arrays) |
 | Google Play Integrity | `OMNI_SECURITY_GOOGLE_PLAY_INTEGRITY_ENABLED=true`<br/>`OMNI_SECURITY_GOOGLE_PLAY_INTEGRITY_PACKAGE_NAME` | `OMNI_SECURITY_GOOGLE_PLAY_INTEGRITY_SERVICE_ACCOUNT_KEY` (omit for ADC/WIF)<br/>`OMNI_SECURITY_GOOGLE_PLAY_INTEGRITY_HEADER`<br/>`OMNI_SECURITY_GOOGLE_PLAY_INTEGRITY_MAX_AGE`<br/>`OMNI_SECURITY_GOOGLE_PLAY_INTEGRITY_CLOCK_TOLERANCE_SECONDS`<br/>`OMNI_SECURITY_GOOGLE_PLAY_INTEGRITY_DEVICE_RECOGNITION_VERDICTS`<br/>`OMNI_SECURITY_GOOGLE_PLAY_INTEGRITY_REQUIRE_LICENSED`<br/>`OMNI_SECURITY_GOOGLE_PLAY_INTEGRITY_CERTIFICATE_SHA256_DIGESTS` |
 | JWT | `OMNI_SECURITY_JWT_ENABLED=true` plus exactly one of `OMNI_SECURITY_JWT_SECRET`, `OMNI_SECURITY_JWT_JWKS_URL`, or `OMNI_SECURITY_JWT_PUBLIC_KEY` | `OMNI_SECURITY_JWT_ALGORITHMS` (JSON array)<br/>`OMNI_SECURITY_JWT_ISSUER`<br/>`OMNI_SECURITY_JWT_AUDIENCE` (string or JSON array)<br/>`OMNI_SECURITY_JWT_HEADER`<br/>`OMNI_SECURITY_JWT_SCHEME` (`bearer` or `none`)<br/>`OMNI_SECURITY_JWT_USER_ID_CLAIM`<br/>`OMNI_SECURITY_JWT_DEVICE_ID_CLAIM`<br/>`OMNI_SECURITY_JWT_CLOCK_TOLERANCE_SECONDS` |
-| Supabase | `OMNI_SECURITY_SUPABASE_ENABLED=true` plus one of `OMNI_SECURITY_SUPABASE_URL`, `OMNI_SECURITY_SUPABASE_JWT_SECRET`, or `OMNI_SECURITY_SUPABASE_JWKS_URL` | `OMNI_SECURITY_SUPABASE_ISSUER`<br/>`OMNI_SECURITY_SUPABASE_AUDIENCE` (string or JSON array)<br/>`OMNI_SECURITY_SUPABASE_HEADER`<br/>`OMNI_SECURITY_SUPABASE_CLOCK_TOLERANCE_SECONDS` |
+| Supabase | `OMNI_SECURITY_SUPABASE_ENABLED=true` plus one of `OMNI_SECURITY_SUPABASE_URL`, `OMNI_SECURITY_SUPABASE_JWT_SECRET`, or `OMNI_SECURITY_SUPABASE_JWKS_URL` | `OMNI_SECURITY_SUPABASE_ISSUER`<br/>`OMNI_SECURITY_SUPABASE_AUDIENCE` (string or JSON array)<br/>`OMNI_SECURITY_SUPABASE_HEADER`<br/>`OMNI_SECURITY_SUPABASE_SCHEME` (`bearer` or `none`)<br/>`OMNI_SECURITY_SUPABASE_CLOCK_TOLERANCE_SECONDS` |
 | Apple App Attest | `OMNI_SECURITY_APP_ATTEST_ENABLED=true`<br/>`OMNI_SECURITY_APP_ATTEST_TEAM_ID`<br/>`OMNI_SECURITY_APP_ATTEST_BUNDLE_ID` | `OMNI_SECURITY_APP_ATTEST_ENVIRONMENT`<br/>`OMNI_SECURITY_APP_ATTEST_CHALLENGE_TTL`<br/>`OMNI_SECURITY_APP_ATTEST_ROOT_CA_PEM`<br/>`OMNI_SECURITY_APP_ATTEST_KEY_ID_HEADER`<br/>`OMNI_SECURITY_APP_ATTEST_ASSERTION_HEADER`<br/>`OMNI_SECURITY_APP_ATTEST_CHALLENGE_HEADER` |
 | Apple DeviceCheck | `OMNI_SECURITY_DEVICE_CHECK_ENABLED=true`<br/>`OMNI_SECURITY_DEVICE_CHECK_TEAM_ID`<br/>`OMNI_SECURITY_DEVICE_CHECK_KEY_ID`<br/>`OMNI_SECURITY_DEVICE_CHECK_PRIVATE_KEY` | `OMNI_SECURITY_DEVICE_CHECK_DEVELOPMENT`<br/>`OMNI_SECURITY_DEVICE_CHECK_HEADER`<br/>`OMNI_SECURITY_DEVICE_CHECK_CACHE_TTL` |
 
@@ -353,13 +358,15 @@ answerable by reading the rule.
 
 ### Target fields
 
-`type` is required and is one of `openai`, `openai-compatible`, `anthropic`, or `google`. The rest are
-that provider's own options, validated by its schema — `GET /admin/api/meta` publishes them as JSON
-Schema, which is how the dashboard renders a form per type.
+`type` is required and is one of `openai`, `deepseek`, `openai-compatible`, `anthropic`, or
+`google`. The rest are that provider's own options, validated by its schema —
+`GET /admin/api/meta` publishes them as JSON Schema, which is how the dashboard renders a form per
+type.
 
 | Provider type | Required | Optional |
 | --- | --- | --- |
 | `openai` | `apiKey` | `baseUrl`, `organization`, `headers`, `models`, `includeStreamUsage` |
+| `deepseek` | `apiKey` | `baseUrl`, `headers`, `models`, `includeStreamUsage` |
 | `openai-compatible` | `baseUrl` | `apiKey`, `organization`, `headers`, `models`, `includeStreamUsage` |
 | `anthropic` | `apiKey` | `baseUrl`, `version`, `maxTokensDefault` |
 | `google` | `apiKey` | `baseUrl` |
@@ -386,12 +393,12 @@ simplest case the ugliest. These shortcuts build that catch-all rule instead:
 | --- | --- | --- |
 | `OMNI_TARGET_TYPE` | all | Required. Provider implementation type. |
 | `OMNI_TARGET_MODEL` | all | Upstream model to forward as. |
-| `OMNI_TARGET_API_KEY` | OpenAI, Anthropic, Google; optional for compatible | String or `${SECRET}` reference. |
+| `OMNI_TARGET_API_KEY` | OpenAI, DeepSeek, Anthropic, Google; optional for compatible | String or `${SECRET}` reference. |
 | `OMNI_TARGET_BASE_URL` | all | URL. Required for `openai-compatible`; optional otherwise. |
-| `OMNI_TARGET_HEADERS` | OpenAI / compatible | JSON object of extra upstream headers. |
-| `OMNI_TARGET_MODELS` | OpenAI / compatible | JSON array used as a fallback model list. |
+| `OMNI_TARGET_HEADERS` | OpenAI / DeepSeek / compatible | JSON object of extra upstream headers. |
+| `OMNI_TARGET_MODELS` | OpenAI / DeepSeek / compatible | JSON array used as a fallback model list. |
 | `OMNI_TARGET_ORGANIZATION` | OpenAI / compatible | Optional OpenAI organization header. |
-| `OMNI_TARGET_INCLUDE_STREAM_USAGE` | OpenAI / compatible | Boolean, default `true`. |
+| `OMNI_TARGET_INCLUDE_STREAM_USAGE` | OpenAI / DeepSeek / compatible | Boolean, default `true`. |
 | `OMNI_TARGET_ANTHROPIC_VERSION` | Anthropic | String, default `2023-06-01`. |
 | `OMNI_TARGET_ANTHROPIC_MAX_TOKENS_DEFAULT` | Anthropic | Positive integer, default `4096`. |
 
@@ -399,6 +406,11 @@ simplest case the ugliest. These shortcuts build that catch-all rule instead:
 # OpenAI
 OMNI_TARGET_TYPE=openai
 OMNI_TARGET_API_KEY='${OPENAI_API_KEY}'
+
+# DeepSeek (the API root defaults to https://api.deepseek.com)
+OMNI_TARGET_TYPE=deepseek
+OMNI_TARGET_API_KEY='${DEEPSEEK_API_KEY}'
+OMNI_TARGET_MODEL=deepseek-v4-flash
 
 # Or an OpenAI-compatible endpoint such as Groq, OpenRouter, Together, or a local gateway.
 OMNI_TARGET_TYPE=openai-compatible
@@ -473,6 +485,8 @@ its own options at startup, so unsupported fields fail before the service accept
 | `logLevel` | `debug` \| `info` \| `warn` \| `error` \| `silent` | `info` |
 | `trustProxyHeaders` | boolean | `false` |
 | `maxInputTokens` | positive integer | `128000` |
+| `organizationName` | non-empty string, at most 100 characters | omitted |
+| `customDomain` | hostname such as `ai.example.com` | omitted |
 | `cors.allowOrigins` | string array | `["*"]` |
 | `cors.allowMethods`, `cors.allowHeaders`, `cors.exposeHeaders` | string arrays | omitted |
 | `cors.maxAge` | positive integer seconds | omitted |
@@ -491,11 +505,25 @@ one attestation scheme per platform is normal.
 | `appAuth.mode` | `any` \| `all` | `all` | `all` requires every configured scheme — right for one platform layering two. `any` takes the first that accepts — right for several platforms, since a client can only satisfy its own. |
 | `appAuth.providers` | array | `[]` | Any of `firebase-app-check`, `apple-app-attest`, `apple-device-check`, `cloudflare-turnstile`, `recaptcha-enterprise`, `google-play-integrity`. |
 | `publicPaths` | string array | `[]` | Exact paths or a trailing `*` prefix. |
-| `requireWriteKey` | boolean | `false` | Demand `x-omni-key` on every `/v1/*` request. |
+| `requireWriteKey` | boolean | `false` | Demand a publishable key in `Authorization: Bearer <key>` on every `/v1/*` request. |
 
 A verifier configured in the wrong layer is refused by name, with the field it belongs in — putting
 App Attest in `userAuth` is one field away from correct, and attesting an app is not the same as
 knowing who is calling.
+
+`Authorization: Bearer <publishable-key>` is reserved for publishable keys. User verifiers use raw
+tokens in dedicated headers by default:
+
+| Verifier | Default header |
+| --- | --- |
+| `firebase-auth` | `X-Firebase-ID-Token` |
+| `clerk` | `X-Clerk-Session-Token` |
+| `aws-cognito` | `X-Cognito-ID-Token` |
+| `supabase` | `X-Supabase-Access-Token` |
+| `jwt` | `X-Omni-User-Token` |
+
+Each header is configurable. Set `scheme: bearer` only when a custom header includes a `Bearer`
+prefix; the default scheme is `none`.
 
 ```yaml
 security:
@@ -552,6 +580,7 @@ response *body* is finished — for a stream, long after the handler returned.
 | `enabled` | boolean | `true` | Answer an identical request from the cache. |
 | `ttl` | duration | `5m` | How long an entry stays servable. |
 | `maxEntries` | positive integer | `10000` | Enforced by a periodic sweep, oldest first — a budget, not a hard ceiling. |
+| `maxBytes` | positive integer | `536870912` (512 MiB) | Maximum stored response bytes. The same sweep removes the oldest entries until both limits fit. |
 
 Two requests are the same request when the resolved upstream, the resolved model,
 whether the client streams, and the **whole request body** all match. Not just the

@@ -8,4 +8,5 @@
 export * from "./app.js";
 export * from "./auth.js";
 export * from "./deps.js";
+export * from "./invites.js";
 export * from "./session.js";

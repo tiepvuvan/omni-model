@@ -170,7 +170,7 @@ describe("request logging", () => {
     const { writeKey, secret } = await writeKeys.create({ name: "ios-app" });
     await writeKeys.revoke(writeKey.id);
 
-    await app.fetch(chatRequest(CHAT_BODY, { [WRITE_KEY_HEADER]: secret }));
+    await app.fetch(chatRequest(CHAT_BODY, { [WRITE_KEY_HEADER]: `Bearer ${secret}` }));
 
     const [entry] = await logs();
     expect(entry).toMatchObject({ status: 401, errorCode: "write_key_revoked" });
@@ -185,7 +185,10 @@ describe("request logging", () => {
     const { writeKey, secret } = await writeKeys.create({ name: "ios-app" });
 
     await app.fetch(
-      chatRequest(CHAT_BODY, { [WRITE_KEY_HEADER]: secret, "x-test-user": "user-42" }),
+      chatRequest(CHAT_BODY, {
+        [WRITE_KEY_HEADER]: `Bearer ${secret}`,
+        "x-test-user": "user-42",
+      }),
     );
 
     expect((await logs())[0]).toMatchObject({
@@ -200,7 +203,9 @@ describe("request logging", () => {
     const { app, writeKeys, logs } = await setup();
     const { secret } = await writeKeys.create({ name: "ios-app", allowedModels: ["cheap"] });
 
-    const response = await app.fetch(chatRequest(CHAT_BODY, { [WRITE_KEY_HEADER]: secret }));
+    const response = await app.fetch(
+      chatRequest(CHAT_BODY, { [WRITE_KEY_HEADER]: `Bearer ${secret}` }),
+    );
     expect(response.status).toBe(404);
 
     // Regression: the allowlist check used to run before the draft was filled in,
@@ -364,8 +369,8 @@ describe("content capture", () => {
     const optedIn = await writeKeys.create({ name: "debug-me", captureContent: true });
     const normal = await writeKeys.create({ name: "everyone-else" });
 
-    await app.fetch(chatRequest(CHAT_BODY, { [WRITE_KEY_HEADER]: normal.secret }));
-    await app.fetch(chatRequest(CHAT_BODY, { [WRITE_KEY_HEADER]: optedIn.secret }));
+    await app.fetch(chatRequest(CHAT_BODY, { [WRITE_KEY_HEADER]: `Bearer ${normal.secret}` }));
+    await app.fetch(chatRequest(CHAT_BODY, { [WRITE_KEY_HEADER]: `Bearer ${optedIn.secret}` }));
 
     const entries = await logs();
     expect(entries[0]?.content).toBeUndefined();
@@ -376,7 +381,7 @@ describe("content capture", () => {
     const { app, writeKeys, logs } = await setup(CAPTURING);
     const optedOut = await writeKeys.create({ name: "sensitive", captureContent: false });
 
-    await app.fetch(chatRequest(CHAT_BODY, { [WRITE_KEY_HEADER]: optedOut.secret }));
+    await app.fetch(chatRequest(CHAT_BODY, { [WRITE_KEY_HEADER]: `Bearer ${optedOut.secret}` }));
 
     expect((await logs())[0]?.content).toBeUndefined();
   });

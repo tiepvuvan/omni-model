@@ -33,6 +33,19 @@ export const serverConfigSchema = z.strictObject({
    * authority for billing and rate-limit accounting.
    */
   maxInputTokens: z.number().int().positive().default(128_000),
+  /** Operator-console name shown in place of the product name. */
+  organizationName: z.string().trim().min(1).max(100).optional(),
+  /** Public hostname served by the deployment's reverse proxy. */
+  customDomain: z
+    .string()
+    .trim()
+    .min(1)
+    .max(253)
+    .regex(
+      /^(?=.{1,253}$)(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,63}$/,
+      "expected a hostname such as ai.example.com",
+    )
+    .optional(),
 });
 
 /**
@@ -91,7 +104,8 @@ export const securityConfigSchema = z.strictObject({
   /** Paths (exact or trailing-`*` prefix) that bypass authentication. */
   publicPaths: z.array(z.string()).default([]),
   /**
-   * Require every `/v1/*` request to present a write key (`x-omni-key`).
+   * Require every `/v1/*` request to present a publishable key as
+   * `Authorization: Bearer <key>`.
    *
    * Defaults to **false** so enabling it is a deliberate act: turning it on
    * locks out every client that is not already sending a key. Presented keys are
@@ -197,6 +211,15 @@ export const cacheConfigSchema = z.strictObject({
   enabled: z.boolean().default(true),
   /** How long an entry stays servable. */
   ttl: durationSchema.default("5m"),
+  /**
+   * Total stored response bytes to keep. Enforced by the same periodic,
+   * oldest-first sweep as the entry count.
+   */
+  maxBytes: z
+    .number()
+    .int()
+    .positive()
+    .default(512 * 1024 * 1024),
   /**
    * Entries to keep. Enforced by a periodic sweep, oldest first, so it is a budget
    * rather than a hard ceiling — a burst can overshoot until the next sweep.

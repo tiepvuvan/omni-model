@@ -6,14 +6,22 @@ import { isPublicPath } from "./auth.js";
 import type { AppEnv } from "./types.js";
 
 /**
- * Header carrying the write key.
+ * OpenAI-compatible header carrying the publishable key.
  *
- * Deliberately **not** `Authorization`: the jwt, firebase-auth and supabase
- * verifiers already own that header for the end user's token, and a client needs
- * to send both at once. Conflating them would make "which app" and "which user"
- * mutually exclusive.
+ * OpenAI SDKs already send their `apiKey` as `Authorization: Bearer …`, so using
+ * that wire format lets them point at omni-model without transport adapters.
+ * End-user verifiers use dedicated `X-*` headers and remain a separate layer.
  */
-export const WRITE_KEY_HEADER = "x-omni-key";
+export const WRITE_KEY_HEADER = "authorization";
+
+/** Authentication scheme used by OpenAI-compatible clients. */
+export const WRITE_KEY_SCHEME = "Bearer";
+
+function presentedSecret(value: string): string | null {
+  const match = value.match(/^Bearer\s+(.+)$/i);
+  const secret = match?.[1]?.trim();
+  return secret === undefined || secret === "" ? null : secret;
+}
 
 /** Public reasons, deliberately specific enough to debug and no more. */
 const REASONS: Record<Exclude<WriteKeyState, "active">, string> = {
@@ -54,11 +62,22 @@ export function createWriteKeyMiddleware(
     if (presented === undefined || presented.trim() === "") {
       if (required()) {
         throw unauthorized(
-          `missing client key: send your write key in the ${WRITE_KEY_HEADER} header`,
-          { code: "write_key_required" },
+          `missing publishable key: send Authorization: ${WRITE_KEY_SCHEME} <key>`,
+          {
+            code: "write_key_required",
+            headers: { "WWW-Authenticate": WRITE_KEY_SCHEME },
+          },
         );
       }
       return next();
+    }
+
+    const secret = presentedSecret(presented);
+    if (secret === null) {
+      throw unauthorized("invalid publishable key authorization", {
+        code: "write_key_invalid",
+        headers: { "WWW-Authenticate": WRITE_KEY_SCHEME },
+      });
     }
 
     if (store === null) {
@@ -66,22 +85,27 @@ export function createWriteKeyMiddleware(
       if (required()) {
         throw unauthorized("client keys are required but no write key store is configured", {
           code: "write_key_unavailable",
+          headers: { "WWW-Authenticate": WRITE_KEY_SCHEME },
         });
       }
       return next();
     }
 
     // Cheap shape check first, so junk credentials never reach a store lookup.
-    const writeKey = looksLikeWriteKey(presented.trim())
-      ? await store.authenticate(presented.trim())
-      : null;
+    const writeKey = looksLikeWriteKey(secret) ? await store.authenticate(secret) : null;
     if (writeKey === null) {
-      throw unauthorized("invalid client key", { code: "write_key_invalid" });
+      throw unauthorized("invalid client key", {
+        code: "write_key_invalid",
+        headers: { "WWW-Authenticate": WRITE_KEY_SCHEME },
+      });
     }
 
     const state = writeKeyState(writeKey, now());
     if (state !== "active") {
-      throw unauthorized(REASONS[state], { code: `write_key_${state}` });
+      throw unauthorized(REASONS[state], {
+        code: `write_key_${state}`,
+        headers: { "WWW-Authenticate": WRITE_KEY_SCHEME },
+      });
     }
 
     c.set("writeKey", writeKey);

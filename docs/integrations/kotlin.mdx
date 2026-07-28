@@ -3,15 +3,15 @@ title: Kotlin (Android)
 description: Call omni-model from an Android app with OkHttp.
 ---
 
-An Android app reaches omni-model over a plain HTTPS endpoint, with OkHttp and a `Bearer` token you
-supply.
+An Android app reaches omni-model over HTTPS with an omni-model publishable key and the signed-in
+user's token.
 
 The wire format is OpenAI's: requests carry `model` and `messages`, responses carry `choices`, and
 streaming emits `chat.completion.chunk` objects.
 
-Point OkHttp at your deployed proxy. Send an `Authorization: Bearer <token>` header that matches
-a [`security` verifier](/security/custom-jwt) in your config (JWT, Firebase Auth, Clerk, Cognito,
-or Supabase).
+Point OkHttp at your deployed proxy. `Authorization: Bearer <key>` carries the publishable key;
+send the user credential in the dedicated header for the [`security.userAuth`](/security/custom-jwt)
+method.
 The body and responses are exactly OpenAI's.
 
 <Steps>
@@ -27,7 +27,7 @@ The body and responses are exactly OpenAI's.
     val client = OkHttpClient()
     val JSON = "application/json".toMediaType()
 
-    fun complete(prompt: String, token: String): String {
+    fun complete(prompt: String, publishableKey: String, token: String): String {
       val body = JSONObject()
         .put("model", "gpt-4o-mini")
         .put("messages", JSONArray().put(
@@ -38,7 +38,8 @@ The body and responses are exactly OpenAI's.
 
       val request = Request.Builder()
         .url("https://proxy.example.com/v1/chat/completions")
-        .header("Authorization", "Bearer $token")
+        .header("Authorization", "Bearer $publishableKey")
+        .header("X-Firebase-ID-Token", token)
         .post(body)
         .build()
 
@@ -59,7 +60,12 @@ The body and responses are exactly OpenAI's.
     `chat.completion.chunk`; the stream ends with `data: [DONE]`. Run this off the main thread.
 
     ```kotlin
-    fun stream(prompt: String, token: String, onDelta: (String) -> Unit) {
+    fun stream(
+      prompt: String,
+      publishableKey: String,
+      token: String,
+      onDelta: (String) -> Unit,
+    ) {
       val body = JSONObject()
         .put("model", "gpt-4o-mini")
         .put("stream", true)
@@ -71,7 +77,8 @@ The body and responses are exactly OpenAI's.
 
       val request = Request.Builder()
         .url("https://proxy.example.com/v1/chat/completions")
-        .header("Authorization", "Bearer $token")
+        .header("Authorization", "Bearer $publishableKey")
+        .header("X-Firebase-ID-Token", token)
         .header("Accept", "text/event-stream")
         .post(body)
         .build()
@@ -102,7 +109,7 @@ The body and responses are exactly OpenAI's.
 
 <Tip>
   Because the endpoint is OpenAI-compatible, you can also point a JVM OpenAI client library at
-  it: set the base URL to `https://proxy.example.com/v1` and the API key to your proxy token.
+  it: set the base URL to `https://proxy.example.com/v1` and the API key to your publishable key.
 </Tip>
 
 ## Next steps

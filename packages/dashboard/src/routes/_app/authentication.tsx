@@ -10,7 +10,14 @@ import vendorJwt from "../../assets/vendor-jwt.svg";
 import vendorSupabase from "../../assets/vendor-supabase.svg";
 import { ActionBar, CenteredPane, PaneTitle } from "../../components/chrome";
 import { mergeCredentials, type OptionValues, SchemaForm } from "../../components/schema-form";
-import { Callout, Card, Checkbox, Radio, SelectField } from "../../components/ui/primitives";
+import {
+  Callout,
+  Card,
+  Checkbox,
+  Radio,
+  SelectField,
+  ThemedIcon,
+} from "../../components/ui/primitives";
 import {
   api,
   type ConfigResponse,
@@ -40,7 +47,10 @@ export const Route = createFileRoute("/_app/authentication")({
  * appends anything *required* the list misses, so a curated card can never hide a
  * field a save needs.
  */
-const PRESENTATION: Record<string, { title: string; icon: string; fields: readonly string[] }> = {
+const PRESENTATION: Record<
+  string,
+  { title: string; icon: string; fields: readonly string[]; monochrome?: boolean }
+> = {
   "firebase-auth": { title: "Firebase", icon: vendorFirebase, fields: ["projectId"] },
   clerk: {
     title: "Clerk",
@@ -57,6 +67,7 @@ const PRESENTATION: Record<string, { title: string; icon: string; fields: readon
     title: "Custom JWT",
     icon: vendorJwt,
     fields: ["publicKey", "secret", "issuer", "algorithms"],
+    monochrome: true,
   },
   "firebase-app-check": {
     title: "Firebase App Check",
@@ -84,11 +95,17 @@ const PRESENTATION: Record<string, { title: string; icon: string; fields: readon
       "certificateSha256Digests",
     ],
   },
-  "apple-app-attest": { title: "App Attest", icon: vendorApple, fields: ["teamId", "bundleId"] },
+  "apple-app-attest": {
+    title: "App Attest",
+    icon: vendorApple,
+    fields: ["teamId", "bundleId"],
+    monochrome: true,
+  },
   "apple-device-check": {
     title: "DeviceCheck",
     icon: vendorApple,
     fields: ["teamId", "keyId", "privateKey"],
+    monochrome: true,
   },
 };
 
@@ -112,6 +129,16 @@ function ordered(types: readonly string[]): string[] {
     ...ORDER.filter((type) => types.includes(type)),
     ...types.filter((type) => !ORDER.includes(type)).sort(),
   ];
+}
+
+function verifierIcon(type: string, fallback: string) {
+  const presentation = PRESENTATION[type];
+  const icon = presentation?.icon ?? fallback;
+  return presentation?.monochrome === true ? (
+    <ThemedIcon src={icon} className="size-[20px] text-foreground-primary" />
+  ) : (
+    <img src={icon} alt="" aria-hidden className="size-[20px] shrink-0" />
+  );
 }
 
 const titleOf = (type: string): string => PRESENTATION[type]?.title ?? type;
@@ -288,14 +315,7 @@ function AuthenticationScreen() {
             <Card
               key={type}
               title={titleOf(type)}
-              icon={
-                <img
-                  src={PRESENTATION[type]?.icon ?? vendorJwt}
-                  alt=""
-                  aria-hidden
-                  className="size-[20px] shrink-0"
-                />
-              }
+              icon={verifierIcon(type, vendorJwt)}
               actions={
                 <Radio
                   name="user-auth"
@@ -355,14 +375,7 @@ function AuthenticationScreen() {
             <Card
               key={type}
               title={titleOf(type)}
-              icon={
-                <img
-                  src={PRESENTATION[type]?.icon ?? vendorApple}
-                  alt=""
-                  aria-hidden
-                  className="size-[20px] shrink-0"
-                />
-              }
+              icon={verifierIcon(type, vendorApple)}
               actions={
                 <Checkbox
                   aria-label={`Enable ${titleOf(type)}`}

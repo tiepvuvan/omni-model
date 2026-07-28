@@ -17,6 +17,7 @@ describe("component metadata", () => {
 
     expect(meta.providers.map((p) => p.type)).toEqual([
       "anthropic",
+      "deepseek",
       "google",
       "openai",
       "openai-compatible",
@@ -119,26 +120,54 @@ describe("routing simulation", () => {
       method: "POST",
       body: JSON.stringify({
         model: "gpt-4o",
-        stream: true,
-        messageCount: 3,
+        inputTokenCount: 321,
+        maxTokens: 2048,
+        temperature: 0.25,
         userId: "user-1",
         claims: { plan: "pro" },
+        providers: ["firebase-auth", "firebase-app-check"],
         clientName: "ios app",
+        ip: "203.0.113.10",
+        method: "PATCH",
+        path: "/v1/custom",
+        headers: { "x-tenant": "acme" },
       }),
     });
     const body = (await response.json()) as {
       facts: {
-        request: { model: string; stream: boolean; messageCount: number };
-        user: { id: string; claims: Record<string, unknown> };
-        client: { name: string; authenticated: boolean };
+        request: {
+          model: string;
+          inputTokenCount: number;
+          maxTokens: number;
+          temperature: number;
+        };
+        user: { id: string; claims: Record<string, unknown>; providers: string[] };
+        client: { id: string; name: string };
+        http: { ip: string; method: string; path: string; headers: Record<string, string> };
       };
     };
     // The whole point of the endpoint: an operator can see what `when:` sees,
     // including that a missing claim is missing rather than empty.
-    expect(body.facts.request).toMatchObject({ model: "gpt-4o", stream: true, messageCount: 3 });
+    expect(body.facts.request).toEqual({
+      model: "gpt-4o",
+      inputTokenCount: 321,
+      maxTokens: 2048,
+      temperature: 0.25,
+    });
     expect(body.facts.user.id).toBe("user-1");
     expect(body.facts.user.claims).toEqual({ plan: "pro" });
-    expect(body.facts.client).toMatchObject({ name: "ios app", authenticated: true });
+    expect(body.facts.user.providers).toEqual(["firebase-auth", "firebase-app-check"]);
+    expect(body.facts.client).toMatchObject({
+      id: "00000000-0000-0000-0000-000000000000",
+      name: "ios app",
+    });
+    expect(body.facts.http).toEqual({
+      ip: "203.0.113.10",
+      method: "PATCH",
+      path: "/v1/custom",
+      headers: { "x-tenant": "acme" },
+    });
+    expect(Object.keys(body.facts).sort()).toEqual(["client", "http", "request", "user"]);
   });
 
   it("reports a model nothing would serve as an unmatched simulation, not an error", async () => {

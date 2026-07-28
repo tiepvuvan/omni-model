@@ -11,13 +11,16 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AppRouteImport } from './routes/_app'
+import { Route as AcceptInviteRouteImport } from './routes/accept-invite'
 import { Route as SetupRouteImport } from './routes/setup'
 import { Route as SignInRouteImport } from './routes/sign-in'
 import { Route as AppAuthenticationRouteImport } from './routes/_app/authentication'
 import { Route as AppLogsRouteImport } from './routes/_app/logs'
+import { Route as AppPublishableKeysRouteImport } from './routes/_app/publishable-keys'
 import { Route as AppRateLimitRouteImport } from './routes/_app/rate-limit'
 import { Route as AppRoutingRouteImport } from './routes/_app/routing'
 import { Route as AppSettingsRouteImport } from './routes/_app/settings'
+import { Route as AppUsersRouteImport } from './routes/_app/users'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -26,6 +29,11 @@ const IndexRoute = IndexRouteImport.update({
 } as any)
 const AppRoute = AppRouteImport.update({
   id: '/_app',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AcceptInviteRoute = AcceptInviteRouteImport.update({
+  id: '/accept-invite',
+  path: '/accept-invite',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SetupRoute = SetupRouteImport.update({
@@ -48,6 +56,11 @@ const AppLogsRoute = AppLogsRouteImport.update({
   path: '/logs',
   getParentRoute: () => AppRoute,
 } as any)
+const AppPublishableKeysRoute = AppPublishableKeysRouteImport.update({
+  id: '/publishable-keys',
+  path: '/publishable-keys',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppRateLimitRoute = AppRateLimitRouteImport.update({
   id: '/rate-limit',
   path: '/rate-limit',
@@ -63,76 +76,100 @@ const AppSettingsRoute = AppSettingsRouteImport.update({
   path: '/settings',
   getParentRoute: () => AppRoute,
 } as any)
+const AppUsersRoute = AppUsersRouteImport.update({
+  id: '/users',
+  path: '/users',
+  getParentRoute: () => AppRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/accept-invite': typeof AcceptInviteRoute
   '/setup': typeof SetupRoute
   '/sign-in': typeof SignInRoute
   '/authentication': typeof AppAuthenticationRoute
   '/logs': typeof AppLogsRoute
+  '/publishable-keys': typeof AppPublishableKeysRoute
   '/rate-limit': typeof AppRateLimitRoute
   '/routing': typeof AppRoutingRoute
   '/settings': typeof AppSettingsRoute
+  '/users': typeof AppUsersRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/accept-invite': typeof AcceptInviteRoute
   '/setup': typeof SetupRoute
   '/sign-in': typeof SignInRoute
   '/authentication': typeof AppAuthenticationRoute
   '/logs': typeof AppLogsRoute
+  '/publishable-keys': typeof AppPublishableKeysRoute
   '/rate-limit': typeof AppRateLimitRoute
   '/routing': typeof AppRoutingRoute
   '/settings': typeof AppSettingsRoute
+  '/users': typeof AppUsersRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/_app': typeof AppRouteWithChildren
+  '/accept-invite': typeof AcceptInviteRoute
   '/setup': typeof SetupRoute
   '/sign-in': typeof SignInRoute
   '/_app/authentication': typeof AppAuthenticationRoute
   '/_app/logs': typeof AppLogsRoute
+  '/_app/publishable-keys': typeof AppPublishableKeysRoute
   '/_app/rate-limit': typeof AppRateLimitRoute
   '/_app/routing': typeof AppRoutingRoute
   '/_app/settings': typeof AppSettingsRoute
+  '/_app/users': typeof AppUsersRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/accept-invite'
     | '/setup'
     | '/sign-in'
     | '/authentication'
     | '/logs'
+    | '/publishable-keys'
     | '/rate-limit'
     | '/routing'
     | '/settings'
+    | '/users'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/accept-invite'
     | '/setup'
     | '/sign-in'
     | '/authentication'
     | '/logs'
+    | '/publishable-keys'
     | '/rate-limit'
     | '/routing'
     | '/settings'
+    | '/users'
   id:
     | '__root__'
     | '/'
     | '/_app'
+    | '/accept-invite'
     | '/setup'
     | '/sign-in'
     | '/_app/authentication'
     | '/_app/logs'
+    | '/_app/publishable-keys'
     | '/_app/rate-limit'
     | '/_app/routing'
     | '/_app/settings'
+    | '/_app/users'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AppRoute: typeof AppRouteWithChildren
+  AcceptInviteRoute: typeof AcceptInviteRoute
   SetupRoute: typeof SetupRoute
   SignInRoute: typeof SignInRoute
 }
@@ -151,6 +188,13 @@ declare module '@tanstack/react-router' {
       path: ''
       fullPath: '/'
       preLoaderRoute: typeof AppRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/accept-invite': {
+      id: '/accept-invite'
+      path: '/accept-invite'
+      fullPath: '/accept-invite'
+      preLoaderRoute: typeof AcceptInviteRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/setup': {
@@ -181,6 +225,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppLogsRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/publishable-keys': {
+      id: '/_app/publishable-keys'
+      path: '/publishable-keys'
+      fullPath: '/publishable-keys'
+      preLoaderRoute: typeof AppPublishableKeysRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/rate-limit': {
       id: '/_app/rate-limit'
       path: '/rate-limit'
@@ -202,23 +253,34 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppSettingsRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/users': {
+      id: '/_app/users'
+      path: '/users'
+      fullPath: '/users'
+      preLoaderRoute: typeof AppUsersRouteImport
+      parentRoute: typeof AppRoute
+    }
   }
 }
 
 interface AppRouteChildren {
   AppAuthenticationRoute: typeof AppAuthenticationRoute
   AppLogsRoute: typeof AppLogsRoute
+  AppPublishableKeysRoute: typeof AppPublishableKeysRoute
   AppRateLimitRoute: typeof AppRateLimitRoute
   AppRoutingRoute: typeof AppRoutingRoute
   AppSettingsRoute: typeof AppSettingsRoute
+  AppUsersRoute: typeof AppUsersRoute
 }
 
 const AppRouteChildren: AppRouteChildren = {
   AppAuthenticationRoute: AppAuthenticationRoute,
   AppLogsRoute: AppLogsRoute,
+  AppPublishableKeysRoute: AppPublishableKeysRoute,
   AppRateLimitRoute: AppRateLimitRoute,
   AppRoutingRoute: AppRoutingRoute,
   AppSettingsRoute: AppSettingsRoute,
+  AppUsersRoute: AppUsersRoute,
 }
 
 const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)
@@ -226,6 +288,7 @@ const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AppRoute: AppRouteWithChildren,
+  AcceptInviteRoute: AcceptInviteRoute,
   SetupRoute: SetupRoute,
   SignInRoute: SignInRoute,
 }

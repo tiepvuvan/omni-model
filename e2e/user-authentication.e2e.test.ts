@@ -118,12 +118,16 @@ afterAll(async () => {
   await Promise.all([clerkServer.close(), cognitoServer.close()]);
 });
 
-async function chat(server: RunningServer, token: string): Promise<Response> {
+async function chat(
+  server: RunningServer,
+  header: "x-clerk-session-token" | "x-cognito-id-token",
+  token: string,
+): Promise<Response> {
   return fetch(`http://127.0.0.1:${server.port}/v1/chat/completions`, {
     method: "POST",
     headers: {
-      authorization: `Bearer ${token}`,
       "content-type": "application/json",
+      [header]: token,
     },
     body: CHAT_BODY,
   });
@@ -133,6 +137,7 @@ describe("user authentication through the running container server", () => {
   it("accepts a Clerk session token and reaches the model upstream", async () => {
     const response = await chat(
       clerkServer,
+      "x-clerk-session-token",
       sign(
         {
           iss: CLERK_ISSUER,
@@ -152,6 +157,7 @@ describe("user authentication through the running container server", () => {
   it("accepts a Cognito access token and reaches the model upstream", async () => {
     const response = await chat(
       cognitoServer,
+      "x-cognito-id-token",
       sign({
         iss: COGNITO_ISSUER,
         sub: "user_cognito",
@@ -170,6 +176,7 @@ describe("user authentication through the running container server", () => {
     const before = upstreamCalls;
     const response = await chat(
       cognitoServer,
+      "x-cognito-id-token",
       sign({
         iss: COGNITO_ISSUER,
         sub: "user_cognito",

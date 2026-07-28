@@ -29,11 +29,13 @@ export const NAMESPACES: readonly FactNamespace[] = [
     detail: "The incoming OpenAI-format request",
     fields: [
       { name: "model", type: "string", detail: "The model the client asked for" },
-      { name: "stream", type: "boolean", detail: "Whether the client asked for SSE" },
-      { name: "messageCount", type: "number", detail: "How many messages were sent" },
+      {
+        name: "inputTokenCount",
+        type: "number",
+        detail: "Provider-neutral estimate used by the input-token limit",
+      },
       { name: "maxTokens", type: "number|null", detail: "max_tokens, when the client set one" },
       { name: "temperature", type: "number|null", detail: "temperature, when the client set one" },
-      { name: "user", type: "string|null", detail: "The request body's `user` field" },
     ],
   },
   {
@@ -41,20 +43,18 @@ export const NAMESPACES: readonly FactNamespace[] = [
     detail: "The end user, established by a verifier",
     fields: [
       { name: "id", type: "string|null", detail: "Subject of the verified token" },
-      { name: "authenticated", type: "boolean", detail: "Whether a verifier accepted" },
-      { name: "provider", type: "string|null", detail: "Which verifier accepted" },
       {
         name: "claims",
         type: "map",
         detail: "Token claims. Keys are not known ahead of time — guard with has()",
         dynamic: true,
       },
+      {
+        name: "providers",
+        type: "list",
+        detail: "Verifier types that accepted, such as firebase-auth or firebase-app-check",
+      },
     ],
-  },
-  {
-    name: "device",
-    detail: "The device, from an attestation verifier",
-    fields: [{ name: "id", type: "string|null", detail: "Device identifier" }],
   },
   {
     name: "client",
@@ -62,7 +62,6 @@ export const NAMESPACES: readonly FactNamespace[] = [
     fields: [
       { name: "id", type: "string|null", detail: "Write key id" },
       { name: "name", type: "string|null", detail: "Write key name" },
-      { name: "authenticated", type: "boolean", detail: "Whether a valid write key was presented" },
     ],
   },
   {
@@ -82,8 +81,8 @@ export const NAMESPACES: readonly FactNamespace[] = [
   },
 ];
 
-/** Root identifiers, plus `now` which is a bare number rather than a namespace. */
-export const ROOTS: readonly string[] = [...NAMESPACES.map((ns) => ns.name), "now"];
+/** Root identifiers exposed by the request fact surface. */
+export const ROOTS: readonly string[] = NAMESPACES.map((namespace) => namespace.name);
 
 /** CEL built-ins worth completing. `has` is first because it is the important one. */
 export const FUNCTIONS: readonly { name: string; detail: string }[] = [
@@ -93,8 +92,8 @@ export const FUNCTIONS: readonly { name: string; detail: string }[] = [
   { name: "contains", detail: 'request.model.contains("gpt")' },
   { name: "matches", detail: 'request.model.matches("^gpt-4")' },
   { name: "size", detail: "size(request.model) — length of a string or list" },
-  { name: "int", detail: "int(now) — convert to an integer" },
-  { name: "string", detail: "string(request.messageCount)" },
+  { name: "int", detail: "int(request.temperature) — convert to an integer" },
+  { name: "string", detail: "string(request.inputTokenCount)" },
   { name: "double", detail: "double(request.maxTokens)" },
 ];
 
@@ -377,9 +376,6 @@ export function complete(source: string, caret: number): { from: number; items: 
     detail: entry.detail,
     insert: `${entry.name}.`,
   }));
-  const now = "now".startsWith(partial)
-    ? [{ label: "now", detail: "number — request time, as epoch milliseconds", insert: "now" }]
-    : [];
   const functions = FUNCTIONS.filter((fn) => fn.name.startsWith(partial)).map((fn) => ({
     label: fn.name,
     detail: fn.detail,
@@ -391,5 +387,5 @@ export function complete(source: string, caret: number): { from: number; items: 
     insert: entry,
   }));
 
-  return { from, items: [...roots, ...now, ...functions, ...keywords] };
+  return { from, items: [...roots, ...functions, ...keywords] };
 }

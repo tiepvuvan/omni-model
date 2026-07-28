@@ -1,9 +1,8 @@
 import { createFileRoute, useRouter } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import connectorImage from "../../assets/connector.svg";
 import deleteIcon from "../../assets/delete.svg";
 import plusIcon from "../../assets/plus.svg";
-import plusTargetIcon from "../../assets/plus-target.svg";
+import scienceIcon from "../../assets/science.svg";
 import { ActionBar, WidePane } from "../../components/chrome";
 import { CelEditor } from "../../components/routing/cel-editor";
 import { CelReference } from "../../components/routing/cel-reference";
@@ -44,6 +43,7 @@ const CATCH_ALL = "true";
  */
 const TARGET_FIELDS: Record<string, readonly string[]> = {
   openai: ["apiKey"],
+  deepseek: ["apiKey"],
   "openai-compatible": ["baseUrl", "apiKey"],
   anthropic: ["apiKey"],
   google: ["apiKey"],
@@ -95,6 +95,7 @@ function RoutingScreen() {
   const [error, setError] = useState<string | null>(null);
   const [warnings, setWarnings] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
+  const [simulateOpen, setSimulateOpen] = useState(false);
   const [probes, setProbes] = useState<Record<string, ProbeResponse | "running">>({});
 
   const dirty = JSON.stringify(draft) !== JSON.stringify(stored);
@@ -248,6 +249,11 @@ function RoutingScreen() {
           setWarnings([]);
         }}
         onSave={save}
+        actions={
+          <Button icon={scienceIcon} onClick={() => setSimulateOpen(true)}>
+            Simulate a request
+          </Button>
+        }
       />
 
       <WidePane>
@@ -321,7 +327,7 @@ function RoutingScreen() {
               </Card>
 
               {/* The connector between the rule and where it goes. */}
-              <img src={connectorImage} alt="" aria-hidden className="h-[50px] w-[72px] shrink-0" />
+              <span aria-hidden className="mt-[24px] h-[2px] w-[72px] shrink-0 bg-border" />
 
               {/* The target: provider, credentials and model together. */}
               <Card
@@ -371,28 +377,16 @@ function RoutingScreen() {
           );
         })}
 
-        {/* The dashed add-target row the design ends the list with. */}
-        <div className="flex w-full items-start">
-          <div className="min-w-0 flex-1" />
-          <div className="h-[50px] w-[72px] shrink-0" />
-          <button
-            type="button"
-            onClick={addRule}
-            className="flex h-[54px] w-[408px] shrink-0 items-center justify-center gap-[6px] rounded-[var(--radius-card)] border border-dashed border-border bg-background-l3 type-copy-14 text-foreground-secondary hover:bg-item-selection"
-          >
-            <img src={plusTargetIcon} alt="" aria-hidden className="size-[16px]" />
-            Model
-          </button>
-        </div>
-
         <Button icon={plusIcon} onClick={addRule} className="self-start">
           Matching Rule
         </Button>
-
-        <SimulatePanel
-          suggestedModel={draft.allowedModels[0] ?? draft.rules[0]?.target.model ?? null}
-        />
       </WidePane>
+
+      <SimulatePanel
+        open={simulateOpen}
+        onOpenChange={setSimulateOpen}
+        suggestedModel={draft.allowedModels[0] ?? draft.rules[0]?.target.model ?? null}
+      />
     </>
   );
 }

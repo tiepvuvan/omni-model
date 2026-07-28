@@ -101,11 +101,9 @@ describe("completions", () => {
     expect(from).toBe(source.length);
     expect(items.map((item) => item.label)).toEqual([
       "model",
-      "stream",
-      "messageCount",
+      "inputTokenCount",
       "maxTokens",
       "temperature",
-      "user",
     ]);
   });
 

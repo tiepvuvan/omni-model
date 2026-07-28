@@ -67,13 +67,17 @@ function describeVerifiers(
 
 const simulateSchema = z.object({
   model: z.string().min(1),
-  stream: z.boolean().optional(),
-  messageCount: z.number().int().nonnegative().optional(),
+  inputTokenCount: z.number().int().nonnegative().optional(),
+  maxTokens: z.number().finite().nonnegative().optional(),
+  temperature: z.number().finite().optional(),
   /** Claims the end user's token would carry. */
   claims: z.record(z.string(), z.unknown()).optional(),
   userId: z.string().optional(),
-  deviceId: z.string().optional(),
+  providers: z.array(z.string().min(1)).optional(),
   clientName: z.string().optional(),
+  ip: z.string().optional(),
+  method: z.string().min(1).optional(),
+  path: z.string().min(1).optional(),
   headers: z.record(z.string(), z.string()).optional(),
 });
 
@@ -226,25 +230,23 @@ export function createMetaRoutes(deps: AdminDeps): Hono<AdminEnv> {
     const body = simulateSchema.parse(await c.req.json());
 
     const facts = buildRequestFacts({
-      method: "POST",
-      path: "/v1/chat/completions",
+      method: body.method ?? "POST",
+      path: body.path ?? "/v1/chat/completions",
       headers: new Headers(body.headers ?? {}),
-      ip: null,
+      ip: body.ip ?? null,
       body: {
         model: body.model,
-        ...(body.stream === undefined ? {} : { stream: body.stream }),
-        messages: Array.from({ length: body.messageCount ?? 1 }, () => ({
-          role: "user" as const,
-          content: "simulated",
-        })),
+        ...(body.maxTokens === undefined ? {} : { max_tokens: body.maxTokens }),
+        ...(body.temperature === undefined ? {} : { temperature: body.temperature }),
+        messages: [{ role: "user" as const, content: "simulated" }],
       },
       identity:
-        body.userId === undefined && body.deviceId === undefined && body.claims === undefined
+        body.userId === undefined && body.claims === undefined && body.providers === undefined
           ? null
           : {
-              provider: "simulated",
+              provider: body.providers?.[0] ?? "simulated",
+              providers: body.providers ?? ["simulated"],
               ...(body.userId === undefined ? {} : { userId: body.userId }),
-              ...(body.deviceId === undefined ? {} : { deviceId: body.deviceId }),
               claims: body.claims ?? {},
             },
       writeKey:
@@ -263,7 +265,7 @@ export function createMetaRoutes(deps: AdminDeps): Hono<AdminEnv> {
               expiresAt: null,
               disabledAt: null,
             },
-      now: deps.runtime.now(),
+      ...(body.inputTokenCount === undefined ? {} : { inputTokenCount: body.inputTokenCount }),
     });
 
     // Rule by rule, including the ones that threw — `resolve` swallows those as

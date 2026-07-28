@@ -30,22 +30,18 @@ const engine = new CelExpressionEngine();
 const facts = {
   request: {
     model: "smart",
-    stream: false,
-    messageCount: 3,
+    inputTokenCount: 128,
     maxTokens: null,
     temperature: null,
-    user: null,
   },
-  user: { id: null, authenticated: false, provider: null, claims: {} as Record<string, unknown> },
-  device: { id: null },
-  client: { id: null, name: null, authenticated: false },
+  user: { id: null, claims: {} as Record<string, unknown>, providers: [] as string[] },
+  client: { id: null, name: null },
   http: {
     method: "POST",
     path: "/v1/chat/completions",
     ip: null,
     headers: {} as Record<string, string>,
   },
-  now: 1_700_000_000_000,
 };
 
 /** Env used when parsing doc/example configs that reference `${VAR}` secrets. */
@@ -131,23 +127,6 @@ describe("inline CEL snippets in README.md and the docs pages", () => {
       const compiled = engine.compile(expr);
       expect(() => compiled.evaluate(facts), expr).not.toThrow();
     }
-  });
-});
-
-describe("the documented CEL `now` example", () => {
-  it("evaluates to a boolean without throwing", () => {
-    const sources = docsPages().join("\n");
-    const match = sources.match(/(?:`|^)\s*(now\s*<\s*\d+)/m);
-    expect(match, "could not find a documented `now < …` example").not.toBeNull();
-    const expr = (match as RegExpMatchArray)[1];
-    const result = engine.compile(expr).evaluate(facts);
-    expect(typeof result, `expression: ${expr}`).toBe("boolean");
-  });
-
-  it("a modulo expression on `now` throws (guard: it must not be documented)", () => {
-    // `now` is a double, and CEL's `%` has no `double % int` overload.
-    const compiled = engine.compile("now % 86400000 < 43200000");
-    expect(() => compiled.evaluate(facts)).toThrow();
   });
 });
 

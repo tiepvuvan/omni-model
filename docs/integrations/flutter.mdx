@@ -3,8 +3,8 @@ title: Flutter
 description: Call omni-model from a Flutter app over HTTP.
 ---
 
-Point the app at your deployed proxy's `POST /v1/chat/completions`. Authenticate with a bearer
-token your app already has — a Firebase Auth, Clerk, Cognito, or Supabase token, or any JWT your
+Point the app at your deployed proxy's `POST /v1/chat/completions`. Send an omni-model publishable
+key plus the Firebase Auth, Clerk, Cognito, Supabase, or custom JWT your
 [security config](/security/custom-jwt) accepts.
 
 ### Non-streaming
@@ -15,12 +15,17 @@ import 'package:http/http.dart' as http;
 
 const proxyUrl = 'https://your-proxy.example.com';
 
-Future<String> chat(List<Map<String, String>> messages, String token) async {
+Future<String> chat(
+  List<Map<String, String>> messages,
+  String publishableKey,
+  String token,
+) async {
   final res = await http.post(
     Uri.parse('$proxyUrl/v1/chat/completions'),
     headers: {
       'content-type': 'application/json',
-      'authorization': 'Bearer $token',
+      'authorization': 'Bearer $publishableKey',
+      'x-firebase-id-token': token,
     },
     body: jsonEncode({'model': 'gpt-4o-mini', 'messages': messages}),
   );
@@ -33,9 +38,8 @@ Future<String> chat(List<Map<String, String>> messages, String token) async {
 ```
 
 <Note>
-  The header depends on your verifier: `jwt` / `firebase-auth` / `clerk` / `aws-cognito` /
-  `supabase` use
-  `Authorization: Bearer <token>` (scheme configurable). App Check verifiers instead expect
+  `Authorization: Bearer <key>` carries the publishable key. The example uses Firebase Auth's
+  `X-Firebase-ID-Token`; other user verifiers have their own `X-*` defaults. App Check expects
   `X-Firebase-AppCheck`, and DeviceCheck expects `X-Apple-Device-Token`. See
   [Custom JWT](/security/custom-jwt) and [Firebase App Check](/security/firebase-app-check).
 </Note>
@@ -51,12 +55,14 @@ import 'package:http/http.dart' as http;
 
 Future<void> streamChat(
   List<Map<String, String>> messages,
+  String publishableKey,
   String token,
   void Function(String delta) onDelta,
 ) async {
   final request = http.Request('POST', Uri.parse('$proxyUrl/v1/chat/completions'))
     ..headers['content-type'] = 'application/json'
-    ..headers['authorization'] = 'Bearer $token'
+    ..headers['authorization'] = 'Bearer $publishableKey'
+    ..headers['x-firebase-id-token'] = token
     ..body = jsonEncode({
       'model': 'gpt-4o-mini',
       'messages': messages,

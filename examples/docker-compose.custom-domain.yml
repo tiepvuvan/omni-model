@@ -1,0 +1,68 @@
+# Production-shaped custom-domain setup with automatic HTTPS from Caddy.
+#
+# 1. Copy custom-domain.env.example to .env and fill every value.
+# 2. Point the domain's A/AAAA records at this host.
+# 3. Open inbound TCP 80/443 and UDP 443.
+# 4. docker compose -f docker-compose.custom-domain.yml up -d
+#
+# The database, Caddy certificates, and Caddy state use named volumes. Recreating
+# containers is safe; `docker compose down -v` deliberately deletes that state.
+name: omni-model-domain
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: omni
+      POSTGRES_PASSWORD: ${OMNI_POSTGRES_PASSWORD:?set it in .env}
+      POSTGRES_DB: omni
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U omni -d omni"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  omni:
+    image: ${OMNI_IMAGE:-ghcr.io/tiepvuvan/omni-model:latest}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    expose:
+      - "8787"
+    environment:
+      OMNI_STORAGE_TYPE: postgres
+      OMNI_STORAGE_POSTGRES_URL: postgres://omni:${OMNI_POSTGRES_PASSWORD}@postgres:5432/omni
+      OMNI_ADMIN_SECRET: ${OMNI_ADMIN_SECRET:?set it in .env, at least 32 characters}
+      OMNI_ENCRYPTION_KEY: ${OMNI_ENCRYPTION_KEY:?set it in .env, 32 random bytes base64}
+      OMNI_ADMIN_BASE_URL: https://${OMNI_DOMAIN:?set it in .env}
+      OMNI_ADMIN_ALLOWED_ORIGINS: https://${OMNI_DOMAIN}
+      OMNI_SERVER_CUSTOM_DOMAIN: ${OMNI_DOMAIN}
+      OMNI_LOG_LEVEL: info
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:8787/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  caddy:
+    image: caddy:2-alpine
+    depends_on:
+      omni:
+        condition: service_healthy
+    environment:
+      OMNI_DOMAIN: ${OMNI_DOMAIN:?set it in .env}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  pgdata:
+  caddy_data:
+  caddy_config:

@@ -50,19 +50,17 @@ async function errorOf(response: Response): Promise<{ message: string; code: str
 }
 
 describe("write key middleware", () => {
-  it("uses x-omni-key so a client can send a user token at the same time", async () => {
-    // Authorization belongs to the jwt/firebase/supabase verifiers. Sharing it
-    // would make "which app" and "which user" mutually exclusive.
+  it("uses OpenAI-compatible Authorization Bearer credentials", async () => {
     const { app, writeKeys } = await setup(REQUIRED);
     const { secret } = await writeKeys.create({ name: "ios-app" });
+
+    const viaLegacyHeader = await app.fetch(chatRequest(CHAT_BODY, { "x-omni-key": secret }));
+    expect(viaLegacyHeader.status).toBe(401);
 
     const viaAuthorization = await app.fetch(
       chatRequest(CHAT_BODY, { authorization: `Bearer ${secret}` }),
     );
-    expect(viaAuthorization.status).toBe(401);
-
-    const viaOwnHeader = await app.fetch(chatRequest(CHAT_BODY, { [WRITE_KEY_HEADER]: secret }));
-    expect(viaOwnHeader.status).toBe(200);
+    expect(viaAuthorization.status).toBe(200);
   });
 
   it("when not required, allows a request with no key at all", async () => {
@@ -78,7 +76,9 @@ describe("write key middleware", () => {
     const { writeKey, secret } = await writeKeys.create({ name: "ios-app" });
     await writeKeys.revoke(writeKey.id);
 
-    const response = await app.fetch(chatRequest(CHAT_BODY, { [WRITE_KEY_HEADER]: secret }));
+    const response = await app.fetch(
+      chatRequest(CHAT_BODY, { [WRITE_KEY_HEADER]: `Bearer ${secret}` }),
+    );
     expect(response.status).toBe(401);
     expect((await errorOf(response)).code).toBe("write_key_revoked");
   });
@@ -90,22 +90,30 @@ describe("write key middleware", () => {
     expect(missing.status).toBe(401);
     const missingError = await errorOf(missing);
     expect(missingError.code).toBe("write_key_required");
+    expect(missing.headers.get("www-authenticate")).toBe("Bearer");
     // The error has to say which header to send, or it is not actionable.
-    expect(missingError.message).toContain(WRITE_KEY_HEADER);
+    expect(missingError.message).toContain("Authorization: Bearer");
 
-    const invalid = await app.fetch(chatRequest(CHAT_BODY, { [WRITE_KEY_HEADER]: "omk_nonsense" }));
+    const malformed = await app.fetch(
+      chatRequest(CHAT_BODY, { [WRITE_KEY_HEADER]: "Basic omk_nonsense" }),
+    );
+    expect((await errorOf(malformed)).code).toBe("write_key_invalid");
+
+    const invalid = await app.fetch(
+      chatRequest(CHAT_BODY, { [WRITE_KEY_HEADER]: "Bearer omk_nonsense" }),
+    );
     expect((await errorOf(invalid)).code).toBe("write_key_invalid");
 
     const revokedKey = await writeKeys.create({ name: "revoked" });
     await writeKeys.revoke(revokedKey.writeKey.id);
     const revoked = await app.fetch(
-      chatRequest(CHAT_BODY, { [WRITE_KEY_HEADER]: revokedKey.secret }),
+      chatRequest(CHAT_BODY, { [WRITE_KEY_HEADER]: `Bearer ${revokedKey.secret}` }),
     );
     expect((await errorOf(revoked)).code).toBe("write_key_revoked");
 
     const expiredKey = await writeKeys.create({ name: "expired", expiresAt: FIXED_NOW - 1 });
     const expired = await app.fetch(
-      chatRequest(CHAT_BODY, { [WRITE_KEY_HEADER]: expiredKey.secret }),
+      chatRequest(CHAT_BODY, { [WRITE_KEY_HEADER]: `Bearer ${expiredKey.secret}` }),
     );
     expect((await errorOf(expired)).code).toBe("write_key_expired");
   });
@@ -115,7 +123,9 @@ describe("write key middleware", () => {
     const { writeKey, secret } = await writeKeys.create({ name: "ios-app" });
     await writeKeys.revoke(writeKey.id);
 
-    const response = await app.fetch(chatRequest(CHAT_BODY, { [WRITE_KEY_HEADER]: secret }));
+    const response = await app.fetch(
+      chatRequest(CHAT_BODY, { [WRITE_KEY_HEADER]: `Bearer ${secret}` }),
+    );
     expect(await response.text()).not.toContain(secret);
   });
 
@@ -123,7 +133,7 @@ describe("write key middleware", () => {
     // Failing closed: "required" that silently does nothing is worse than an error.
     const proxy = await createTestProxy({ yaml: REQUIRED });
     const response = await proxy.app.fetch(
-      chatRequest(CHAT_BODY, { [WRITE_KEY_HEADER]: "omk_anything-at-all-here" }),
+      chatRequest(CHAT_BODY, { [WRITE_KEY_HEADER]: "Bearer omk_anything-at-all-here" }),
     );
     expect(response.status).toBe(401);
     expect((await errorOf(response)).code).toBe("write_key_unavailable");
@@ -163,11 +173,11 @@ describe("write key attribution", () => {
 
     // Each rule owns its upstream now, so *which* provider was called is itself
     // the assertion that the right rule matched.
-    await app.fetch(chatRequest(CHAT_BODY, { [WRITE_KEY_HEADER]: secret }));
+    await app.fetch(chatRequest(CHAT_BODY, { [WRITE_KEY_HEADER]: `Bearer ${secret}` }));
     expect(providers.get("by-client")?.chatCalls.at(-1)?.request.model).toBe("routed-for-ios");
     expect(providers.get("main")?.chatCalls).toHaveLength(0);
 
-    await app.fetch(chatRequest(CHAT_BODY, { [WRITE_KEY_HEADER]: other.secret }));
+    await app.fetch(chatRequest(CHAT_BODY, { [WRITE_KEY_HEADER]: `Bearer ${other.secret}` }));
     expect(providers.get("main")?.chatCalls.at(-1)?.request.model).toBe("smart");
     expect(providers.get("by-client")?.chatCalls).toHaveLength(1);
   });
@@ -176,13 +186,13 @@ describe("write key attribution", () => {
     const { app, providers, writeKeys } = await setup(
       fixture({
         routing:
-          "\n    - { id: known-clients, when: 'client.authenticated', " +
+          "\n    - { id: known-clients, when: 'client.id != null', " +
           "target: { type: fake, model: for-known-clients } }",
       }),
     );
     const { secret } = await writeKeys.create({ name: "ios-app" });
 
-    await app.fetch(chatRequest(CHAT_BODY, { [WRITE_KEY_HEADER]: secret }));
+    await app.fetch(chatRequest(CHAT_BODY, { [WRITE_KEY_HEADER]: `Bearer ${secret}` }));
     expect(providers.get("known-clients")?.chatCalls.at(-1)?.request.model).toBe(
       "for-known-clients",
     );
@@ -197,12 +207,12 @@ describe("write key attribution", () => {
     const { secret } = await writeKeys.create({ name: "cheap-only", allowedModels: ["cheap"] });
 
     const allowed = await app.fetch(
-      chatRequest({ ...CHAT_BODY, model: "cheap" }, { [WRITE_KEY_HEADER]: secret }),
+      chatRequest({ ...CHAT_BODY, model: "cheap" }, { [WRITE_KEY_HEADER]: `Bearer ${secret}` }),
     );
     expect(allowed.status).toBe(200);
 
     const blocked = await app.fetch(
-      chatRequest({ ...CHAT_BODY, model: "expensive" }, { [WRITE_KEY_HEADER]: secret }),
+      chatRequest({ ...CHAT_BODY, model: "expensive" }, { [WRITE_KEY_HEADER]: `Bearer ${secret}` }),
     );
     expect(blocked.status).toBe(404);
     // Reported as absent, not forbidden: probing must not reveal what exists.
@@ -219,7 +229,9 @@ describe("write key attribution", () => {
     const { secret } = await writeKeys.create({ name: "cheap-only", allowedModels: ["cheap"] });
 
     const listed = await app.fetch(
-      new Request("http://local/v1/models", { headers: { [WRITE_KEY_HEADER]: secret } }),
+      new Request("http://local/v1/models", {
+        headers: { [WRITE_KEY_HEADER]: `Bearer ${secret}` },
+      }),
     );
     const body = (await listed.json()) as { data: { id: string }[] };
     expect(body.data.map((model) => model.id)).toEqual(["cheap"]);
@@ -232,7 +244,10 @@ describe("write key attribution", () => {
     const response = await app.fetch(
       new Request("http://local/v1/embeddings", {
         method: "POST",
-        headers: { "content-type": "application/json", [WRITE_KEY_HEADER]: secret },
+        headers: {
+          "content-type": "application/json",
+          [WRITE_KEY_HEADER]: `Bearer ${secret}`,
+        },
         body: JSON.stringify({ model: "expensive", input: "hi" }),
       }),
     );
@@ -244,7 +259,7 @@ describe("write key attribution", () => {
     const { secret } = await writeKeys.create({ name: "full-access" });
 
     const response = await app.fetch(
-      chatRequest({ ...CHAT_BODY, model: "anything" }, { [WRITE_KEY_HEADER]: secret }),
+      chatRequest({ ...CHAT_BODY, model: "anything" }, { [WRITE_KEY_HEADER]: `Bearer ${secret}` }),
     );
     expect(response.status).toBe(200);
   });

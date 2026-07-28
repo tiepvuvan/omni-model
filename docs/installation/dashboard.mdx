@@ -32,7 +32,10 @@ Then open `http://localhost:8787/admin`.
 A deployment with no accounts sends you to **Create the first operator**. That window is open exactly
 once: the account it creates is granted the operator role, and sign-up closes permanently afterwards.
 
-There is no way to reopen it. To add operators later, use the CLI against the same database:
+There is no way to reopen it. To add operators later, open **Users**, enter their email, and send
+them the generated one-time invitation link. It expires after seven days.
+
+For non-interactive recovery or automation, use the CLI against the same database:
 
 ```sh
 docker exec <container> env OMNI_ADMIN_PASSWORD='a long passphrase' \
@@ -61,10 +64,10 @@ you enable more than one, the mode matters:
 | **all** | One platform, layering two schemes — App Attest *and* App Check on the same iOS app. Every enabled scheme must accept. |
 | **any** | Several platforms. The first enabled scheme that accepts wins, because an iOS client can only ever satisfy the Apple one. A presented-but-invalid credential still rejects; only *absence* falls through. |
 
-A [write key](/reference/write-keys) is a third, separate axis — it says which *installation* of your
-app called, for attribution and revocation. **Require a write key** locks out every client not
-already sending `x-omni-key`; presented keys are validated regardless, so attribution works before
-you enable it and revocation becomes binding after.
+A [publishable key](/reference/write-keys) is a third, separate axis — it says which installation of
+your app called, for attribution and revocation. **Require a publishable key** locks out every client
+not already sending `Authorization: Bearer <publishable-key>`; presented keys are validated
+regardless, so attribution works before you enable it and revocation becomes binding after.
 
 Which section a method appears in comes from the API, not from the screen: each verifier declares its
 layer, and `GET /admin/api/meta` publishes it along with the verifier's own options schema. So a
@@ -113,34 +116,24 @@ so opening the screen never rewrites a window nobody touched.
 An absent `rateLimits` block is *not* an absence of limits: the schema fills it in and the proxy
 enforces it, so the screen shows those defaults rather than an empty list.
 
-### Concurrent requests
-
-Under the budgets, because it is the other half of the same subject: a budget is
-charged after a response exists, so it cannot see a burst that has not finished
-yet. Twenty simultaneous requests are all admitted against the same counter. This
-is the number that stops that, and it defaults to 3 rather than off.
-
-Zero removes the bound. A request past it gets a 429 telling the client to wait for
-its own requests rather than for a window.
-
 ## Settings
 
-One card so far: the **response cache**. It is on by default with a five-minute
-window; here you change how long an answer stays servable, how many entries to keep,
-or switch it off entirely. The card next to it says what is actually in the cache, so
-"is this doing anything" is answerable without leaving the screen — and purges it
-when you need a clean slate.
+Settings owns deployment-wide behavior:
+
+- **Organization name** replaces “Omni Model” in the header.
+- **Request limits** caps the provider-neutral input-token estimate.
+- **Concurrent requests** limits requests in flight per user. It defaults to 3; zero removes the
+  bound. This closes the simultaneous-burst gap that post-paid token budgets cannot see.
+- **Custom domain** records the public hostname. Use the
+  [Caddy Compose setup](/installation/docker#custom-domain-with-caddy) to route that hostname and
+  provision HTTPS.
+- **Response cache** changes how long an answer stays servable, how many entries to keep, or turns
+  caching off. The adjacent card reports and purges what is actually stored.
 
 A hit is only ever a request that would have produced the same answer — same
 upstream, same resolved model, same body — and it costs no upstream tokens, so it is
 not charged to a rate limit. See [caching](/reference/configuration#cache-object)
 for what goes into the key, including the privacy note about OpenAI's `user` field.
-
-<Note>
-This screen is not from the design file yet: the sidebar has the entry, the file has
-no screen for it. It is built from the same primitives as the drawn screens and is
-the first thing to redraw when a design lands.
-</Note>
 
 ## Typing a credential
 

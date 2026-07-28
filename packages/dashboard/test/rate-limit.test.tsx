@@ -72,28 +72,18 @@ function row(id: string): HTMLElement {
   return element as HTMLElement;
 }
 
-/**
- * The blocks the last save sent.
- *
- * One `PATCH /config` rather than a PUT per block: the budgets and the in-flight
- * bound live in different blocks, and two requests would be two revisions for one
- * Save — with the first left applied if the second failed.
- */
-function lastPatch(): { rateLimits: RateLimitRule[]; concurrency: { perUser: number } } {
-  const calls = fake.callsTo("PATCH", "/config");
-  const body = calls[calls.length - 1]?.body as
-    | { value: { rateLimits: RateLimitRule[]; concurrency: { perUser: number } } }
-    | undefined;
+/** The ordered rule list the last save sent. */
+function lastSaved(): RateLimitRule[] {
+  const calls = fake.callsTo("PUT", "/rate-limits");
+  const body = calls[calls.length - 1]?.body as { value: RateLimitRule[] } | undefined;
   if (body === undefined) throw new Error("nothing was saved");
   return body.value;
 }
 
-const lastSaved = (): RateLimitRule[] => lastPatch().rateLimits;
-
 const save = async (user: ReturnType<typeof userEvent.setup>) => {
   await user.click(screen.getByRole("button", { name: "Save Changes" }));
   await waitFor(() => {
-    expect(fake.callsTo("PATCH", "/config").length).toBeGreaterThan(0);
+    expect(fake.callsTo("PUT", "/rate-limits").length).toBeGreaterThan(0);
   });
 };
 
@@ -326,45 +316,10 @@ describe("validation", () => {
   });
 });
 
-describe("the in-flight bound", () => {
-  it("shows the schema's default and saves a change alongside the budgets", async () => {
-    const user = userEvent.setup();
+describe("screen ownership", () => {
+  it("keeps the in-flight bound in Settings rather than Rate Limit", async () => {
     await renderAt("/rate-limit");
 
-    const field = screen.getByLabelText("Requests in flight per user");
-    // Three by default: the burst it closes needs no configuration to work, so
-    // neither does the defence.
-    expect(field).toHaveValue("3");
-
-    await user.clear(field);
-    await user.type(field, "5");
-    await save(user);
-
-    // Both blocks in one revision.
-    expect(lastPatch().concurrency).toEqual({ perUser: 5 });
-    expect(lastPatch().rateLimits).toHaveLength(3);
-  });
-
-  it("accepts zero, which is the only way to turn it off", async () => {
-    const user = userEvent.setup();
-    await renderAt("/rate-limit");
-
-    const field = screen.getByLabelText("Requests in flight per user");
-    await user.clear(field);
-    await user.type(field, "0");
-
-    // Zero is a meaningful value here, not an empty box — so no error, unlike a
-    // budget of zero tokens.
-    expect(screen.queryByText("Enter a number greater than zero.")).toBeNull();
-    await save(user);
-    expect(lastPatch().concurrency).toEqual({ perUser: 0 });
-  });
-
-  it("explains why it exists", async () => {
-    await renderAt("/rate-limit");
-
-    // Without the reason it reads as an arbitrary throttle, and the first thing an
-    // operator does to an arbitrary throttle is raise it.
-    expect(screen.getByText(/charged after a response exists/)).toBeInTheDocument();
+    expect(screen.queryByLabelText("Requests in flight per user")).toBeNull();
   });
 });

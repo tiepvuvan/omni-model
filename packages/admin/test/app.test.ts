@@ -33,6 +33,9 @@ describe("admin authorization", () => {
     ["GET", "/admin/api/usage/summary"],
     ["GET", "/admin/api/meta"],
     ["POST", "/admin/api/routing/simulate"],
+    ["GET", "/admin/api/users"],
+    ["POST", "/admin/api/users/invites"],
+    ["DELETE", "/admin/api/users/invites/abc"],
   ];
 
   /** GET and DELETE requests cannot carry one. */
@@ -130,7 +133,14 @@ describe("status", () => {
   });
 
   it("reports what is applied", async () => {
-    const { call } = await createTestAdmin({ config: baseConfig() });
+    const { call } = await createTestAdmin({
+      config: baseConfig({
+        server: {
+          organizationName: "Northstar",
+          customDomain: "ai.northstar.example",
+        },
+      }),
+    });
     const body = (await (await call("/admin/api/status")).json()) as Record<string, unknown>;
     expect(body.configured).toBe(true);
     expect(body.revision).toBe(1);
@@ -138,6 +148,8 @@ describe("status", () => {
     // The two layers separately: one is required, the other optional.
     expect(body.userAuth).toBe("jwt");
     expect(body.appAuth).toEqual([]);
+    expect(body.organizationName).toBe("Northstar");
+    expect(body.customDomain).toBe("ai.northstar.example");
   });
 });
 

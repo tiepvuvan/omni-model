@@ -298,7 +298,7 @@ interface Backend {
   /** Where cached responses live. In-process unless a database is configured. */
   promptCache: PromptCache;
   /** Drops expired and overflowing cache rows; null when nothing needs sweeping. */
-  evictCache: ((maxEntries: number) => Promise<void>) | null;
+  evictCache: ((maxEntries: number, maxBytes: number) => Promise<void>) | null;
   /** The pool, when running on Postgres: the admin API stores its own tables in it. */
   pool: PgPoolLike | null;
   /** Delete logs past their retention window; null when unsupported. */
@@ -363,8 +363,8 @@ async function createBackend(
       requestLogs:
         options.requestLogs ?? new BufferedRequestLogSink(backend.requestLogWriter, { logger }),
       promptCache: options.promptCache ?? backend.promptCache,
-      evictCache: async (maxEntries) => {
-        await backend.promptCache.evict(maxEntries);
+      evictCache: async (maxEntries, maxBytes) => {
+        await backend.promptCache.evict(maxEntries, maxBytes);
       },
       pool: backend.pool,
       sweepLogs: async (retentionMs, contentRetentionMs) => {
@@ -558,7 +558,7 @@ export async function startServer(options: StartOptions): Promise<RunningServer>
       cacheTimer = setInterval(() => {
         const cache = holder.current()?.config.cache;
         if (cache === undefined || !cache.enabled) return;
-        void backend.evictCache?.(cache.maxEntries).catch((error: unknown) => {
+        void backend.evictCache?.(cache.maxEntries, cache.maxBytes).catch((error: unknown) => {
           logger.warn("evicting cached responses failed; will retry", {
             error: describeError(error),
           });

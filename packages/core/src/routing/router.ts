@@ -101,10 +101,8 @@ export function createRouter(
   const varsFor = (facts: RequestFacts): Record<string, unknown> => ({
     request: facts.request,
     user: facts.user,
-    device: facts.device,
     client: facts.client,
     http: facts.http,
-    now: facts.now,
   });
 
   return {

@@ -32,8 +32,8 @@ function errorMessage(error: unknown): string {
 
 /** Variables exposed to `when` evaluation. */
 function varsFrom(facts: RequestFacts): Record<string, unknown> {
-  const { request, user, device, client, http, now } = facts;
-  return { request, user, device, client, http, now };
+  const { request, user, client, http } = facts;
+  return { request, user, client, http };
 }
 
 function windowStartFor(nowMs: number, windowMs: number): number {
@@ -55,11 +55,11 @@ function tokenKey(ruleId: string, limitKey: string, windowStart: number): string
  * and layer 1 of authentication guarantees there is one. The fallbacks are
  * defensive rather than configurable — a verifier that authenticates without
  * producing a subject would otherwise put every caller in one bucket, so the
- * device, then the IP, then a single shared bucket stand in. Each is *stricter*
+ * publishable key, then the IP, then a single shared bucket stand in. Each is *stricter*
  * than a per-user budget, never looser.
  */
 function limitKeyFor(facts: RequestFacts): string {
-  return facts.user.id ?? facts.device.id ?? facts.http.ip ?? "anonymous";
+  return facts.user.id ?? facts.client.id ?? facts.http.ip ?? "anonymous";
 }
 
 function compileExpression(

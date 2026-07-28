@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { api, type SimulateResponse } from "../../lib/api";
-import { Badge, Button, Callout, Card, TextAreaField, TextField } from "../ui/primitives";
+import { Badge, Button, Callout, Modal, TextAreaField, TextField } from "../ui/primitives";
 
 const OUTCOME_TONE = {
   match: "success",
@@ -17,10 +17,27 @@ const OUTCOME_TONE = {
  * it just never fires, and the proxy answers normally from a later rule. Reading
  * the expression will not tell you that. Running it will.
  */
-export function SimulatePanel({ suggestedModel }: { suggestedModel: string | null }) {
+export function SimulatePanel({
+  open,
+  onOpenChange,
+  suggestedModel,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  suggestedModel: string | null;
+}) {
   const [model, setModel] = useState(suggestedModel ?? "");
+  const [inputTokenCount, setInputTokenCount] = useState("");
+  const [maxTokens, setMaxTokens] = useState("");
+  const [temperature, setTemperature] = useState("");
   const [userId, setUserId] = useState("");
+  const [providersText, setProvidersText] = useState("");
   const [claimsText, setClaimsText] = useState("{}");
+  const [clientName, setClientName] = useState("");
+  const [ip, setIp] = useState("");
+  const [method, setMethod] = useState("POST");
+  const [path, setPath] = useState("/v1/chat/completions");
+  const [headersText, setHeadersText] = useState("{}");
   const [result, setResult] = useState<SimulateResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -29,16 +46,54 @@ export function SimulatePanel({ suggestedModel }: { suggestedModel: string | nul
     event.preventDefault();
     setError(null);
 
-    let claims: Record<string, unknown> | undefined;
-    if (claimsText.trim() !== "" && claimsText.trim() !== "{}") {
+    const parseMap = (value: string, label: string): Record<string, unknown> | undefined => {
+      if (value.trim() === "" || value.trim() === "{}") return undefined;
       try {
-        const parsed: unknown = JSON.parse(claimsText);
+        const parsed: unknown = JSON.parse(value);
         if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-          throw new Error("claims must be a JSON object");
+          throw new Error(`${label} must be a JSON object`);
         }
-        claims = parsed as Record<string, unknown>;
+        return parsed as Record<string, unknown>;
       } catch {
-        setError('Claims must be a JSON object, for example {"tier": "pro"}.');
+        setError(`${label} must be a JSON object.`);
+        return undefined;
+      }
+    };
+
+    const claims = parseMap(claimsText, "Claims");
+    if (claimsText.trim() !== "" && claimsText.trim() !== "{}" && claims === undefined) {
+      return;
+    }
+    const rawHeaders = parseMap(headersText, "Headers");
+    if (headersText.trim() !== "" && headersText.trim() !== "{}" && rawHeaders === undefined) {
+      return;
+    }
+    const headers =
+      rawHeaders === undefined
+        ? undefined
+        : Object.fromEntries(
+            Object.entries(rawHeaders).map(([key, value]) => [key, String(value)]),
+          );
+
+    const optionalNumber = (value: string): number | undefined => {
+      const trimmed = value.trim();
+      return trimmed === "" ? undefined : Number(trimmed);
+    };
+    const simulatedInputTokenCount = optionalNumber(inputTokenCount);
+    const simulatedMaxTokens = optionalNumber(maxTokens);
+    const simulatedTemperature = optionalNumber(temperature);
+    const providers = providersText
+      .split(",")
+      .map((provider) => provider.trim())
+      .filter((provider) => provider !== "");
+
+    for (const [label, value] of [
+      ["Input token count", simulatedInputTokenCount],
+      ["Maximum tokens", simulatedMaxTokens],
+      ["Temperature", simulatedTemperature],
+    ] as const) {
+      if (value !== undefined && !Number.isFinite(value)) {
+        setError(`${label} must be a number.`);
         return;
       }
     }
@@ -48,8 +103,19 @@ export function SimulatePanel({ suggestedModel }: { suggestedModel: string | nul
       setResult(
         await api.simulate({
           model: model.trim(),
+          ...(simulatedInputTokenCount === undefined
+            ? {}
+            : { inputTokenCount: simulatedInputTokenCount }),
+          ...(simulatedMaxTokens === undefined ? {} : { maxTokens: simulatedMaxTokens }),
+          ...(simulatedTemperature === undefined ? {} : { temperature: simulatedTemperature }),
           ...(claims === undefined ? {} : { claims }),
           ...(userId.trim() === "" ? {} : { userId: userId.trim() }),
+          ...(providers.length === 0 ? {} : { providers }),
+          ...(clientName.trim() === "" ? {} : { clientName: clientName.trim() }),
+          ...(ip.trim() === "" ? {} : { ip: ip.trim() }),
+          ...(method.trim() === "" ? {} : { method: method.trim().toUpperCase() }),
+          ...(path.trim() === "" ? {} : { path: path.trim() }),
+          ...(headers === undefined ? {} : { headers }),
         }),
       );
     } catch (caught) {
@@ -61,7 +127,12 @@ export function SimulatePanel({ suggestedModel }: { suggestedModel: string | nul
   };
 
   return (
-    <Card title="Simulate a request">
+    <Modal
+      open={open}
+      onOpenChange={onOpenChange}
+      title="Simulate a request"
+      description="Evaluate a hypothetical request against the currently applied routing rules."
+    >
       <form onSubmit={run} className="flex flex-col gap-4">
         <div className="grid gap-4 sm:grid-cols-2">
           <TextField
@@ -73,11 +144,70 @@ export function SimulatePanel({ suggestedModel }: { suggestedModel: string | nul
             onChange={(event) => setModel(event.target.value)}
           />
           <TextField
+            label="Input token count"
+            mono
+            type="number"
+            min={0}
+            value={inputTokenCount}
+            placeholder="Estimated from the simulated body"
+            onChange={(event) => setInputTokenCount(event.target.value)}
+          />
+          <TextField
+            label="Maximum output tokens"
+            mono
+            type="number"
+            min={0}
+            value={maxTokens}
+            onChange={(event) => setMaxTokens(event.target.value)}
+          />
+          <TextField
+            label="Temperature"
+            mono
+            type="number"
+            step="any"
+            value={temperature}
+            onChange={(event) => setTemperature(event.target.value)}
+          />
+          <TextField
             label="User id"
             mono
             value={userId}
             help="Optional; exposed to rules as user.id."
             onChange={(event) => setUserId(event.target.value)}
+          />
+          <TextField
+            label="User providers"
+            mono
+            value={providersText}
+            placeholder="firebase-auth, firebase-app-check"
+            help="Comma-separated verifier types exposed as user.providers."
+            onChange={(event) => setProvidersText(event.target.value)}
+          />
+          <TextField
+            label="Client name"
+            mono
+            value={clientName}
+            placeholder="ios-app"
+            onChange={(event) => setClientName(event.target.value)}
+          />
+          <TextField
+            label="IP address"
+            mono
+            value={ip}
+            placeholder="203.0.113.10"
+            onChange={(event) => setIp(event.target.value)}
+          />
+          <TextField
+            label="HTTP method"
+            mono
+            value={method}
+            onChange={(event) => setMethod(event.target.value)}
+          />
+          <TextField
+            label="HTTP path"
+            mono
+            value={path}
+            onChange={(event) => setPath(event.target.value)}
           />
         </div>
 
@@ -90,7 +220,17 @@ export function SimulatePanel({ suggestedModel }: { suggestedModel: string | nul
           onChange={(event) => setClaimsText(event.target.value)}
         />
 
-        <div className="flex justify-end">
+        <TextAreaField
+          label="HTTP headers"
+          mono
+          rows={3}
+          value={headersText}
+          help='A JSON object. Credential-bearing values are exposed as "<redacted>".'
+          onChange={(event) => setHeadersText(event.target.value)}
+        />
+
+        <div className="-mx-[16px] flex justify-end gap-[8px] border-t border-solid border-border px-[16px] pt-[12px]">
+          <Button onClick={() => onOpenChange(false)}>Cancel</Button>
           <Button type="submit" variant="primary" disabled={busy || model.trim() === ""}>
             {busy ? "Simulating…" : "Simulate"}
           </Button>
@@ -154,6 +294,6 @@ export function SimulatePanel({ suggestedModel }: { suggestedModel: string | nul
           </p>
         </div>
       ) : null}
-    </Card>
+    </Modal>
   );
 }

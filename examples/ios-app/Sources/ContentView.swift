@@ -221,7 +221,7 @@ private enum AuthMethod: String, CaseIterable, Identifiable {
 
   var subtitle: String {
     switch self {
-    case .firebaseAuth: return "firebase-auth · Authorization: Bearer"
+    case .firebaseAuth: return "firebase-auth · X-Firebase-ID-Token"
     case .appCheck: return "firebase-app-check · X-Firebase-AppCheck"
     case .deviceCheck: return "apple-device-check · X-Apple-Device-Token · device only"
     case .appAttest: return "apple-app-attest · x-appattest-* · device only"

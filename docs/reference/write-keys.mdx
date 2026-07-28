@@ -1,113 +1,148 @@
 ---
-title: Write keys
-description: Identify, restrict and revoke the applications calling your proxy.
+title: Publishable keys
+description: Generate, attribute, restrict, and revoke the applications calling your proxy.
 ---
 
-A write key answers **which application is calling**. That is a different question from the one the
-[security verifiers](/security/custom-jwt) answer, which is *who is using that application*.
+A publishable key answers **which application is calling**. That is separate from the
+[user authentication method](/security/custom-jwt), which answers *who is using that application*.
+Every protected request can carry both credentials.
 
-Both matter. A leaked build of your iOS app still presents perfectly valid Firebase Auth tokens —
-every request looks like a real user, because it is one. Revoking the app's write key cuts it off
-without invalidating a single user session.
+## Generate and manage keys
 
-## Sending one
+Open **Public API Keys** in the dashboard to:
+
+- generate a key with a recognizable reference name;
+- see its expiration, total token usage, last model, and last request time;
+- revoke it without deleting its request history.
+
+The plaintext is shown exactly once after generation. Copy it before closing the dialog. Only its
+SHA-256 hash is stored, so an operator cannot retrieve it later and a database dump cannot be used
+as a credential.
+
+You can perform the same actions through the [admin API](/reference/admin-api):
+
+```sh
+curl -X POST https://your-proxy/admin/api/write-keys \
+  -H "content-type: application/json" \
+  -b "$ADMIN_COOKIE" \
+  -d '{"name":"iOS production"}'
+```
+
+Revocation keeps the row so past request logs and usage remain attributable.
+
+<Note>
+  Each replica caches key lookups in memory briefly. Revocation takes effect immediately on the
+  instance that performed it and within the key-cache TTL on other replicas.
+</Note>
+
+## Send a key
+
+Publishable keys use the standard OpenAI credential transport:
+
+```http
+Authorization: Bearer omk_gH3k…
+```
+
+This means an OpenAI SDK can use the key directly as its `apiKey`:
+
+```ts
+import OpenAI from "openai";
+
+const client = new OpenAI({
+  apiKey: "omk_gH3k…",
+  baseURL: "https://your-proxy/v1",
+  defaultHeaders: {
+    "X-Firebase-ID-Token": userIdToken,
+  },
+});
+```
+
+`Authorization` belongs to the publishable key. End-user credentials use dedicated headers so both
+layers can be sent on the same request:
+
+| User authentication method | Default header | Value |
+| --- | --- | --- |
+| Firebase Auth | `X-Firebase-ID-Token` | Raw Firebase ID token |
+| Clerk | `X-Clerk-Session-Token` | Raw Clerk session token |
+| AWS Cognito | `X-Cognito-ID-Token` | Raw access or ID token |
+| Supabase | `X-Supabase-Access-Token` | Raw access token |
+| Custom JWT | `X-Omni-User-Token` | Raw JWT |
 
 ```sh
 curl https://your-proxy/v1/chat/completions \
-  -H "x-omni-key: omk_gH3k…" \
-  -H "authorization: Bearer $USER_TOKEN" \
+  -H "authorization: Bearer omk_gH3k…" \
+  -H "x-firebase-id-token: $FIREBASE_ID_TOKEN" \
   -H "content-type: application/json" \
-  -d '{"model": "gpt-4o-mini", "messages": [{"role": "user", "content": "Hello!"}]}'
+  -d '{"model":"gpt-4o-mini","messages":[{"role":"user","content":"Hello!"}]}'
 ```
 
-The key goes in `x-omni-key`, not `Authorization`. The `jwt`, `firebase-auth`, `clerk`,
-`aws-cognito`, and `supabase` verifiers already use `Authorization` for the end user's token, and a
-client needs to send both at once.
+Every verifier header and scheme remains configurable. If you override a user verifier to use a
+Bearer-style custom header, set its `scheme` to `bearer`; do not reuse `Authorization`.
 
-## Storage and revocation
+## Require keys
 
-Only a SHA-256 of each key is stored, so a database dump cannot be replayed against your proxy. The
-plaintext is returned **once**, when the key is created, and is unrecoverable afterwards — lose it
-and you issue a new one.
-
-Revoking sets `disabled_at` rather than deleting the row, so request logs keep pointing at a real
-client and past usage stays attributable.
-
-<Note>
-  Each replica caches key lookups in memory for a few seconds, because otherwise every `/v1`
-  request would cost a database query. A revocation therefore takes effect immediately on the
-  instance that performed it and within the cache TTL (10s by default) elsewhere.
-</Note>
-
-## Requiring them
-
-```sh
-OMNI_SECURITY_JSON='{"requireWriteKey":true,"providers":[…]}'
+```yaml
+security:
+  requireWriteKey: true
 ```
 
-`requireWriteKey` defaults to **false** so that enabling it is a deliberate act — turning it on
-rejects every client that is not already sending a key.
+`requireWriteKey` defaults to `false`, allowing a staged rollout:
 
-A presented key is always validated either way, so attribution and revocation start working as soon
-as your clients begin sending keys. But revocation only becomes *binding* once `requireWriteKey` is
-true: until then, a revoked client can simply drop the header.
+1. Generate keys.
+2. Ship clients that send them.
+3. Confirm traffic is attributed in **Public API Keys** and **Activity Logs**.
+4. Set `requireWriteKey: true`.
 
-The recommended rollout is therefore: create keys → ship clients that send them → confirm traffic is
-attributed → set `requireWriteKey: true`.
+A presented publishable key is validated even before it is required. Once the setting is enabled,
+requests without one receive an OpenAI-style `401` response with `WWW-Authenticate: Bearer`.
 
-## Restricting what a key can reach
+## Restrict what a key can reach
 
 A key may carry its own model allowlist, independent of `routing.allowedModels`:
 
 | `allowedModels` | Meaning |
 | --- | --- |
-| absent / `null` | No restriction. |
+| absent / `null` | No key-specific restriction. |
 | `["cheap"]` | Only `cheap`. |
-| `[]` | Nothing — a way to park a key without revoking it. |
+| `[]` | No models; park the key without revoking it. |
 
-A disallowed model is reported as `model_not_found`, exactly as an unknown one would be, so a client
-cannot map out which models exist by probing. `/v1/models` is filtered to match, so a client is never
-told about a model that would 404 for it.
+A disallowed model is reported as `model_not_found`, just like an unknown model. `/v1/models` is
+filtered to match.
 
-## Using a key in rules
+## Use key identity in routing
 
-The calling application appears in routing and rate-limit expressions as `client`:
+The calling application appears in CEL expressions as `client`:
 
 | Variable | Type | Notes |
 | --- | --- | --- |
-| `client.id` | string \| null | Write key id. |
-| `client.name` | string \| null | Write key name. |
-| `client.authenticated` | bool | Whether a valid key was presented. |
+| `client.id` | string \| null | Publishable-key id. |
+| `client.name` | string \| null | Reference name. |
 
-```sh
-OMNI_ROUTING_JSON='{"rules":[
-  {"id":"internal-tools","when":"client.name == \"admin-dashboard\"",
-   "target":{"type":"anthropic","apiKey":"${ANTHROPIC_API_KEY}"}},
-  {"id":"everyone-else","when":"true","target":{"type":"openai","apiKey":"${OPENAI_API_KEY}"}}
-]}'
+Use `client.id != null` when a rule only needs to know whether a publishable key was presented.
+
+```yaml
+routing:
+  rules:
+    - id: internal-tools
+      when: client.name == "admin-dashboard"
+      target:
+        type: anthropic
+        apiKey: ${ANTHROPIC_API_KEY}
+    - id: everyone-else
+      when: "true"
+      target:
+        type: openai
+        apiKey: ${OPENAI_API_KEY}
 ```
 
-Rate limits accept `key: client`, giving each application its own budget:
-
-```sh
-OMNI_RATE_LIMITS_JSON='[
-  {"id":"per-client","name":"per-client","key":"client","requests":{"limit":10000,"window":"1h"}}
-]'
-```
-
-<Warning>
-  Give every rate-limit rule a stable `id`. Counters are namespaced by `id`, not by `name`, so a rule
-  whose identity is its display name silently resets every counter the first time someone renames it.
-</Warning>
-
-When no key is presented, a `client`-keyed rule falls back to the request IP, so the rule still means
-something before `requireWriteKey` is on.
+Token budgets remain per user. Publishable keys provide client attribution and model restriction;
+they do not replace user authentication.
 
 ## Related
 
 <CardGroup cols={2}>
   <Card title="Authenticate the user" icon="key" href="/security/custom-jwt">
-    JWT, Firebase Auth and Supabase verifiers.
+    Firebase Auth, Clerk, Cognito, Supabase, and custom JWT headers.
   </Card>
   <Card title="Every setting" icon="sliders" href="/reference/configuration">
     The full configuration reference.

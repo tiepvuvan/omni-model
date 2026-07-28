@@ -1,6 +1,6 @@
 import { Menu } from "@base-ui-components/react/menu";
 import deleteIcon from "../../assets/delete.svg";
-import { cx } from "../ui/primitives";
+import { cx, ThemedIcon } from "../ui/primitives";
 
 /**
  * The single icon button the design puts in a match-rule header.
@@ -39,7 +39,7 @@ export function RuleMenu({
         aria-label={`Actions for ${ruleId}`}
         className="flex size-[28px] shrink-0 items-center justify-center rounded-[var(--radius-pill)] border border-solid border-border bg-button-background hover:bg-item-selection"
       >
-        <img src={deleteIcon} alt="" aria-hidden className="size-[14px]" />
+        <ThemedIcon src={deleteIcon} className="size-[14px]" />
       </Menu.Trigger>
       <Menu.Portal>
         <Menu.Positioner sideOffset={4} align="end" className="z-50">

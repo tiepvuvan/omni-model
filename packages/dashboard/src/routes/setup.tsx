@@ -59,7 +59,7 @@ function Setup() {
     <AuthCard
       title="Admin Setup"
       onSubmit={submit}
-      footer="Sign-up closes permanently once this account exists. Use the create-admin command to add operators after that."
+      footer="Sign-up closes permanently once this account exists. Invite teammates from Users after setup."
     >
       {error !== null ? (
         <Callout tone="danger" role="alert">

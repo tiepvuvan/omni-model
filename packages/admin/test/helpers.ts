@@ -82,6 +82,9 @@ export function fakeAuth(users: Record<string, FakeActor>): AdminAuthLike {
         const user = token === null ? undefined : users[token];
         return user === undefined ? null : { user, session: { id: `session-${token}` } };
       },
+      signUpEmail: async ({ body }) => ({
+        user: { id: `u-${body.email}`, email: body.email, name: body.name, role: "user" },
+      }),
     },
   };
 }

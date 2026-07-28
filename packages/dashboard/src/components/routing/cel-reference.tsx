@@ -26,6 +26,7 @@ function exampleFor(namespace: string, field: string, type: string, dynamic?: bo
   }
   if (type.startsWith("boolean")) return `${path} == true`;
   if (type.startsWith("number")) return `${path} > 4`;
+  if (type.startsWith("list")) return `"firebase-auth" in ${path}`;
   if (field === "model") return `${path}.startsWith("claude-")`;
   return `${path} == "value"`;
 }
@@ -37,8 +38,7 @@ export function CelReference() {
     <div className="flex w-full flex-col gap-[8px]">
       <div className="flex items-center justify-between gap-[8px]">
         <p className="type-label-12 text-foreground-secondary">
-          A CEL expression over {NAMESPACES.map((entry) => entry.name).join(", ")} and{" "}
-          <span className="type-mono-12">now</span>. Only a literal{" "}
+          A CEL expression over {NAMESPACES.map((entry) => entry.name).join(", ")}. Only a literal{" "}
           <span className="type-mono-12">true</span> counts as a match. Ctrl-Space for suggestions.
         </p>
         <Button size="medium" onClick={() => setOpen(!open)} aria-expanded={open}>

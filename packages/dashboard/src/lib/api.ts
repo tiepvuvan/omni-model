@@ -37,6 +37,8 @@ export interface StatusState {
   /** The applied app-attestation schemes, possibly none. */
   appAuth: string[];
   requireWriteKey: boolean | null;
+  organizationName: string | null;
+  customDomain: string | null;
 }
 
 /** A credential the operator never sees again: sealed into `omni_secrets`. */
@@ -145,9 +147,60 @@ export interface CacheState {
   /** Duration string, e.g. `"1h"`. Null when nothing is applied. */
   ttl: string | null;
   maxEntries: number | null;
+  maxBytes: number | null;
   entries: number;
   oldestAt: number | null;
   bytes: number | null;
+}
+
+/** Non-secret metadata and all-time usage for one publishable key. */
+export interface PublishableKey {
+  id: string;
+  name: string;
+  prefix: string;
+  last4: string;
+  allowedModels: string[] | null;
+  captureContent: boolean | null;
+  metadata: Record<string, unknown>;
+  createdBy: string | null;
+  createdAt: number;
+  expiresAt: number | null;
+  disabledAt: number | null;
+  usage: {
+    totalTokens: number;
+    lastUsedAt: number | null;
+    lastModel: string | null;
+  };
+}
+
+/** A new publishable key; its plaintext is returned by the API exactly once. */
+export interface CreatedPublishableKey {
+  writeKey: Omit<PublishableKey, "usage">;
+  secret: string;
+}
+
+/** A person with access to the operator dashboard. */
+export interface TeamUser {
+  id: string;
+  email: string;
+  name: string;
+  role: string | null;
+  createdAt: number;
+}
+
+/** An invitation that has not expired, been revoked, or been accepted. */
+export interface TeamInvite {
+  id: string;
+  email: string;
+  invitedBy: string;
+  createdAt: number;
+  expiresAt: number;
+}
+
+/** The one-time result of creating an invitation. */
+export interface CreatedTeamInvite {
+  invite: TeamInvite;
+  link: string;
 }
 
 /** How many requests one user may have in flight. `0` disables the bound. */
@@ -160,11 +213,14 @@ export interface CacheBlock {
   enabled: boolean;
   ttl: string;
   maxEntries: number;
+  maxBytes: number;
 }
 
 /** Request-serving settings, preserving fields this screen does not edit. */
 export interface ServerBlock {
   maxInputTokens: number;
+  organizationName?: string;
+  customDomain?: string;
   [setting: string]: unknown;
 }
 
@@ -287,10 +343,17 @@ export interface ProbeResponse {
 
 export interface SimulateInput {
   model: string;
+  inputTokenCount?: number;
+  maxTokens?: number;
+  temperature?: number;
   claims?: Record<string, unknown>;
   userId?: string;
+  providers?: string[];
   clientName?: string;
-  stream?: boolean;
+  ip?: string;
+  method?: string;
+  path?: string;
+  headers?: Record<string, string>;
 }
 
 /**
@@ -474,6 +537,50 @@ export const api = {
 
   /** Empty it. Returns how many entries went. */
   purgeCache: () => request<{ purged: number }>("/cache", { method: "DELETE" }),
+
+  /** List publishable-key descriptions and their aggregate usage, never plaintext. */
+  publishableKeys: () =>
+    request<{ writeKeys: PublishableKey[] }>("/write-keys").then((body) => body.writeKeys),
+
+  /** Mint a publishable key. The returned secret cannot be retrieved again. */
+  createPublishableKey: (name: string) =>
+    request<CreatedPublishableKey>("/write-keys", { method: "POST", body: { name } }),
+
+  /** Revoke a publishable key while retaining its usage attribution. */
+  revokePublishableKey: (id: string) =>
+    request<{ revoked: boolean; alreadyRevoked?: boolean }>(
+      `/write-keys/${encodeURIComponent(id)}`,
+      { method: "DELETE" },
+    ),
+
+  /** Dashboard users and currently pending invitations. */
+  team: () => request<{ users: TeamUser[]; invites: TeamInvite[] }>("/users"),
+
+  /** Create an email-bound invitation. Its bearer link is returned exactly once. */
+  createTeamInvite: (email: string) =>
+    request<CreatedTeamInvite>("/users/invites", {
+      method: "POST",
+      body: { email },
+    }),
+
+  /** Make a pending invitation unusable. */
+  revokeTeamInvite: (id: string) =>
+    request<{ revoked: boolean }>(`/users/invites/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    }),
+
+  /** Public metadata for the holder of an invitation link. */
+  teamInvite: (token: string) =>
+    request<{ invite: { email: string; expiresAt: number } }>(
+      `/invites/${encodeURIComponent(token)}`,
+    ).then((body) => body.invite),
+
+  /** Create or promote the email-bound account and consume the invitation. */
+  acceptTeamInvite: (token: string, password: string, name?: string) =>
+    request<{ email: string }>(`/invites/${encodeURIComponent(token)}/accept`, {
+      method: "POST",
+      body: { password, ...(name === undefined ? {} : { name }) },
+    }),
 
   /** Insert or replace one rule, keeping its position if it already exists. */
   putRule: (id: string, value: Omit<RoutingRule, "id">, note?: string) =>

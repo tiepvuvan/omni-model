@@ -2,7 +2,7 @@ import { Checkbox as BaseCheckbox } from "@base-ui-components/react/checkbox";
 import { Dialog } from "@base-ui-components/react/dialog";
 import { Select } from "@base-ui-components/react/select";
 import { Switch as BaseSwitch } from "@base-ui-components/react/switch";
-import type { ComponentPropsWithoutRef, ReactNode } from "react";
+import type { ComponentPropsWithoutRef, CSSProperties, ReactNode } from "react";
 import { useId } from "react";
 import checkIcon from "../../assets/check.svg";
 import tokenRemoveIcon from "../../assets/token-remove.svg";
@@ -24,6 +24,29 @@ import unfoldMoreIcon from "../../assets/unfold-more.svg";
 /** Join class names, dropping the falsy ones. */
 export function cx(...parts: (string | false | null | undefined)[]): string {
   return parts.filter(Boolean).join(" ");
+}
+
+/**
+ * A monochrome SVG painted with the surrounding text colour.
+ *
+ * Figma exports fixed fills inside external SVG files, which cannot inherit
+ * `currentColor` through an `<img>`. Using the SVG alpha as a mask keeps one
+ * asset while making the glyph follow light, dark, hover, and disabled states.
+ */
+export function ThemedIcon({ src, className }: { src: string; className?: string }) {
+  const style: CSSProperties = {
+    maskImage: `url("${src}")`,
+    maskPosition: "center",
+    maskRepeat: "no-repeat",
+    maskSize: "contain",
+    WebkitMaskImage: `url("${src}")`,
+    WebkitMaskPosition: "center",
+    WebkitMaskRepeat: "no-repeat",
+    WebkitMaskSize: "contain",
+  };
+  return (
+    <span aria-hidden className={cx("inline-block shrink-0 bg-current", className)} style={style} />
+  );
 }
 
 /* ------------------------------------------------------------------ Button */
@@ -82,9 +105,7 @@ export function Button({
       )}
       {...props}
     >
-      {icon !== undefined ? (
-        <img src={icon} alt="" aria-hidden className="size-[16px] shrink-0" />
-      ) : null}
+      {icon !== undefined ? <ThemedIcon src={icon} className="size-[16px]" /> : null}
       {children}
     </button>
   );
@@ -99,7 +120,7 @@ export function IconButton({
 }: Omit<ButtonProps, "icon" | "size" | "children"> & { icon: string; label: string }) {
   return (
     <Button size="icon" aria-label={label} className={className} {...props}>
-      <img src={icon} alt="" aria-hidden className="size-[14px]" />
+      <ThemedIcon src={icon} className="size-[14px]" />
     </Button>
   );
 }
@@ -229,7 +250,7 @@ export function InputToken({ label, onRemove }: { label: string; onRemove?: () =
       {label}
       {onRemove !== undefined ? (
         <button type="button" onClick={onRemove} aria-label={`Remove ${label}`}>
-          <img src={tokenRemoveIcon} alt="" aria-hidden className="size-[12px]" />
+          <ThemedIcon src={tokenRemoveIcon} className="size-[12px]" />
         </button>
       ) : null}
     </span>
@@ -349,7 +370,7 @@ export function SelectField<T extends string>({
         >
           <Select.Value className="flex-1 truncate">{current?.label ?? value}</Select.Value>
           <Select.Icon>
-            <img src={unfoldMoreIcon} alt="" aria-hidden className="size-[20px] shrink-0" />
+            <ThemedIcon src={unfoldMoreIcon} className="size-[20px] text-foreground-secondary" />
           </Select.Icon>
         </Select.Trigger>
         <Select.Portal>
@@ -362,7 +383,7 @@ export function SelectField<T extends string>({
                   className="flex cursor-default items-center gap-[6px] rounded-[6px] px-[8px] py-[6px] type-copy-14 text-foreground-primary data-[highlighted]:bg-item-selection"
                 >
                   <Select.ItemIndicator className="flex size-[12px] shrink-0 items-center">
-                    <img src={checkIcon} alt="" aria-hidden className="size-[12px]" />
+                    <ThemedIcon src={checkIcon} className="size-[12px] text-accent-primary" />
                   </Select.ItemIndicator>
                   <Select.ItemText>{item.label}</Select.ItemText>
                 </Select.Item>
@@ -419,7 +440,7 @@ export function Checkbox({
         )}
       >
         <BaseCheckbox.Indicator className="flex items-center justify-center">
-          <img src={checkIcon} alt="" aria-hidden className="size-[12px]" />
+          <ThemedIcon src={checkIcon} className="size-[12px] text-white" />
         </BaseCheckbox.Indicator>
       </span>
       {label}

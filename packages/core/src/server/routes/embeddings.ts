@@ -61,7 +61,7 @@ export function createEmbeddingsHandler(
     assertModelAllowedForClient(c, request.model);
 
     const runtime = deps.runtimeFor(c);
-    const facts = factsFor(c, request, runtime.now(), deps.clientIp(c, bundle.trustProxyHeaders));
+    const facts = factsFor(c, request, deps.clientIp(c, bundle.trustProxyHeaders));
 
     const slot = await acquireConcurrencySlot(bundle, facts);
     let execution: Awaited<ReturnType<typeof executeEmbeddings>>;

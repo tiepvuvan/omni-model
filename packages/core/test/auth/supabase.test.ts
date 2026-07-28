@@ -37,9 +37,9 @@ const rejectFetch: typeof fetch = async () => {
   throw new Error("network access not expected");
 };
 
-function bearer(token: string): Request {
+function tokenRequest(token: string): Request {
   return new Request("https://proxy.example/v1/chat/completions", {
-    headers: { authorization: `Bearer ${token}` },
+    headers: { "x-supabase-access-token": token },
   });
 }
 
@@ -76,7 +76,7 @@ describe("supabaseVerifierFactory", () => {
       const ctx = makeCtx(rejectFetch);
       const verifier = supabaseVerifierFactory.create(options, ctx);
       const token = await signAccessToken(secretKey, {}, { alg: "HS256" });
-      const result = await verifier.verify(bearer(token), ctx);
+      const result = await verifier.verify(tokenRequest(token), ctx);
       if (result === null || !result.ok) throw new Error("expected success");
       expect(result.identity.provider).toBe("supabase");
       expect(result.identity.userId).toBe("user-7");
@@ -92,7 +92,7 @@ describe("supabaseVerifierFactory", () => {
         { iss: "https://other.supabase.co/auth/v1" },
         { alg: "HS256" },
       );
-      const result = await verifier.verify(bearer(token), ctx);
+      const result = await verifier.verify(tokenRequest(token), ctx);
       if (result === null || result.ok) throw new Error("expected rejection");
       expect(result.reason).toContain("iss");
     });
@@ -101,7 +101,7 @@ describe("supabaseVerifierFactory", () => {
       const ctx = makeCtx(rejectFetch);
       const verifier = supabaseVerifierFactory.create(options, ctx);
       const token = await signAccessToken(secretKey, { aud: "anon" }, { alg: "HS256" });
-      const result = await verifier.verify(bearer(token), ctx);
+      const result = await verifier.verify(tokenRequest(token), ctx);
       if (result === null || result.ok) throw new Error("expected rejection");
       expect(result.reason).toContain("aud");
     });
@@ -114,7 +114,7 @@ describe("supabaseVerifierFactory", () => {
         {},
         { alg: "HS256" },
       );
-      const result = await verifier.verify(bearer(token), ctx);
+      const result = await verifier.verify(tokenRequest(token), ctx);
       if (result === null || result.ok) throw new Error("expected rejection");
       expect(result.reason).toContain("signature");
     });
@@ -123,7 +123,7 @@ describe("supabaseVerifierFactory", () => {
       const ctx = makeCtx(rejectFetch);
       const verifier = supabaseVerifierFactory.create(options, ctx);
       const token = await signAccessToken(secretKey, {}, { alg: "HS256" }, NOW_SEC - 3600);
-      const result = await verifier.verify(bearer(token), ctx);
+      const result = await verifier.verify(tokenRequest(token), ctx);
       if (result === null || result.ok) throw new Error("expected rejection");
       expect(result.reason).toContain("expired");
     });
@@ -145,7 +145,7 @@ describe("supabaseVerifierFactory", () => {
       const ctx = makeCtx(jwksFetch(derivedUrl, [jwk], calls));
       const verifier = supabaseVerifierFactory.create({ url: PROJECT_URL }, ctx);
       const token = await signAccessToken(privateKey, {}, { alg: "ES256", kid: "sb-key" });
-      const result = await verifier.verify(bearer(token), ctx);
+      const result = await verifier.verify(tokenRequest(token), ctx);
       if (result === null || !result.ok) throw new Error("expected success");
       expect(result.identity.userId).toBe("user-7");
       expect(calls).toEqual([derivedUrl]);
@@ -166,7 +166,7 @@ describe("supabaseVerifierFactory", () => {
         { iss: "https://custom-issuer.example", aud: "custom-aud" },
         { alg: "ES256", kid: "sb-key" },
       );
-      const result = await verifier.verify(bearer(token), ctx);
+      const result = await verifier.verify(tokenRequest(token), ctx);
       expect(result?.ok).toBe(true);
       expect(calls).toEqual([jwksUrl]);
     });

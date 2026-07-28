@@ -70,6 +70,12 @@ const save = async (user: ReturnType<typeof userEvent.setup>) => {
   });
 };
 
+const simulate = async (user: ReturnType<typeof userEvent.setup>) => {
+  await user.click(screen.getByRole("button", { name: "Simulate a request" }));
+  const dialog = await screen.findByRole("dialog", { name: "Simulate a request" });
+  await user.click(within(dialog).getByRole("button", { name: "Simulate" }));
+};
+
 describe("the rule rows", () => {
   it("pairs each condition with where it goes, in evaluation order", async () => {
     await renderAt("/routing");
@@ -299,16 +305,11 @@ describe("editing", () => {
     });
   });
 
-  it("adds a rule from the dashed target row", async () => {
-    const user = userEvent.setup();
+  it("does not render a competing Add model action", async () => {
     await renderAt("/routing");
 
-    await user.click(screen.getByRole("button", { name: "Model" }));
-    await save(user);
-
-    const rules = lastRouting().rules;
-    expect(rules).toHaveLength(3);
-    expect(rules[2]?.id).toBe("rule-3");
+    expect(screen.queryByRole("button", { name: "Model" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Matching Rule" })).toBeInTheDocument();
   });
 
   it("adds a rule from the Matching Rule button", async () => {
@@ -349,6 +350,25 @@ describe("editing", () => {
     // one, which the factories' `strictObject` would then reject on save.
     await waitFor(() => {
       expect(within(row("everyone-else")).queryByLabelText("Base URL")).toBeNull();
+    });
+  });
+
+  it("offers DeepSeek as a first-class target with its own API key form", async () => {
+    const user = userEvent.setup();
+    await renderAt("/routing");
+
+    await user.click(
+      within(row("everyone-else")).getByRole("button", { name: /^Provider: OpenAI compatible/ }),
+    );
+    await user.click(await screen.findByRole("menuitem", { name: "DeepSeek" }));
+
+    await waitFor(() => {
+      expect(row("everyone-else")).toHaveTextContent("DeepSeek");
+      expect(within(row("everyone-else")).getByLabelText("API Key")).toBeInTheDocument();
+      expect(within(row("everyone-else")).getByLabelText("Model (optional)")).toHaveAttribute(
+        "placeholder",
+        "deepseek-v4-flash",
+      );
     });
   });
 
@@ -413,6 +433,51 @@ describe("probing a rule's upstream", () => {
 });
 
 describe("simulating a request", () => {
+  it("opens from the header immediately before Save Changes", async () => {
+    const user = userEvent.setup();
+    await renderAt("/routing");
+
+    const trigger = screen.getByRole("button", { name: "Simulate a request" });
+    const saveButton = screen.getByRole("button", { name: "Save Changes" });
+    expect(trigger.compareDocumentPosition(saveButton) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(
+      0,
+    );
+    expect(screen.queryByRole("dialog", { name: "Simulate a request" })).toBeNull();
+
+    await user.click(trigger);
+
+    expect(await screen.findByRole("dialog", { name: "Simulate a request" })).toBeInTheDocument();
+  });
+
+  it("submits the requested CEL context inputs", async () => {
+    const user = userEvent.setup();
+    await renderAt("/routing");
+
+    await user.click(screen.getByRole("button", { name: "Simulate a request" }));
+    const dialog = await screen.findByRole("dialog", { name: "Simulate a request" });
+    await user.type(within(dialog).getByLabelText("Input token count"), "12000");
+    await user.type(
+      within(dialog).getByLabelText("User providers"),
+      "firebase-auth, firebase-app-check",
+    );
+    await user.type(within(dialog).getByLabelText("Client name"), "ios-production");
+    await user.type(within(dialog).getByLabelText("IP address"), "203.0.113.10");
+    await user.click(within(dialog).getByRole("button", { name: "Simulate" }));
+
+    await waitFor(() => {
+      expect(fake.callsTo("POST", "/routing/simulate")).toHaveLength(1);
+    });
+    expect(fake.callsTo("POST", "/routing/simulate")[0]?.body).toMatchObject({
+      model: "smart",
+      inputTokenCount: 12000,
+      providers: ["firebase-auth", "firebase-app-check"],
+      clientName: "ios-production",
+      ip: "203.0.113.10",
+      method: "POST",
+      path: "/v1/chat/completions",
+    });
+  });
+
   it("shows which rule would serve it", async () => {
     fake.state.simulate = {
       matched: true,
@@ -425,7 +490,7 @@ describe("simulating a request", () => {
     const user = userEvent.setup();
     await renderAt("/routing");
 
-    await user.click(screen.getByRole("button", { name: "Simulate" }));
+    await simulate(user);
 
     expect(await screen.findByText(/Served by/)).toHaveTextContent("pro-users");
   });
@@ -452,7 +517,7 @@ describe("simulating a request", () => {
     const user = userEvent.setup();
     await renderAt("/routing");
 
-    await user.click(screen.getByRole("button", { name: "Simulate" }));
+    await simulate(user);
 
     expect(await screen.findByText("no such key: tier")).toBeInTheDocument();
     expect(screen.getByText(/throws for this request/)).toBeInTheDocument();
@@ -468,7 +533,7 @@ describe("simulating a request", () => {
     const user = userEvent.setup();
     await renderAt("/routing");
 
-    await user.click(screen.getByRole("button", { name: "Simulate" }));
+    await simulate(user);
 
     expect(await screen.findByText(/would be a 404/)).toBeInTheDocument();
     expect(screen.queryByRole("alert")).toBeNull();
@@ -563,13 +628,13 @@ describe("the provider menu", () => {
       within(row("pro-users")).getByRole("button", { name: /^Provider: Anthropic/ }),
     );
 
-    // Not alphabetical: the file lists OpenAI, Anthropic, OpenAI compatible,
-    // Gemini, and an operator scanning for their vendor expects that order.
-    // The fake registry has two of the four, and they come back in the file's
+    // Not alphabetical: the file lists OpenAI, DeepSeek, Anthropic,
+    // OpenAI compatible, Gemini, and an operator scanning for their vendor
+    // expects that order. The fake registry has three of the five, in the file's
     // order rather than alphabetically — which is what an operator scanning for
     // their vendor expects.
     const items = (await screen.findAllByRole("menuitem")).map((item) => item.textContent);
-    expect(items).toEqual(["Anthropic", "OpenAI compatible"]);
+    expect(items).toEqual(["DeepSeek", "Anthropic", "OpenAI compatible"]);
   });
 
   it("names the current provider in the trigger, so it reads without opening", async () => {
@@ -589,9 +654,11 @@ describe("the variable reference", () => {
     await renderAt("/routing");
 
     const summary = within(row("pro-users")).getByText(/A CEL expression over/);
-    for (const namespace of ["request", "user", "device", "client", "http"]) {
+    for (const namespace of ["request", "user", "client", "http"]) {
       expect(summary).toHaveTextContent(namespace);
     }
+    expect(summary).not.toHaveTextContent("device");
+    expect(summary).not.toHaveTextContent("now");
     expect(summary).toHaveTextContent("Only a literal true counts as a match");
   });
 
@@ -602,11 +669,12 @@ describe("the variable reference", () => {
     await user.click(within(row("pro-users")).getByRole("button", { name: "Show variables" }));
 
     const reference = within(row("pro-users"));
-    expect(reference.getByText("request.messageCount")).toBeInTheDocument();
-    expect(reference.getByText("client.authenticated")).toBeInTheDocument();
+    expect(reference.getByText("request.inputTokenCount")).toBeInTheDocument();
+    expect(reference.getByText("user.providers")).toBeInTheDocument();
+    expect(reference.getByText("client.id")).toBeInTheDocument();
     // An example, not just a name: a field list you cannot copy from is a glossary.
-    expect(reference.getByText("request.messageCount > 4")).toBeInTheDocument();
-    expect(reference.getByText("request.stream == true")).toBeInTheDocument();
+    expect(reference.getByText("request.inputTokenCount > 4")).toBeInTheDocument();
+    expect(reference.getByText('"firebase-auth" in user.providers')).toBeInTheDocument();
     // `startsWith` appears twice on purpose — as the `model` example and in the
     // function list — so it is asserted as a pair rather than as a single node.
     expect(reference.getAllByText('request.model.startsWith("claude-")')).toHaveLength(2);

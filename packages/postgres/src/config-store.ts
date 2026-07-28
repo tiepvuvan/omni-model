@@ -70,6 +70,10 @@ export class PostgresConfigStore implements ConfigStore {
   private lastSeen = 0;
   private timer: ReturnType<typeof setInterval> | undefined;
   private listener: PgClientLike | undefined;
+  /** Idempotent destroy callbacks for a live or not-yet-LISTENing checked-out client. */
+  private releaseListener: (() => void) | undefined;
+  private releasePendingListener: (() => void) | undefined;
+  private listeningTask: Promise<void> | undefined;
   private listening = false;
   private closed = false;
 
@@ -171,6 +175,7 @@ export class PostgresConfigStore implements ConfigStore {
     this.closed = true;
     this.listeners.clear();
     this.stop();
+    await this.listeningTask;
   }
 
   private start(): void {
@@ -180,7 +185,7 @@ export class PostgresConfigStore implements ConfigStore {
     }, this.pollIntervalMs);
     // Never hold the process open just to watch for config changes.
     this.timer.unref?.();
-    void this.startListening();
+    this.ensureListening();
   }
 
   private stop(): void {
@@ -188,11 +193,16 @@ export class PostgresConfigStore implements ConfigStore {
       clearInterval(this.timer);
       this.timer = undefined;
     }
-    if (this.listener !== undefined) {
-      // Destroy rather than return it: this connection is in LISTEN mode.
-      this.listener.release(true);
-      this.listener = undefined;
-    }
+    // Destroy rather than return these: one is in LISTEN mode and the other may
+    // have a LISTEN query in flight. Clearing the references before releasing
+    // makes synchronous `error`/`end` events harmless.
+    const releasePending = this.releasePendingListener;
+    this.releasePendingListener = undefined;
+    releasePending?.();
+    const release = this.releaseListener;
+    this.releaseListener = undefined;
+    this.listener = undefined;
+    release?.();
     this.listening = false;
   }
 
@@ -210,7 +220,17 @@ export class PostgresConfigStore implements ConfigStore {
     }
     // A dropped LISTEN connection is re-established here rather than in its own
     // retry loop, so there is exactly one place that owns reconnection.
-    if (!this.listening) void this.startListening();
+    if (!this.listening) this.ensureListening();
+  }
+
+  /** Own the one in-flight connection attempt so close can wait for it. */
+  private ensureListening(): void {
+    if (this.listeningTask !== undefined) return;
+    const task = this.startListening();
+    this.listeningTask = task;
+    void task.finally(() => {
+      if (this.listeningTask === task) this.listeningTask = undefined;
+    });
   }
 
   /**
@@ -220,10 +240,30 @@ export class PostgresConfigStore implements ConfigStore {
   private async startListening(): Promise<void> {
     if (this.closed || this.listening || this.pool.connect === undefined) return;
     this.listening = true;
+    let release: (() => void) | undefined;
     try {
       const client = await this.pool.connect();
+      let released = false;
+      const destroy = (): void => {
+        if (released) return;
+        released = true;
+        client.release(true);
+      };
+      release = destroy;
+      this.releasePendingListener = destroy;
+      // `close()` can run while `connect()` is in flight. A connection that
+      // arrives afterwards must be destroyed instead of entering LISTEN mode
+      // with no owner left to release it.
+      if (this.closed) {
+        this.releasePendingListener = undefined;
+        destroy();
+        this.listening = false;
+        return;
+      }
       if (typeof client.on !== "function") {
         // Not a real pg client (a test double, say): polling covers us.
+        this.releasePendingListener = undefined;
+        released = true;
         client.release();
         this.listening = false;
         return;
@@ -233,14 +273,38 @@ export class PostgresConfigStore implements ConfigStore {
         if (revision !== null) this.announce(revision);
       });
       const drop = (): void => {
-        this.listener = undefined;
+        if (this.listener === client) {
+          this.listener = undefined;
+          this.releaseListener = undefined;
+        }
+        if (this.releasePendingListener === destroy) {
+          this.releasePendingListener = undefined;
+        }
         this.listening = false;
+        // A checked-out pg client must still be released when the underlying
+        // socket errors or ends. Losing our reference without this leaves
+        // Pool.end() waiting forever for a borrower that can never return.
+        destroy();
       };
       client.on("error", drop);
       client.on("end", drop);
       await client.query(`LISTEN ${CHANNEL}`);
+      if (this.releasePendingListener === destroy) {
+        this.releasePendingListener = undefined;
+      }
+      // The LISTEN query itself can race with close for the same reason.
+      if (this.closed) {
+        destroy();
+        this.listening = false;
+        return;
+      }
       this.listener = client;
+      this.releaseListener = destroy;
     } catch (error) {
+      release?.();
+      if (this.releasePendingListener === release) {
+        this.releasePendingListener = undefined;
+      }
       this.listening = false;
       this.log?.debug("configuration LISTEN unavailable; relying on polling", {
         error: errorMessage(error),

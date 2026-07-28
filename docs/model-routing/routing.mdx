@@ -82,6 +82,20 @@ unchanged** — which is what a rule dispatching a family of real model names wa
 
 Set it when you are inventing an alias; leave it off when the client already knows the real name.
 
+DeepSeek is a first-class target, so its public API root is filled in automatically:
+
+```json
+{
+  "id": "deepseek",
+  "when": "request.model.startsWith(\"deepseek-\")",
+  "target": { "type": "deepseek", "apiKey": "${DEEPSEEK_API_KEY}" }
+}
+```
+
+The model remains a normal routing value. Current DeepSeek model names such as
+`deepseek-v4-flash` pass through unchanged, or a rule can map a client-facing alias to one with
+`target.model`.
+
 See the [configuration reference](/reference/configuration#target-fields) for each provider type's
 fields, or ask a running deployment: `GET /admin/api/meta` publishes them as JSON Schema.
 

@@ -72,7 +72,7 @@ describe.skipIf(!READY)("E2E Firebase auth (container) → OpenRouter", () => {
     timeout: 30_000,
   }, async () => {
     const idToken = await mintFirebaseIdToken(API_KEY as string);
-    const res = await chat({ authorization: `Bearer ${idToken}` });
+    const res = await chat({ "x-firebase-id-token": idToken });
     expect(res.status).toBe(200);
     const json = (await res.json()) as { choices?: { message?: { content?: string } }[] };
     expect(json.choices?.[0]?.message?.content?.toLowerCase()).toContain("pong");
@@ -81,7 +81,7 @@ describe.skipIf(!READY)("E2E Firebase auth (container) → OpenRouter", () => {
   it("rejects a tampered Firebase ID token (401)", { timeout: 30_000 }, async () => {
     const idToken = await mintFirebaseIdToken(API_KEY as string);
     // Corrupt the signature segment.
-    const res = await chat({ authorization: `Bearer ${idToken}tampered` });
+    const res = await chat({ "x-firebase-id-token": `${idToken}tampered` });
     expect(res.status).toBe(401);
     await res.body?.cancel();
   });

@@ -46,6 +46,11 @@ describe("write keys", () => {
       writeKeys: Array<Record<string, unknown>>;
     };
     expect(listed.writeKeys).toHaveLength(1);
+    expect(listed.writeKeys[0]?.usage).toEqual({
+      totalTokens: 0,
+      lastUsedAt: null,
+      lastModel: null,
+    });
     const serialized = JSON.stringify(listed.writeKeys);
     expect(serialized).not.toContain(created.secret);
     // Nor the hash: a leaked hash is offline-guessable against a known format.

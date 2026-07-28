@@ -154,8 +154,8 @@ async function chat(appHeader: Record<string, string>): Promise<Response> {
   return fetch(`http://127.0.0.1:${server.port}/v1/chat/completions`, {
     method: "POST",
     headers: {
-      authorization: `Bearer ${userToken}`,
       "content-type": "application/json",
+      "x-omni-user-token": userToken,
       ...appHeader,
     },
     body: CHAT_BODY,

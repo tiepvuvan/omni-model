@@ -52,25 +52,21 @@ function makeFacts(overrides?: {
   return {
     request: {
       model: overrides?.model ?? "gpt-4o",
-      stream: false,
-      messageCount: 1,
+      inputTokenCount: 12,
       maxTokens: null,
       temperature: null,
-      user: null,
     },
-    user: { id: "u1", authenticated: true, provider: "jwt", claims: overrides?.claims ?? {} },
-    device: { id: null },
+    user: { id: "u1", claims: overrides?.claims ?? {}, providers: ["jwt"] },
     client:
       overrides?.clientName === undefined
-        ? { id: null, name: null, authenticated: false }
-        : { id: "key-1", name: overrides.clientName, authenticated: true },
+        ? { id: null, name: null }
+        : { id: "key-1", name: overrides.clientName },
     http: {
       method: "POST",
       path: overrides?.path ?? "/v1/chat/completions",
       ip: "203.0.113.9",
       headers: {},
     },
-    now: 1700000000000,
   };
 }
 

@@ -16,7 +16,11 @@ import {
 } from "./auth/verifiers/index.js";
 import { anthropicProviderFactory } from "./providers/anthropic.js";
 import { googleProviderFactory } from "./providers/google.js";
-import { openAICompatibleProviderFactory, openAIProviderFactory } from "./providers/openai.js";
+import {
+  deepSeekProviderFactory,
+  openAICompatibleProviderFactory,
+  openAIProviderFactory,
+} from "./providers/openai.js";
 import type { ProviderFactory } from "./providers/types.js";
 import { memoryStorageFactory } from "./storage/memory.js";
 import type { StorageFactory } from "./storage/types.js";
@@ -63,6 +67,7 @@ export function createDefaultRegistry(): OmniRegistry {
   for (const factory of [
     openAIProviderFactory,
     openAICompatibleProviderFactory,
+    deepSeekProviderFactory,
     anthropicProviderFactory,
     googleProviderFactory,
   ]) {

@@ -33,13 +33,13 @@ export interface PromptCache {
   /** What is in there, for the dashboard. */
   stats(): Promise<PromptCacheStats>;
   /**
-   * Drop expired rows, then the oldest of whatever is left over `maxEntries`.
+   * Drop expired rows, then the oldest entries until both limits are satisfied.
    *
    * Called periodically rather than on every write: trimming on the hot path
    * would put a second statement in front of every cacheable response, and the
    * bound is a budget rather than a hard invariant.
    */
-  evict(maxEntries: number): Promise<number>;
+  evict(maxEntries: number, maxBytes: number): Promise<number>;
 }
 
 export interface PromptCacheStats {

@@ -153,7 +153,6 @@ export async function readJsonObject(
 export function factsFor(
   c: Context<AppEnv>,
   body: ChatCompletionRequest | { model?: string },
-  now: number,
   ip: string | null,
 ): RequestFacts {
   const facts = buildRequestFacts({
@@ -164,7 +163,6 @@ export function factsFor(
     body,
     identity: c.get("identity") ?? null,
     writeKey: c.get("writeKey") ?? null,
-    now,
   });
   c.set("facts", facts);
   return facts;
@@ -334,7 +332,7 @@ export function createChatHandler(deps: RouteDeps): (c: Context<AppEnv>) => Prom
     assertModelAllowedForClient(c, request.model);
 
     const runtime = deps.runtimeFor(c);
-    const facts = factsFor(c, request, runtime.now(), deps.clientIp(c, bundle.trustProxyHeaders));
+    const facts = factsFor(c, request, deps.clientIp(c, bundle.trustProxyHeaders));
 
     /*
      * The in-flight slot is taken before the upstream call and given back when the

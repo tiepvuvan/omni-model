@@ -78,6 +78,8 @@ describe("environment configuration", () => {
       }),
       OMNI_SERVER_JSON: '{"logLevel":"warn","cors":{"allowOrigins":["https://base.example"]}}',
       OMNI_SERVER_MAX_INPUT_TOKENS: "256000",
+      OMNI_SERVER_ORGANIZATION_NAME: "Northstar",
+      OMNI_SERVER_CUSTOM_DOMAIN: "ai.northstar.example",
       OMNI_ROUTING_JSON: `{"rules":[{"id":"fast","when":"true","target":{"type":"openai-compatible","baseUrl":"https://api.example.com/v1","apiKey":"${OPENAI_API_KEY_REFERENCE}"}}]}`,
       OMNI_LOG_LEVEL: "error",
       OMNI__SERVER__CORS__ALLOW_ORIGINS: '["https://override.example"]',
@@ -87,6 +89,8 @@ describe("environment configuration", () => {
     expect(config.server).toMatchObject({
       logLevel: "error",
       maxInputTokens: 256_000,
+      organizationName: "Northstar",
+      customDomain: "ai.northstar.example",
       cors: { allowOrigins: ["https://override.example"] },
     });
     // The named JSON block replaced the whole-document rules, and the path
@@ -95,6 +99,15 @@ describe("environment configuration", () => {
       { id: "fast", target: { type: "openai-compatible", apiKey: "sk-test" } },
     ]);
     expect(config.routing.allowedModels).toEqual(["only-this"]);
+  });
+
+  it("rejects a custom domain containing a scheme or path", () => {
+    expect(() =>
+      parseEnvironmentConfig({
+        ...STARTER_ENV,
+        OMNI_SERVER_CUSTOM_DOMAIN: "https://ai.example.com/admin",
+      }),
+    ).toThrow(ConfigError);
   });
 
   it("builds storage, a default provider, Firebase Auth, and App Check from ergonomic variables", () => {
@@ -238,6 +251,7 @@ describe("environment configuration", () => {
         OMNI_SECURITY_CLERK_ISSUER: "https://helpful-otter.clerk.accounts.dev",
         OMNI_SECURITY_CLERK_AUTHORIZED_PARTIES: '["https://app.example.com"]',
         OMNI_SECURITY_CLERK_ALLOW_PENDING_SESSIONS: "false",
+        OMNI_SECURITY_CLERK_SCHEME: "bearer",
       }),
     ).toMatchObject({
       security: {
@@ -246,6 +260,7 @@ describe("environment configuration", () => {
           issuer: "https://helpful-otter.clerk.accounts.dev",
           authorizedParties: ["https://app.example.com"],
           allowPendingSessions: false,
+          scheme: "bearer",
         },
       },
     });
@@ -258,6 +273,7 @@ describe("environment configuration", () => {
         OMNI_SECURITY_AWS_COGNITO_CLIENT_IDS: '["app-client-1","app-client-2"]',
         OMNI_SECURITY_AWS_COGNITO_TOKEN_USE: "access",
         OMNI_SECURITY_AWS_COGNITO_REQUIRED_SCOPES: '["openid","models:invoke"]',
+        OMNI_SECURITY_AWS_COGNITO_SCHEME: "bearer",
       }),
     ).toMatchObject({
       security: {
@@ -268,6 +284,7 @@ describe("environment configuration", () => {
           clientIds: ["app-client-1", "app-client-2"],
           tokenUse: "access",
           requiredScopes: ["openid", "models:invoke"],
+          scheme: "bearer",
         },
       },
     });

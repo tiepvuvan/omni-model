@@ -12,7 +12,10 @@ import Foundation
 /// let model = OmniProxyModel(
 ///   endpoint: OmniEndpoint("https://ai.example.com"),
 ///   model: "gpt-4o-mini",
-///   auth: BearerTokenAuth { try await myAuth.token() })
+///   auth: CombinedAuth([
+///     PublishableKeyAuth(staticKey: "omk_…"),
+///     UserTokenAuth { try await myAuth.token() },
+///   ]))
 /// let session = LanguageModelSession(model: model)
 /// let reply = try await session.respond(to: "Hello!")
 /// ```

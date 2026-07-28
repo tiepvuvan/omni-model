@@ -23,8 +23,10 @@ const optionsSchema = z.strictObject({
   audience: z.union([z.string().min(1), z.array(z.string().min(1)).min(1)]).optional(),
   /** Reject Clerk organization sessions whose `sts` claim is `pending`. */
   allowPendingSessions: z.boolean().default(false),
-  /** Header carrying the session token as `Bearer <token>`. */
-  header: z.string().min(1).default("authorization"),
+  /** Header carrying the session token. Authorization is reserved for publishable keys. */
+  header: z.string().min(1).default("x-clerk-session-token"),
+  /** "bearer" strips a `Bearer ` prefix; "none" uses the raw header value. */
+  scheme: z.enum(["bearer", "none"]).default("none"),
   clockToleranceSeconds: z.number().int().nonnegative().default(5),
 });
 
@@ -58,7 +60,7 @@ export const clerkVerifierFactory: AuthVerifierFactory = {
       type: TYPE,
       name: opts.name ?? TYPE,
       async verify(request, ctx): Promise<AuthResult | null> {
-        const token = extractToken(request, opts.header, "bearer");
+        const token = extractToken(request, opts.header, opts.scheme);
         if (token === null) return null;
         try {
           const { payload } = await jwtVerify(token, jwks, {

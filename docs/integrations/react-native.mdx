@@ -3,8 +3,8 @@ title: React Native
 description: Call omni-model from a React Native app over HTTP.
 ---
 
-Point the app at your deployed proxy's `POST /v1/chat/completions`. Authenticate with a bearer
-token your app already has — a Firebase Auth, Clerk, Cognito, or Supabase token, or any JWT your
+Point the app at your deployed proxy's `POST /v1/chat/completions`. Send an omni-model publishable
+key plus the Firebase Auth, Clerk, Cognito, Supabase, or custom JWT your
 [security config](/security/custom-jwt) accepts.
 
 ### Non-streaming
@@ -12,12 +12,13 @@ token your app already has — a Firebase Auth, Clerk, Cognito, or Supabase toke
 ```js
 const PROXY_URL = "https://your-proxy.example.com";
 
-async function chat(messages, token) {
+async function chat(messages, publishableKey, token) {
   const res = await fetch(`${PROXY_URL}/v1/chat/completions`, {
     method: "POST",
     headers: {
       "content-type": "application/json",
-      authorization: `Bearer ${token}`,
+      authorization: `Bearer ${publishableKey}`,
+      "x-firebase-id-token": token,
     },
     body: JSON.stringify({ model: "gpt-4o-mini", messages }),
   });
@@ -31,9 +32,8 @@ async function chat(messages, token) {
 ```
 
 <Note>
-  The header depends on your verifier: `jwt` / `firebase-auth` / `clerk` / `aws-cognito` /
-  `supabase` use
-  `Authorization: Bearer <token>` (scheme configurable). App Check verifiers instead expect
+  `Authorization: Bearer <key>` carries the publishable key. The example uses Firebase Auth's
+  `X-Firebase-ID-Token`; other user verifiers have their own `X-*` defaults. App Check expects
   `X-Firebase-AppCheck`, and DeviceCheck expects `X-Apple-Device-Token`. See
   [Custom JWT](/security/custom-jwt) and [Firebase App Check](/security/firebase-app-check).
 </Note>
@@ -47,12 +47,13 @@ example [`react-native-sse`](https://github.com/binaryminds/react-native-sse):
 ```js
 import EventSource from "react-native-sse";
 
-function streamChat(messages, token, onDelta) {
+function streamChat(messages, publishableKey, token, onDelta) {
   const es = new EventSource(`${PROXY_URL}/v1/chat/completions`, {
     method: "POST",
     headers: {
       "content-type": "application/json",
-      authorization: `Bearer ${token}`,
+      authorization: `Bearer ${publishableKey}`,
+      "x-firebase-id-token": token,
     },
     body: JSON.stringify({ model: "gpt-4o-mini", messages, stream: true }),
   });

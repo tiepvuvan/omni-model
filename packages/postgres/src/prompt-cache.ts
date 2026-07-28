@@ -124,14 +124,14 @@ export class PostgresPromptCache implements PromptCache {
   }
 
   /**
-   * Drop expired rows, then the oldest of whatever exceeds `maxEntries`.
+   * Drop expired rows, then the oldest entries until count and byte budgets fit.
    *
    * Guarded by `pg_try_advisory_lock`, non-blocking, exactly like the log sweep: a
    * replica that loses the race returns immediately instead of queueing behind
    * someone else's delete, so every replica can run this on a timer and only one
    * does the work.
    */
-  async evict(maxEntries: number): Promise<number> {
+  async evict(maxEntries: number, maxBytes: number): Promise<number> {
     if (this.pool.connect === undefined) return 0;
     let client: Awaited<ReturnType<NonNullable<PgPoolLike["connect"]>>>;
     try {
@@ -149,14 +149,24 @@ export class PostgresPromptCache implements PromptCache {
         const expired = await this.db
           .delete(promptCache)
           .where(lt(promptCache.expiresAt, sql`now()`));
-        // `DESC` then `OFFSET`: keep the newest `maxEntries` and delete what is
-        // older. Ascending would have kept the oldest and thrown away everything
-        // recent — the opposite of a cache.
+        // Rank newest-first and keep a running byte total in the same order. Any
+        // row past either budget is an older tail entry and is removed. A single
+        // entry larger than the byte budget is removed too rather than making the
+        // configured limit permanently unattainable.
         const overflow = await this.db.delete(promptCache).where(
           sql`${promptCache.key} IN (
-            SELECT key FROM ${promptCache}
-            ORDER BY created_at DESC
-            OFFSET ${maxEntries}
+            SELECT key
+            FROM (
+              SELECT
+                key,
+                row_number() OVER (ORDER BY created_at DESC, key DESC) AS entry_rank,
+                sum(bytes) OVER (
+                  ORDER BY created_at DESC, key DESC
+                  ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+                ) AS running_bytes
+              FROM ${promptCache}
+            ) ranked
+            WHERE entry_rank > ${maxEntries} OR running_bytes > ${maxBytes}
           )`,
         );
         const removed =

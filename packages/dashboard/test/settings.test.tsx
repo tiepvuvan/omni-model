@@ -9,8 +9,19 @@ let fake: FakeApi;
 beforeEach(() => {
   fake = createFakeApi({
     config: {
-      server: { maxInputTokens: 64_000, logLevel: "warn" },
-      cache: { enabled: true, ttl: "1h", maxEntries: 10_000 },
+      server: {
+        maxInputTokens: 64_000,
+        logLevel: "warn",
+        organizationName: "Acme AI",
+        customDomain: "ai.example.com",
+      },
+      concurrency: { perUser: 7 },
+      cache: {
+        enabled: true,
+        ttl: "1h",
+        maxEntries: 10_000,
+        maxBytes: 256 * 1024 * 1024,
+      },
     },
     cache: { available: true, entries: 42, oldestAt: 1_700_000_000_000, bytes: 2048 },
   });
@@ -37,6 +48,16 @@ function lastServer(): Record<string, unknown> {
   return body.value.server;
 }
 
+/** The `concurrency` block the last save sent. */
+function lastConcurrency(): Record<string, unknown> {
+  const calls = fake.callsTo("PATCH", "/config");
+  const body = calls[calls.length - 1]?.body as
+    | { value: { concurrency: Record<string, unknown> } }
+    | undefined;
+  if (body === undefined) throw new Error("nothing was saved");
+  return body.value.concurrency;
+}
+
 const save = async (user: ReturnType<typeof userEvent.setup>) => {
   await user.click(screen.getByRole("button", { name: "Save Changes" }));
   await waitFor(() => {
@@ -57,11 +78,19 @@ describe("settings", () => {
     expect(
       within(card("Request limits")).getByLabelText("Maximum input tokens per request"),
     ).toHaveValue("64,000");
+    expect(
+      within(card("Concurrent requests")).getByLabelText("Requests in flight per user"),
+    ).toHaveValue("7");
+    expect(within(card("Organization")).getByLabelText("Organization name")).toHaveValue("Acme AI");
+    expect(within(card("Custom domain")).getByLabelText("Domain")).toHaveValue("ai.example.com");
     expect(within(card("Response cache")).getByRole("switch")).toBeChecked();
     expect(within(card("Response cache")).getByLabelText("Keep an answer for")).toHaveTextContent(
       "1 hour",
     );
     expect(within(card("Response cache")).getByLabelText("Entries to keep")).toHaveValue("10,000");
+    expect(within(card("Response cache")).getByLabelText("Maximum cache size (MiB)")).toHaveValue(
+      "256",
+    );
     // Both halves, so an operator does not have to cross-reference the config with
     // the contents to know whether caching is doing anything.
     expect(card("What is cached now")).toHaveTextContent("42 entries");
@@ -78,8 +107,19 @@ describe("settings", () => {
     // One PATCH, not one PUT per field: a half-applied change would leave the TTL
     // and the size disagreeing about what the operator asked for.
     expect(fake.callsTo("PATCH", "/config")).toHaveLength(1);
-    expect(lastCache()).toEqual({ enabled: true, ttl: "1d", maxEntries: 10_000 });
-    expect(lastServer()).toEqual({ maxInputTokens: 64_000, logLevel: "warn" });
+    expect(lastCache()).toEqual({
+      enabled: true,
+      ttl: "1d",
+      maxEntries: 10_000,
+      maxBytes: 256 * 1024 * 1024,
+    });
+    expect(lastServer()).toEqual({
+      maxInputTokens: 64_000,
+      logLevel: "warn",
+      organizationName: "Acme AI",
+      customDomain: "ai.example.com",
+    });
+    expect(lastConcurrency()).toEqual({ perUser: 7 });
   });
 
   it("updates the token limit without dropping other server settings", async () => {
@@ -91,8 +131,41 @@ describe("settings", () => {
     await user.type(limit, "256000");
     await save(user);
 
-    expect(lastServer()).toEqual({ maxInputTokens: 256_000, logLevel: "warn" });
+    expect(lastServer()).toMatchObject({ maxInputTokens: 256_000, logLevel: "warn" });
     expect(fake.callsTo("PATCH", "/config")).toHaveLength(1);
+  });
+
+  it("moves the per-user concurrency bound here and accepts zero", async () => {
+    const user = userEvent.setup();
+    await renderAt("/settings");
+
+    const field = within(card("Concurrent requests")).getByLabelText("Requests in flight per user");
+    await user.clear(field);
+    await user.type(field, "0");
+    expect(screen.queryByText("Enter a number greater than zero.")).toBeNull();
+    await save(user);
+
+    expect(lastConcurrency()).toEqual({ perUser: 0 });
+  });
+
+  it("saves organization and domain and refreshes the header", async () => {
+    const user = userEvent.setup();
+    await renderAt("/settings");
+
+    const organization = within(card("Organization")).getByLabelText("Organization name");
+    await user.clear(organization);
+    await user.type(organization, "Northstar");
+    const domain = within(card("Custom domain")).getByLabelText("Domain");
+    await user.clear(domain);
+    await user.type(domain, "proxy.northstar.example");
+    await save(user);
+
+    expect(lastServer()).toMatchObject({
+      organizationName: "Northstar",
+      customDomain: "proxy.northstar.example",
+      logLevel: "warn",
+    });
+    expect(await screen.findByText("Northstar")).toBeInTheDocument();
   });
 
   it("turns caching off without touching what is stored", async () => {
@@ -107,6 +180,18 @@ describe("settings", () => {
     expect(fake.state.cache.entries).toBe(42);
   });
 
+  it("saves the cache byte budget in MiB", async () => {
+    const user = userEvent.setup();
+    await renderAt("/settings");
+
+    const field = within(card("Response cache")).getByLabelText("Maximum cache size (MiB)");
+    await user.clear(field);
+    await user.type(field, "128");
+    await save(user);
+
+    expect(lastCache()).toMatchObject({ maxBytes: 128 * 1024 * 1024 });
+  });
+
   it("purges on request and says how many went", async () => {
     const user = userEvent.setup();
     await renderAt("/settings");
@@ -119,7 +204,9 @@ describe("settings", () => {
 
   it("offers nothing to purge when nothing is cached", async () => {
     fake = createFakeApi({
-      config: { cache: { enabled: true, ttl: "1h", maxEntries: 10 } },
+      config: {
+        cache: { enabled: true, ttl: "1h", maxEntries: 10, maxBytes: 1024 * 1024 },
+      },
       cache: { available: true, entries: 0, oldestAt: null, bytes: 0 },
     });
     fake.install();
@@ -131,7 +218,9 @@ describe("settings", () => {
 
   it("says so when the deployment has nowhere to cache", async () => {
     fake = createFakeApi({
-      config: { cache: { enabled: true, ttl: "1h", maxEntries: 10 } },
+      config: {
+        cache: { enabled: true, ttl: "1h", maxEntries: 10, maxBytes: 1024 * 1024 },
+      },
       cache: { available: false, entries: 0, oldestAt: null, bytes: null },
     });
     fake.install();
@@ -157,9 +246,17 @@ describe("settings", () => {
       "5 minutes",
     );
     expect(within(card("Response cache")).getByLabelText("Entries to keep")).toHaveValue("10,000");
+    expect(within(card("Response cache")).getByLabelText("Maximum cache size (MiB)")).toHaveValue(
+      "512",
+    );
     expect(
       within(card("Request limits")).getByLabelText("Maximum input tokens per request"),
     ).toHaveValue("128,000");
+    expect(
+      within(card("Concurrent requests")).getByLabelText("Requests in flight per user"),
+    ).toHaveValue("3");
+    expect(within(card("Organization")).getByLabelText("Organization name")).toHaveValue("");
+    expect(within(card("Custom domain")).getByLabelText("Domain")).toHaveValue("");
     expect(screen.getByRole("button", { name: "Save Changes" })).toBeDisabled();
   });
 });

@@ -43,7 +43,12 @@ describe.skipIf(!url)("PostgresConfigStore (integration)", () => {
     await store?.close();
     await admin.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);
     await admin.end();
-    await Promise.all(pools.map((pool) => pool.end().catch(() => {})));
+    // End these one at a time. Each pool may still be settling a destroyed
+    // LISTEN client; ending all of them concurrently can leave pg waiting for a
+    // lifecycle callback and make the suite hang after every assertion passed.
+    for (const pool of pools) {
+      await pool.end().catch(() => {});
+    }
   });
 
   test("starts empty, then round-trips a revision", async () => {

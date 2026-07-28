@@ -22,8 +22,10 @@ const optionsSchema = z
     issuer: z.string().min(1).optional(),
     /** Expected audience; defaults to "authenticated". */
     audience: z.union([z.string().min(1), z.array(z.string().min(1)).min(1)]).optional(),
-    /** Header carrying the access token as `Bearer <token>`. */
-    header: z.string().min(1).default("authorization"),
+    /** Header carrying the token. Authorization is reserved for publishable keys. */
+    header: z.string().min(1).default("x-supabase-access-token"),
+    /** "bearer" strips a `Bearer ` prefix; "none" uses the raw header value. */
+    scheme: z.enum(["bearer", "none"]).default("none"),
     clockToleranceSeconds: z.number().int().nonnegative().default(60),
   })
   .superRefine((options, issues) => {
@@ -86,7 +88,7 @@ export const supabaseVerifierFactory: AuthVerifierFactory = {
       type: TYPE,
       name: opts.name ?? TYPE,
       async verify(request, ctx): Promise<AuthResult | null> {
-        const token = extractToken(request, opts.header, "bearer");
+        const token = extractToken(request, opts.header, opts.scheme);
         if (token === null) return null;
         try {
           const { payload } = await verifyToken(token, new Date(ctx.now()));

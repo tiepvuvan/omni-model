@@ -139,9 +139,11 @@ docs/                      Mintlify docs site (docs.json + MDX): installation,
     the server renders `{ "error": { message, type, param, code } }`.
 12. **Fail-open rate limiting.** A storage outage must not take the proxy down; violations of
     this policy are bugs.
-13. **`x-omni-key` is the write key header, never `Authorization`.** The jwt/firebase-auth/supabase
-    verifiers own `Authorization` for the end user's token, and a client sends both at once. Write
-    keys answer "which app"; verifiers answer "which user" — keep the two axes separate.
+13. **`Authorization: Bearer` is the publishable-key transport.** This keeps the proxy compatible
+    with OpenAI SDKs, whose `apiKey` already uses that header. End-user verifiers use dedicated
+    `X-*` headers (`X-Firebase-ID-Token`, `X-Clerk-Session-Token`, `X-Cognito-ID-Token`,
+    `X-Supabase-Access-Token`, or `X-Omni-User-Token`). Publishable keys answer "which app";
+    verifiers answer "which user" — keep the two axes separate.
 14. **Request logging is observability, not bookkeeping.** `RequestLogSink.record` must never throw
     or block, the queue is bounded and drops oldest, and a database outage degrades logging while
     requests keep flowing. Content capture is opt-in and byte-capped — an unbounded buffer fed by

@@ -1,10 +1,9 @@
 import { createFileRoute, useRouter } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import connectorImage from "../../assets/connector.svg";
 import deleteIcon from "../../assets/delete.svg";
 import plusIcon from "../../assets/plus.svg";
 import { ActionBar, WidePane } from "../../components/chrome";
-import { AmountField, BudgetCard } from "../../components/ratelimit/budget-card";
+import { BudgetCard } from "../../components/ratelimit/budget-card";
 import { CelEditor } from "../../components/routing/cel-editor";
 import { CelReference } from "../../components/routing/cel-reference";
 import { Button, Callout, Card, IconButton } from "../../components/ui/primitives";
@@ -40,32 +39,17 @@ const idOf = (rule: RateLimitRule, index: number): string =>
 /** A rule with no condition applies to every request — the design's Default row. */
 const isDefault = (rule: RateLimitRule): boolean => rule.when === undefined;
 
-/**
- * The schema's in-flight default, mirrored for the same reason as the budgets.
- *
- * `concurrency-defaults.test.ts` — the same parity test as the budgets — fails if
- * core changes it.
- */
-export const DEFAULT_PER_USER = 3;
-
-function concurrencyOf(config: ConfigResponse): number {
-  const stored = config.config?.concurrency?.perUser;
-  return typeof stored === "number" ? stored : DEFAULT_PER_USER;
-}
-
 function RateLimitScreen() {
   const { config } = Route.useLoaderData();
   const router = useRouter();
   const stored = rulesOf(config);
 
   const [draft, setDraft] = useState<RateLimitRule[]>(stored);
-  const storedPerUser = concurrencyOf(config);
-  const [perUser, setPerUser] = useState(storedPerUser);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [compileError, setCompileError] = useState<string | null>(null);
 
-  const dirty = JSON.stringify(draft) !== JSON.stringify(stored) || perUser !== storedPerUser;
+  const dirty = JSON.stringify(draft) !== JSON.stringify(stored);
 
   /*
    * The server is the only thing that compiles CEL, so it is the only authority on
@@ -135,10 +119,7 @@ function RateLimitScreen() {
     setBusy(true);
     setError(null);
     try {
-      // One request, so one revision: budgets and the in-flight bound live in
-      // different blocks, and two PUTs would leave the first applied if the second
-      // failed.
-      await api.patchConfig({ rateLimits: draft, concurrency: { perUser } }, "update rate limits");
+      await api.putRateLimits(draft, "update rate limits");
       await router.invalidate();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "The change could not be saved.");
@@ -149,15 +130,7 @@ function RateLimitScreen() {
 
   return (
     <>
-      <ActionBar
-        dirty={dirty}
-        busy={busy}
-        onDiscard={() => {
-          setDraft(stored);
-          setPerUser(storedPerUser);
-        }}
-        onSave={save}
-      />
+      <ActionBar dirty={dirty} busy={busy} onDiscard={() => setDraft(stored)} onSave={save} />
 
       <WidePane>
         {error !== null ? (
@@ -209,7 +182,7 @@ function RateLimitScreen() {
                 </Card>
               )}
 
-              <img src={connectorImage} alt="" aria-hidden className="h-[50px] w-[72px] shrink-0" />
+              <span aria-hidden className="mt-[24px] h-[2px] w-[72px] shrink-0 bg-border" />
 
               <BudgetCard
                 rule={rule}
@@ -225,32 +198,6 @@ function RateLimitScreen() {
         <Button icon={plusIcon} onClick={addRule} className="self-start">
           Rate Limit Rule
         </Button>
-
-        {/*
-         * The in-flight bound.
-         *
-         * Here rather than on its own screen because it is the other half of the
-         * same subject: a token budget is post-paid, so it is checked against what
-         * was spent *before* a request. Fire twenty at once and all twenty are
-         * admitted against the same counter. This is what stops that, which is why
-         * it sits under the budgets it protects.
-         */}
-        <Card className="w-full max-w-[720px]" title="Concurrent requests">
-          <AmountField
-            id="concurrency-per-user"
-            label="Requests in flight per user"
-            help="A user with this many requests still running gets a 429 on the next one. Zero removes the bound."
-            value={perUser}
-            onChange={setPerUser}
-            allowZero
-          />
-          <p className="type-label-12 text-foreground-secondary">
-            Token budgets are charged after a response exists, so they cannot see a burst that has
-            not finished yet — twenty simultaneous requests are all admitted against the same
-            counter. This is the bound that closes that, and it is why it defaults to{" "}
-            {DEFAULT_PER_USER} rather than off.
-          </p>
-        </Card>
 
         {/*
          * How the rules combine. It is the one thing about this screen that is not

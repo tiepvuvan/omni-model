@@ -30,8 +30,9 @@ export interface OmniRuntimeInit {
    */
   secrets?: SecretStore;
   /**
-   * Resolves the `x-omni-key` header to a calling application. Without it write
-   * keys cannot be checked, so `security.requireWriteKey` has nothing to enforce.
+   * Resolves an OpenAI-compatible `Authorization: Bearer <publishable-key>` to a
+   * calling application. Without it keys cannot be checked, so
+   * `security.requireWriteKey` has nothing to enforce.
    */
   writeKeys?: WriteKeyStore;
   /** Where request logs go. Defaults to discarding them. */

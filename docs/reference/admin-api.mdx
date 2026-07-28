@@ -1,6 +1,6 @@
 ---
 title: Admin API
-description: Configure providers, auth modes, rate limits, routing, write keys and secrets at runtime over HTTP.
+description: Configure providers, auth modes, rate limits, routing, publishable keys and secrets at runtime over HTTP.
 ---
 
 The admin API is how a running proxy is configured. Everything the
@@ -77,10 +77,33 @@ curl -c cookies.txt https://your-proxy/admin/api/auth/sign-in/email \
 curl -b cookies.txt https://your-proxy/admin/api/me
 ```
 
-Authentication is [Better Auth](https://better-auth.com) with email, password and sessions. Every
-route below `/admin/api` requires a session **and** the operator role: no session is `401`, a
-signed-in non-operator is `403`. The two are deliberately distinct, so a member without the role can
-tell that their login is fine.
+Authentication is [Better Auth](https://better-auth.com) with email, password and sessions. Apart
+from setup, sign-in, and one-time invitation acceptance, every route below `/admin/api` requires a
+session **and** the operator role: no session is `401`, a signed-in non-operator is `403`. The two are
+deliberately distinct, so a member without the role can tell that their login is fine.
+
+## Team members
+
+An operator can create a seven-day invitation for one email address. The API returns the bearer link
+once; only its SHA-256 hash is stored. The recipient chooses a password through that link and becomes
+an operator. The link is email-bound, one-time, and revocable.
+
+| Endpoint | Purpose |
+| --- | --- |
+| `GET /admin/api/users` | List dashboard users and currently pending invitations. |
+| `POST /admin/api/users/invites` | Create an invitation: `{ "email": "teammate@example.com" }`. |
+| `DELETE /admin/api/users/invites/:id` | Revoke a pending invitation. |
+| `GET /admin/api/invites/:token` | Public invitation metadata for the link holder. |
+| `POST /admin/api/invites/:token/accept` | Public acceptance: `{ "name": "Team Mate", "password": "a long passphrase" }`. |
+
+```sh
+curl -b cookies.txt -X POST https://your-proxy/admin/api/users/invites \
+  -H 'content-type: application/json' \
+  -d '{"email":"teammate@example.com"}'
+```
+
+Send the returned `/admin/accept-invite?token=…` link to that address. An expired, revoked, accepted,
+or unknown token gets the same unavailable response, so the endpoint does not reveal its history.
 
 ## Configuration
 
@@ -134,7 +157,7 @@ configuration keeps serving:
 ```json
 {
   "error": {
-    "message": "routing.rules[0].target: unknown provider type \"nope\" (registered provider types: anthropic, google, openai, openai-compatible)",
+    "message": "routing.rules[0].target: unknown provider type \"nope\" (registered provider types: anthropic, deepseek, google, openai, openai-compatible)",
     "type": "invalid_request_error",
     "param": "config",
     "code": "invalid_config"
@@ -162,13 +185,13 @@ deploy a configuration change. See [the container guide](/installation/docker#co
   provider with different keys.
 </Note>
 
-## Write keys
+## Publishable keys
 
-See [write keys](/reference/write-keys) for what they are and how clients send them.
+See [publishable keys](/reference/write-keys) for what they are and how clients send them.
 
 | Endpoint | Purpose |
 | --- | --- |
-| `GET /admin/api/write-keys` | Descriptions only; no endpoint returns a key. |
+| `GET /admin/api/write-keys` | Descriptions plus aggregate usage; never returns plaintext. |
 | `POST /admin/api/write-keys` | Mint one. The plaintext is in the response **once**. |
 | `DELETE /admin/api/write-keys/:id` | Revoke. The row is kept so logs stay attributable. |
 | `GET /admin/api/write-keys/:id/usage?hours=24` | Requests, failures and tokens for one client. |
@@ -302,7 +325,7 @@ production. Here it does:
   <Card title="Every setting" icon="sliders" href="/reference/configuration">
     The document these endpoints read and write.
   </Card>
-  <Card title="Write keys" icon="fingerprint" href="/reference/write-keys">
+  <Card title="Publishable keys" icon="fingerprint" href="/reference/write-keys">
     Identify and revoke the applications calling your proxy.
   </Card>
   <Card title="Logging" icon="list" href="/reference/logging">

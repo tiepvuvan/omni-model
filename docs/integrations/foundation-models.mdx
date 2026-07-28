@@ -25,7 +25,10 @@ import OmniModelFoundation
 let model = OmniProxyModel(
   endpoint: OmniEndpoint("https://ai.example.com"),
   model: "gpt-4o-mini",                     // a model id, or a routing alias like "smart"
-  auth: BearerTokenAuth { try await myAuth.freshToken() }
+  auth: CombinedAuth([
+    PublishableKeyAuth(staticKey: publishableKey),
+    UserTokenAuth { try await myAuth.freshToken() },
+  ])
 )
 
 let session = LanguageModelSession(model: model) { "You are a helpful assistant." }
@@ -48,7 +51,8 @@ Pick the provider that matches your proxy's [`security.userAuth`](/security/cust
 
 | Provider | Header | Verifier |
 | --- | --- | --- |
-| `BearerTokenAuth { … }` | `Authorization: Bearer` | [`jwt` / `firebase-auth`](/security/custom-jwt) |
+| `PublishableKeyAuth(staticKey:)` | `Authorization: Bearer` | Publishable key |
+| `UserTokenAuth { … }` | `X-Omni-User-Token` | [`jwt`](/security/custom-jwt) |
 | `CustomHeaderAuth(header: "X-Firebase-AppCheck") { … }` | `X-Firebase-AppCheck` | [`firebase-app-check`](/security/firebase-app-check) |
 | `AppAttestAuth(endpoint:)` | `x-appattest-*` | [`apple-app-attest`](/security/app-attest) |
 | `DeviceCheckAuth()` | `X-Apple-Device-Token` | [`apple-device-check`](/security/app-attest) |

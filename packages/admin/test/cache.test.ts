@@ -13,12 +13,16 @@ interface CacheState {
   enabled: boolean;
   ttl: string | null;
   maxEntries: number | null;
+  maxBytes: number | null;
   entries: number;
   oldestAt: number | null;
   bytes: number | null;
 }
 
-const cacheConfig = () => baseConfig({ cache: { enabled: true, ttl: "30m", maxEntries: 500 } });
+const cacheConfig = () =>
+  baseConfig({
+    cache: { enabled: true, ttl: "30m", maxEntries: 500, maxBytes: 64 * 1024 * 1024 },
+  });
 
 describe("the response cache", () => {
   it("reports the applied settings alongside what is actually stored", async () => {
@@ -33,7 +37,13 @@ describe("the response cache", () => {
 
     // Both halves in one answer: an operator should not have to cross-reference
     // the configuration with the contents to know whether caching is working.
-    expect(body).toMatchObject({ available: true, enabled: true, ttl: "30m", maxEntries: 500 });
+    expect(body).toMatchObject({
+      available: true,
+      enabled: true,
+      ttl: "30m",
+      maxEntries: 500,
+      maxBytes: 64 * 1024 * 1024,
+    });
     expect(body.entries).toBe(1);
     expect(body.bytes).toBeGreaterThan(0);
   });

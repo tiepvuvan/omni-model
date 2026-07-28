@@ -1,14 +1,16 @@
 import { Menu } from "@base-ui-components/react/menu";
 import arrowDownIcon from "../../assets/arrow-down.svg";
 import vendorAnthropic from "../../assets/vendor-anthropic.svg";
+import vendorDeepSeek from "../../assets/vendor-deepseek.svg";
 import vendorGoogle from "../../assets/vendor-google.svg";
 import vendorOpenAi from "../../assets/vendor-openai.svg";
 import vendorOpenAiCompatible from "../../assets/vendor-openai-compatible.svg";
-import { cx } from "../ui/primitives";
+import { cx, ThemedIcon } from "../ui/primitives";
 
 /** The glyph for each provider type. One SVG, drawn at 24px or 16px. */
 export const VENDOR_ICONS: Record<string, string> = {
   openai: vendorOpenAi,
+  deepseek: vendorDeepSeek,
   anthropic: vendorAnthropic,
   "openai-compatible": vendorOpenAiCompatible,
   google: vendorGoogle,
@@ -22,13 +24,14 @@ export const VENDOR_ICONS: Record<string, string> = {
  */
 export const VENDOR_TITLES: Record<string, string> = {
   openai: "OpenAI",
+  deepseek: "DeepSeek",
   anthropic: "Anthropic",
   "openai-compatible": "OpenAI compatible",
   google: "Gemini",
 };
 
 /** The design's order, which is not alphabetical. */
-const ORDER = ["openai", "anthropic", "openai-compatible", "google"] as const;
+const ORDER = ["openai", "deepseek", "anthropic", "openai-compatible", "google"] as const;
 
 /** Types the registry has, in the design's order, then anything an embedder added. */
 function ordered(available: readonly string[]): string[] {
@@ -54,6 +57,9 @@ export function VendorIcon({ type, size }: { type: string; size: 16 | 24 }) {
         {(VENDOR_TITLES[type] ?? type).charAt(0).toUpperCase()}
       </span>
     );
+  }
+  if (type === "openai" || type === "deepseek" || type === "openai-compatible") {
+    return <ThemedIcon src={icon} className={cx(box, "text-foreground-primary")} />;
   }
   return <img src={icon} alt="" aria-hidden className={cx(box, "shrink-0")} />;
 }
@@ -87,7 +93,7 @@ export function ProviderPicker({
         className="flex items-center gap-[6px] rounded-[6px] type-strong-14 text-foreground-primary hover:opacity-70"
       >
         {VENDOR_TITLES[value] ?? value}
-        <img src={arrowDownIcon} alt="" aria-hidden className="size-[12px] shrink-0" />
+        <ThemedIcon src={arrowDownIcon} className="size-[12px]" />
       </Menu.Trigger>
 
       <Menu.Portal>

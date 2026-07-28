@@ -43,19 +43,25 @@ identity onto every request — streaming and non-streaming alike. Nothing forwa
     Choose the provider matching a [`security` verifier](/security/custom-jwt) in your config.
 
     <AccordionGroup>
-      <Accordion title="Custom JWT / Supabase — Authorization: Bearer">
+      <Accordion title="Publishable key + custom JWT">
         Matches the [`jwt` / `supabase`](/security/custom-jwt) verifier.
 
         ```swift
-        let auth = BearerTokenAuth { try await myAuth.freshAccessToken() }
+        let auth = CombinedAuth([
+          PublishableKeyAuth(staticKey: publishableKey),
+          UserTokenAuth { try await myAuth.freshAccessToken() },
+        ])
         ```
       </Accordion>
-      <Accordion title="Firebase Auth — Authorization: Bearer (ID token)">
+      <Accordion title="Publishable key + Firebase Auth">
         Matches the [`firebase-auth`](/security/custom-jwt) verifier. Needs the `FirebaseAuth`
         SDK and a signed-in user.
 
         ```swift
-        let auth = FirebaseIDTokenAuth()
+        let auth = CombinedAuth([
+          PublishableKeyAuth(staticKey: publishableKey),
+          FirebaseIDTokenAuth(),
+        ])
         ```
       </Accordion>
       <Accordion title="Firebase App Check — X-Firebase-AppCheck">
@@ -132,14 +138,15 @@ identity onto every request — streaming and non-streaming alike. Nothing forwa
 
 <Accordion title="No dependencies? Raw URLSession">
   You can skip MacPaw/OpenAI and hit the endpoint directly — the body and responses are exactly
-  OpenAI's. Send an `Authorization: Bearer <token>` (or the header your verifier expects).
+  OpenAI's. Send the publishable key in `Authorization` and the user token in its dedicated header.
 
   ```swift
-  func complete(_ prompt: String, token: String) async throws -> String {
+  func complete(_ prompt: String, publishableKey: String, token: String) async throws -> String {
     var request = URLRequest(url: URL(string: "https://your-proxy.example.com/v1/chat/completions")!)
     request.httpMethod = "POST"
     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-    request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+    request.setValue("Bearer \(publishableKey)", forHTTPHeaderField: "Authorization")
+    request.setValue(token, forHTTPHeaderField: "X-Firebase-ID-Token")
     request.httpBody = try JSONSerialization.data(withJSONObject: [
       "model": "gpt-4o-mini",
       "messages": [["role": "user", "content": prompt]],

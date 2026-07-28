@@ -31,6 +31,7 @@ export function createCacheRoutes(deps: AdminDeps): Hono<AdminEnv> {
       enabled: config?.enabled ?? false,
       ttl: config?.ttl ?? null,
       maxEntries: config?.maxEntries ?? null,
+      maxBytes: config?.maxBytes ?? null,
       ...(deps.promptCache === null
         ? { entries: 0, oldestAt: null, bytes: null }
         : await deps.promptCache.stats()),
