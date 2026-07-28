@@ -18,10 +18,26 @@
         ]
       },
       {
+        "group": "Concepts",
+        "pages": [
+          "architecture",
+          "storage"
+        ]
+      },
+      {
         "group": "Installation",
         "pages": [
           "installation/docker",
           "installation/dashboard"
+        ]
+      },
+      {
+        "group": "Deployments",
+        "pages": [
+          "deployments/cloud-run",
+          "deployments/fly-io",
+          "deployments/vps",
+          "deployments/coolify"
         ]
       },
       {

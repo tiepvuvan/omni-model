@@ -1,0 +1,100 @@
+---
+title: Hetzner or another VPS
+description: Run omni-model, PostgreSQL, and automatic HTTPS on one small virtual server.
+---
+
+A single VPS is the simplest production deployment. The included Compose stack runs PostgreSQL,
+omni-model, and Caddy with persistent volumes and health checks. Caddy obtains and renews TLS
+certificates automatically.
+
+The same steps work on Hetzner Cloud, DigitalOcean, Linode, Vultr, or any recent Linux host with a
+public IP.
+
+## Provision the server
+
+Create a current Ubuntu or Debian server with an SSH key. Start with one shared-CPU instance and
+resize after observing PostgreSQL memory, active requests, and log growth.
+
+Allow inbound traffic only on:
+
+- TCP 22 from an administrative IP
+- TCP 80 and 443 from the internet
+- UDP 443 for HTTP/3
+
+Do not expose PostgreSQL port 5432 publicly. Hetzner users can enforce the same policy with a
+[Cloud Firewall](https://docs.hetzner.com/cloud/firewalls/).
+
+## Point DNS
+
+Create an `A` record for `ai.example.com` pointing to the server's IPv4 address. Add an `AAAA` record
+only when IPv6 is configured and reachable. Wait for the record to resolve before starting Caddy.
+
+## Install and configure
+
+Install Docker Engine with the Compose plugin, then clone this repository:
+
+```sh
+git clone https://github.com/tiepvuvan/omni-model.git
+cd omni-model
+cp examples/custom-domain.env.example examples/.env
+```
+
+Edit `examples/.env`:
+
+```dotenv
+OMNI_DOMAIN=ai.example.com
+OMNI_IMAGE=ghcr.io/tiepvuvan/omni-model:latest
+OMNI_POSTGRES_PASSWORD=replace-with-a-long-url-safe-password
+OMNI_ADMIN_SECRET=replace-with-at-least-32-characters
+OMNI_ENCRYPTION_KEY=replace-with-32-random-bytes-base64
+```
+
+Generate the last two values with `openssl rand -base64 32`. Keep the file readable only by the
+deployment user and back up the encryption key separately.
+
+Validate and start the stack:
+
+```sh
+docker compose \
+  --env-file examples/.env \
+  -f examples/docker-compose.custom-domain.yml \
+  config
+
+docker compose \
+  --env-file examples/.env \
+  -f examples/docker-compose.custom-domain.yml \
+  up -d --wait
+```
+
+Open `https://ai.example.com/admin`, create the first operator, and configure the proxy.
+
+## Operate it
+
+Check health:
+
+```sh
+curl --fail https://ai.example.com/healthz
+curl --fail https://ai.example.com/readyz
+```
+
+Upgrade without changing persistent state:
+
+```sh
+docker compose \
+  --env-file examples/.env \
+  -f examples/docker-compose.custom-domain.yml \
+  pull
+
+docker compose \
+  --env-file examples/.env \
+  -f examples/docker-compose.custom-domain.yml \
+  up -d --wait
+```
+
+Back up the `pgdata` volume through PostgreSQL, not by copying live database files. Send backups off
+the VPS and monitor disk usage; request content and prompt caching are the main data-growth controls
+available in **Settings**.
+
+See Hetzner's [server creation](https://docs.hetzner.com/cloud/servers/getting-started/creating-a-server/)
+and [SSH connection](https://docs.hetzner.com/cloud/servers/getting-started/connecting-to-the-server/)
+guides for current platform steps.

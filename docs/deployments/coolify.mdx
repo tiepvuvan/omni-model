@@ -1,0 +1,66 @@
+---
+title: Coolify
+description: Deploy omni-model from its container image using Coolify-managed domains and PostgreSQL.
+---
+
+Coolify can manage the application, PostgreSQL, domain, TLS certificate, health check, and upgrades
+from its dashboard. You do not need the Caddy service from the VPS Compose stack because Coolify's
+proxy already terminates HTTPS.
+
+## Create PostgreSQL
+
+In your Coolify project:
+
+1. Add a PostgreSQL resource.
+2. Generate a strong database password.
+3. Keep the database private to the project's Docker network.
+4. Copy its internal connection URL.
+
+## Create the application
+
+Add a **Docker Image** application with:
+
+| Setting | Value |
+| --- | --- |
+| Image | `ghcr.io/tiepvuvan/omni-model:latest` |
+| Container port | `8787` |
+| Health check path | `/healthz` |
+| Domain | `https://ai.example.com` |
+
+Add these environment variables:
+
+```dotenv
+OMNI_STORAGE_TYPE=postgres
+OMNI_STORAGE_POSTGRES_URL=postgres://omni:password@postgres:5432/omni
+OMNI_ADMIN_SECRET=replace-with-at-least-32-characters
+OMNI_ENCRYPTION_KEY=replace-with-32-random-bytes-base64
+OMNI_ADMIN_BASE_URL=https://ai.example.com
+OMNI_ADMIN_ALLOWED_ORIGINS=https://ai.example.com
+OMNI_SERVER_CUSTOM_DOMAIN=ai.example.com
+```
+
+Mark the database URL and both application secrets as sensitive. Generate the secrets once with
+`openssl rand -base64 32`; do not regenerate the encryption key during a redeploy.
+
+## Deploy
+
+Point the domain's DNS record at the Coolify server and deploy the application. Coolify configures
+its reverse proxy and requests the TLS certificate.
+
+Open `https://ai.example.com/admin`, create the first operator, and configure authentication,
+routing, publishable keys, and token limits. Change the health check to `/readyz` only after the
+proxy has a usable configuration; `/healthz` is the safer liveness check during first-run setup.
+
+## Compose alternative
+
+If you prefer to keep application and database definitions together, create a **Docker Compose**
+resource from the repository and adapt `examples/docker-compose.custom-domain.yml`:
+
+- Remove the `caddy` service and its volumes.
+- Assign the Coolify domain to the `omni` service on port 8787.
+- Keep the PostgreSQL volume and both health checks.
+- Store `.env` values in Coolify rather than committing them.
+
+See Coolify's [Docker Compose](https://coolify.io/docs/knowledge-base/docker/compose),
+[application](https://coolify.io/docs/applications/index), and
+[domain](https://coolify.io/docs/knowledge-base/domains) documentation for current UI behavior.

@@ -2,7 +2,7 @@
   "name": "@omni-model/postgres",
   "version": "0.1.0",
   "description": "PostgreSQL backend for omni-model: schema migrations, rate-limit counters, and attestation state.",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

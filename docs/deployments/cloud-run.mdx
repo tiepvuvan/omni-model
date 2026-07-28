@@ -1,0 +1,75 @@
+---
+title: Google Cloud Run
+description: Deploy omni-model to Cloud Run with Cloud SQL for PostgreSQL.
+---
+
+Cloud Run is a good fit when you want a managed container runtime and autoscaling. Use Cloud SQL for
+PostgreSQL so every instance shares configuration, token budgets, logs, and prompt-cache entries.
+
+## Before you deploy
+
+Create:
+
+1. A Cloud SQL for PostgreSQL instance and database.
+2. A database user with permission to create and use omni-model's tables.
+3. Secret Manager values for the PostgreSQL URL, admin session secret, and encryption key.
+4. A service account allowed to read those secrets and connect to Cloud SQL.
+
+Generate the two application secrets once and keep them stable:
+
+```sh
+openssl rand -base64 32
+openssl rand -base64 32
+```
+
+Follow Google's [Cloud SQL connection guide for Cloud Run](https://cloud.google.com/sql/docs/postgres/connect-run)
+to choose a private IP, connector, or Cloud SQL connection. Store the resulting PostgreSQL URL as a
+Secret Manager value instead of placing its password in the service definition.
+
+## Deploy the image
+
+```sh
+gcloud run deploy omni-model \
+  --image ghcr.io/tiepvuvan/omni-model:latest \
+  --region us-central1 \
+  --allow-unauthenticated \
+  --port 8787 \
+  --set-env-vars OMNI_STORAGE_TYPE=postgres \
+  --set-secrets OMNI_STORAGE_POSTGRES_URL=omni-database-url:latest \
+  --set-secrets OMNI_ADMIN_SECRET=omni-admin-secret:latest \
+  --set-secrets OMNI_ENCRYPTION_KEY=omni-encryption-key:latest
+```
+
+Public ingress is expected because client applications call `/v1`. omni-model still requires the
+publishable key, user identity, and any app-verification methods you enable.
+
+Open the service URL at `/admin`, create the first operator, and configure authentication, routing,
+and limits. Use `/healthz` for liveness and `/readyz` for readiness.
+
+## Production settings
+
+- Set a maximum instance count that your PostgreSQL connection limit can support.
+- Keep at least one warm instance when first-request latency matters.
+- Give Cloud Run a termination grace period longer than omni-model's shutdown drain.
+- Store every provider credential in Secret Manager or enter it through the dashboard.
+- Back up Cloud SQL and `OMNI_ENCRYPTION_KEY` independently.
+
+## Custom domain
+
+Google recommends a global external Application Load Balancer for production custom domains. Route
+the hostname to the Cloud Run service, enable a managed TLS certificate, then configure:
+
+```sh
+gcloud run services update omni-model \
+  --region us-central1 \
+  --set-env-vars OMNI_ADMIN_BASE_URL=https://ai.example.com \
+  --set-env-vars OMNI_ADMIN_ALLOWED_ORIGINS=https://ai.example.com \
+  --set-env-vars OMNI_SERVER_CUSTOM_DOMAIN=ai.example.com
+```
+
+The hostname in **Settings** documents the public URL; the load balancer remains responsible for
+DNS and TLS.
+
+See Google's [Cloud Run deployment](https://cloud.google.com/run/docs/deploying) and
+[custom-domain](https://cloud.google.com/run/docs/mapping-custom-domains) documentation for current
+platform details.

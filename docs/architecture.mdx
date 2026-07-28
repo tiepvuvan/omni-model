@@ -1,0 +1,106 @@
+---
+title: Architecture
+description: Understand how omni-model authenticates, protects, routes, and observes each LLM request.
+---
+
+omni-model is a single application container backed by PostgreSQL. The container serves three
+surfaces on one port:
+
+- The OpenAI-compatible API under `/v1`
+- The operator API under `/admin/api`
+- The dashboard under `/admin`
+
+Your provider credentials remain inside that boundary. Client apps receive a revocable publishable
+key and continue using the OpenAI request format.
+
+## Request path
+
+```text
+Client application
+  │
+  │ OpenAI-compatible request
+  │ + publishable key
+  │ + user identity token
+  │ + optional app proof
+  ▼
+omni-model
+  1. Identify the client
+  2. Authenticate the user
+  3. Verify the app or device
+  4. Enforce input and concurrency limits
+  5. Check every matching token-budget rule
+  6. Evaluate model-routing rules
+  7. Read from or write to the prompt cache
+  8. Translate and call the selected provider
+  9. Redact the response, record usage, and write an activity log
+  ▼
+OpenAI · DeepSeek · Anthropic · Gemini · OpenAI-compatible upstream
+```
+
+The first matching routing rule selects both the provider and the concrete model. A client can ask
+for a stable alias such as `smart` while you change the upstream model without shipping an app
+update.
+
+## Three independent trust signals
+
+omni-model deliberately separates three questions:
+
+| Question | Credential | Transport |
+| --- | --- | --- |
+| Which client is calling? | Publishable key | `Authorization: Bearer …` |
+| Which user is calling? | Firebase, Supabase, Clerk, Cognito, or custom JWT | Provider-specific `X-*` header |
+| Is this a genuine app or human interaction? | App Check, App Attest, DeviceCheck, Play Integrity, Turnstile, or reCAPTCHA | Verifier-specific `X-*` header |
+
+The publishable key is safe to embed in a client and is compatible with the `apiKey` option in
+OpenAI SDKs. It identifies and revokes a client; it is not a replacement for user authentication.
+User identity owns the token budget. App verification is an optional additional layer that rejects
+copied or automated clients.
+
+## Configuration revisions
+
+The dashboard stores every change as a new PostgreSQL revision. The write path is:
+
+```text
+validate → persist → apply
+```
+
+A replica builds an immutable runtime bundle from the new revision and swaps it into service only
+after every verifier, rule, and provider validates. A bad revision cannot replace the last working
+one. Other replicas receive the revision through PostgreSQL and rebuild their own bundle.
+
+Each request reads one bundle. If configuration changes during a streaming completion, that stream
+finishes with the policy, provider, and credentials it started with.
+
+## OpenAI compatibility
+
+The public wire format remains OpenAI-compatible. Provider adapters translate requests and responses
+at the boundary, including streaming Server-Sent Events. Unknown OpenAI request fields pass through
+to compatible upstreams, so the proxy does not unnecessarily narrow provider features.
+
+The same base URL works with OpenAI-compatible clients:
+
+```text
+https://ai.example.com/v1
+```
+
+## Failure boundaries
+
+omni-model is closed before configuration and conservative after it:
+
+- `/healthz` reports that the process is alive even before setup.
+- `/readyz` reports whether the instance can safely serve `/v1`.
+- `/v1/*` returns `503 not_configured` until user authentication and routing are usable.
+- A rejected configuration leaves the previous revision serving.
+- Rate-limit storage and request logging fail open, so an observability outage does not become an
+  application outage.
+- Prompt-cache failures behave like cache misses.
+- Shutdown drains response bodies, including active streams, before the process exits.
+
+## Deployment shape
+
+The application is stateless apart from PostgreSQL. You can run one replica on a small VPS or
+several replicas behind a load balancer. Every replica shares configuration, rate-limit counters,
+publishable keys, logs, and cache entries through the database.
+
+Continue with [storage and backups](/storage), or choose a
+[deployment guide](/deployments/vps).

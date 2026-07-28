@@ -1,0 +1,77 @@
+---
+title: Fly.io
+description: Deploy omni-model close to users with Fly.io and managed PostgreSQL.
+---
+
+Fly.io can run the published image without a source build. Pair it with Fly Managed Postgres, keep
+both resources in the same organization, and use the private network for the database connection.
+
+## Create the app
+
+```sh
+fly launch \
+  --name my-omni-model \
+  --image ghcr.io/tiepvuvan/omni-model:latest \
+  --no-deploy
+```
+
+Set the application port and health checks in `fly.toml`:
+
+```toml
+app = "my-omni-model"
+primary_region = "sin"
+
+[http_service]
+  internal_port = 8787
+  force_https = true
+  auto_stop_machines = false
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    method = "GET"
+    path = "/healthz"
+    interval = "15s"
+    timeout = "3s"
+```
+
+## Connect PostgreSQL
+
+Create a Fly Managed Postgres cluster, then use its private connection URL. The current Fly
+dashboard and CLI can attach the database or provide a connection secret.
+
+Set the runtime secrets:
+
+```sh
+fly secrets set \
+  OMNI_STORAGE_TYPE=postgres \
+  OMNI_STORAGE_POSTGRES_URL='postgres://omni:password@private-host:5432/omni' \
+  OMNI_ADMIN_SECRET="$(openssl rand -base64 32)" \
+  OMNI_ENCRYPTION_KEY="$(openssl rand -base64 32)"
+```
+
+Keep the generated values in a password manager. Re-running that command with new values signs
+operators out and can make encrypted provider credentials unreadable.
+
+## Deploy and configure
+
+```sh
+fly deploy
+fly status
+```
+
+Open `https://my-omni-model.fly.dev/admin`, create the first operator, and complete configuration in
+the dashboard.
+
+For a custom domain:
+
+```sh
+fly certs add ai.example.com
+```
+
+Add the DNS records Fly displays, then set `OMNI_ADMIN_BASE_URL`,
+`OMNI_ADMIN_ALLOWED_ORIGINS`, and `OMNI_SERVER_CUSTOM_DOMAIN` to that hostname.
+
+Use Fly's [deployment guide](https://fly.io/docs/launch/deploy/),
+[private Postgres connection guide](https://fly.io/docs/postgres/connecting/connecting-internal/),
+and [custom-domain guide](https://fly.io/docs/networking/custom-domain/) for current platform
+commands.

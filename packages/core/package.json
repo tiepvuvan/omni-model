@@ -2,7 +2,7 @@
   "name": "@omni-model/core",
   "version": "0.1.0",
   "description": "Runtime-agnostic core for omni-model: an OpenAI-compatible AI proxy with environment-configured security, rate limiting and model routing.",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

@@ -1,258 +1,217 @@
 # omni-model
 
-A self-hosted, OpenAI-compatible AI proxy for your mobile and web apps. Your provider API keys
-stay on your infrastructure — never inside an app binary. Clients authenticate with what they
-already have (Firebase App Check, Apple App Attest / DeviceCheck, Firebase Auth, Clerk, AWS
-Cognito, Supabase, or any JWT), and can add Cloudflare Turnstile, reCAPTCHA Enterprise, or Google Play Integrity as an
-application-verification layer. You configure rate limits (request windows **and** token budgets) plus CEL-expression
-model routing across OpenAI, DeepSeek, Anthropic, Google Gemini and any OpenAI-compatible endpoint.
+### Ship AI features from client apps without shipping provider secrets
 
-It ships as **one container image backed by PostgreSQL** — run it anywhere that runs containers.
+omni-model is a self-hosted LLM proxy for web, mobile, and desktop apps. Your app keeps using the
+OpenAI API shape, while omni-model keeps provider keys on infrastructure you control.
 
-```sh
-docker run -p 8787:8787 --env-file omni.env ghcr.io/tiepvuvan/omni-model:latest
-```
+Configure authentication, app attestation, rate limits, caching, and model routing from the
+dashboard. No custom backend code is required. A single container and PostgreSQL are enough to run
+it on a $5-class VPS for a small application, with the same deployment shape when you scale up.
 
-No fork, no clone, no build. Credentials stay in your platform's secret store.
+[Get started](#quick-start) · [Read the docs](docs/index.mdx) ·
+[Understand the architecture](docs/architecture.mdx)
 
-The same image serves an **operator dashboard at `/admin`** — client authentication and model
-routing, configured at runtime and applied to every replica within seconds, with no restart. Set
-`OMNI_ADMIN_SECRET` to turn it on; see [the dashboard](docs/installation/dashboard.mdx).
+![omni-model activity logs showing authenticated clients, routed models, and token usage](docs/images/omni-model-dashboard.jpg)
 
-## How it works
+## Built for client apps
+
+Calling an LLM directly from a browser or app binary exposes the provider key. Building a backend
+only to hide that key adds authentication, abuse prevention, metering, routing, and operational work
+before you can ship one AI feature.
+
+omni-model gives client developers that backend as a deployable product:
 
 ```text
-Client (any OpenAI SDK)
-        │  POST /v1/chat/completions        { "model": "smart", ... }
+Web, iOS, Android, desktop
+        │
+        │  OpenAI-compatible request
+        │  + publishable key
+        │  + user token
+        │  + optional app attestation
         ▼
-┌───────────────────────────────────────────────┐
-│  omni-model — your infrastructure             │
-│   1. authenticate   App Check / App Attest /  │
-│                     Firebase / Clerk / Cognito│
-│                     JWT                       │
-│   2. rate limit     request windows +         │
-│                     token budgets             │
-│   3. route          CEL rules over model,     │
-│                     user claims, headers, ... │
-└───────────────┬───────────────────────────────┘
-                │  translated on the fly
-      ┌─────────┼──────────┬─────────────┬──────────────────────────┐
-      ▼         ▼          ▼             ▼                          ▼
-   OpenAI   DeepSeek   Anthropic   Google Gemini   any OpenAI-compatible endpoint
+┌──────────────────────────────────────────────┐
+│                  omni-model                  │
+│                                              │
+│  authenticate → attest → limit → cache       │
+│                         → route → observe     │
+└──────────────────────┬───────────────────────┘
+                       │ provider credentials
+          ┌────────────┼────────────┬──────────────┐
+          ▼            ▼            ▼              ▼
+       OpenAI      DeepSeek     Anthropic       Gemini
 ```
 
-Point any OpenAI SDK at your proxy URL and keep using the OpenAI wire format everywhere —
-requests to Anthropic and Gemini are translated automatically, both directions, streaming
-included.
+Your provider keys never enter the client. The client only receives a publishable key that identifies
+the app, while its existing authentication and attestation tokens identify the user and genuine app
+installation.
 
-> 📖 **Documentation** — installation, security, client integrations, and the full config
-> reference live in [`docs/`](docs/) as a [Mintlify](https://mintlify.com) site
-> (`docs/docs.json`). Run `npx mint dev` inside `docs/` to preview locally.
+## What you get
 
-## Features
-
-- **OpenAI-compatible surface** — `/v1/chat/completions` (streaming SSE included), `/v1/models`,
-  `/v1/embeddings`; OpenAI-style error bodies. Existing SDKs work unchanged.
-- **Client attestation, not shared secrets** — Firebase App Check, Apple App Attest (full
-  challenge/register/assert flow built in), Apple DeviceCheck, Google Play Integrity, Cloudflare
-  Turnstile, reCAPTCHA Enterprise, Firebase Auth, Clerk, AWS Cognito, Supabase Auth, or any custom
-  JWT. Combine app verifiers with `mode: any` or `mode: all`.
-- **Rate limits that understand LLMs** — fixed-window request limits *and* token budgets per
-  user / device / IP / global / custom expression, with conditional rules
-  (`when: 'has(user.claims.tier) && user.claims.tier == "free"'`). Fail-open on storage outages.
-- **CEL model routing** — map client-facing aliases like `"smart"` to concrete provider+model by
-  user tier, request shape or headers; fall back with per-model rules and a default provider.
-- **One way to run it** — a single container image plus PostgreSQL. Scale to as many replicas as
-  you like against one database; rate-limit counters stay exact because every increment is one
-  atomic SQL statement.
-- **Extensible** — auth verifiers, providers, and storage backends are pluggable factories in a
-  registry; add your own without forking core.
+- **Authentication for the providers you already use.** Verify Firebase Auth, Supabase Auth, Clerk,
+  Amazon Cognito, or a custom JWT. Each integration uses a dedicated header, so it does not collide
+  with OpenAI-compatible client authentication.
+- **Application and device attestation.** Require Firebase App Check, Apple App Attest,
+  DeviceCheck, Google Play Integrity, Cloudflare Turnstile, or reCAPTCHA Enterprise. Combine
+  verifiers to accept multiple client platforms without sharing a secret between them.
+- **Flexible model routing with CEL.** Route by model, token count, temperature, user claims, client,
+  headers, IP, path, or method. Change the model behind an alias without releasing a new app.
+- **Per-user token budgets.** Layer CEL rules for free, paid, internal, or custom user groups. A
+  concurrent-request guard prevents parallel calls from racing past a post-paid token budget.
+- **Prompt caching.** Identical requests can reuse the same completion. Cache hits avoid an upstream
+  call and are marked in activity logs, while size limits and oldest-first eviction keep storage
+  bounded.
+- **Input protection.** Reject oversized prompts by input-token count before they reach a provider.
+  Set the limit in **Settings**.
+- **OpenAI-compatible API.** Use `/v1/chat/completions`, streaming SSE, `/v1/models`, and
+  `/v1/embeddings` with your preferred OpenAI-compatible SDK.
+- **First-class providers.** Route to OpenAI, DeepSeek, Anthropic, Google Gemini, or any
+  OpenAI-compatible endpoint.
+- **Operational dashboard.** Manage authentication, routing, rate limits, publishable keys, team
+  access, cache limits, and organization settings. Inspect request prompts, redacted headers,
+  request bodies, routed models, latency, and token usage.
+- **One production shape.** One container image, one PostgreSQL database, automatic migrations, live
+  configuration reloads, health checks, and graceful shutdown.
 
 ## Quick start
 
 ### Local
 
+Clone the repository, generate two local secrets, and start the dashboard with PostgreSQL:
+
 ```sh
-pnpm install
-pnpm build
-OPENAI_API_KEY=sk-... \
-OMNI_JWT_SECRET=dev-secret \
-OMNI_STORAGE_TYPE=memory \
-OMNI_SECURITY_JWT_ENABLED=true \
-OMNI_SECURITY_JWT_SECRET='${OMNI_JWT_SECRET}' \
-OMNI_TARGET_TYPE=openai \
-OMNI_TARGET_API_KEY='${OPENAI_API_KEY}' \
-node packages/node/dist/cli.js
+docker build -t omni-model:local .
+
+printf 'OMNI_ADMIN_SECRET=%s\nOMNI_ENCRYPTION_KEY=%s\n' \
+  "$(openssl rand -base64 32)" \
+  "$(openssl rand -base64 32)" > examples/.env
+
+docker compose \
+  --env-file examples/.env \
+  -f examples/docker-compose.dashboard.yml \
+  up -d --wait
 ```
 
-Then talk to it with any OpenAI client:
+Open [http://localhost:8787/admin](http://localhost:8787/admin), create the first operator, then:
+
+1. Choose your user authentication and optional app-attestation methods.
+2. Add a model-routing rule and provider key.
+3. Set token budgets and input limits.
+4. Generate a publishable key for your app.
+
+The dashboard validates and applies changes immediately. You do not need to restart the proxy.
+
+### Docker
+
+If PostgreSQL already exists, run the published image directly:
 
 ```sh
-curl http://localhost:8787/v1/chat/completions \
-  -H "content-type: application/json" \
-  -d '{"model": "gpt-4o-mini", "messages": [{"role": "user", "content": "Hello!"}]}'
-```
-
-### Docker (no clone required)
-
-Pull the prebuilt multi-arch image from GHCR and pass environment variables — no fork, no build:
-
-```sh
-docker run -p 8787:8787 \
-  -e OPENAI_API_KEY=sk-... \
-  -e OMNI_JWT_SECRET=replace-with-a-long-random-secret \
-  -e OMNI_STORAGE_TYPE=memory \
-  -e OMNI_SECURITY_JWT_ENABLED=true \
-  -e 'OMNI_SECURITY_JWT_SECRET=${OMNI_JWT_SECRET}' \
-  -e OMNI_TARGET_TYPE=openai \
-  -e 'OMNI_TARGET_API_KEY=${OPENAI_API_KEY}' \
-  ghcr.io/tiepvuvan/omni-model:latest
-```
-
-Use the named `OMNI_STORAGE_*`, `OMNI_TARGET_*`, and `OMNI_SECURITY_*` variables for a
-one-provider deployment. The [configuration reference](docs/reference/configuration.mdx) maps every
-available setting. `OMNI_CONFIG_JSON`, named JSON blocks, and `OMNI__...` paths cover complex
-multi-provider routing.
-
-**Updating** is just `docker pull ghcr.io/tiepvuvan/omni-model:latest` and a restart — pin to a
-version tag (`:1.2.3` / `:1.2`) for reproducible deploys, or `:edge` to track `main`. To build the
-image yourself instead: `docker build -t omni-model .`.
-
-### Production: Postgres
-
-`memory` storage is fine for one process, but it loses everything on restart and shares nothing
-between replicas. Point the container at PostgreSQL instead:
-
-```sh
-docker run -p 8787:8787 \
-  -e DATABASE_URL=postgres://omni:secret@db:5432/omni \
+docker run -d --name omni-model \
+  -p 8787:8787 \
   -e OMNI_STORAGE_TYPE=postgres \
-  -e 'OMNI_STORAGE_POSTGRES_URL=${DATABASE_URL}' \
-  ... \
+  -e OMNI_STORAGE_POSTGRES_URL='postgres://omni:password@db:5432/omni' \
+  -e OMNI_ADMIN_SECRET='replace-with-at-least-32-characters' \
+  -e OMNI_ENCRYPTION_KEY='replace-with-32-random-bytes-base64' \
   ghcr.io/tiepvuvan/omni-model:latest
 ```
 
-The container creates its tables on first boot. Run as many replicas as you like against one
-database — every counter increment is a single atomic SQL statement, so limits stay exact. See the
-[Docker guide](docs/installation/docker.mdx) for Compose, health checks, and scaling notes.
+Open `/admin` and finish configuration in the dashboard. The container starts safely even before
+configuration: `/healthz` stays available while `/v1/*` remains closed.
 
-## Configuration
+See the [Docker guide](docs/installation/docker.mdx) for upgrades, health checks, migrations, and
+backups.
 
-Use `OMNI_CONFIG_JSON` for a complete configuration, named JSON blocks for providers/routing, or
-`OMNI__...` variables for individual fields. This example combines all three:
+### Production with a custom domain
+
+The repository includes a production-shaped Docker Compose stack with PostgreSQL and Caddy:
 
 ```sh
-OMNI_SECURITY_USER_AUTH_JSON='{"type":"firebase-auth","projectId":"${FIREBASE_PROJECT_ID}"}'
-OMNI_SECURITY_APP_AUTH_JSON='{"providers":[{"type":"firebase-app-check","projectNumber":"${FIREBASE_PROJECT_NUMBER}"}]}'
-OMNI_RATE_LIMITS_JSON='[
-  {"name":"free-tier","when":"has(user.claims.tier) && user.claims.tier == \"free\"",
-   "tokens":{"limit":30000,"window":"1d"}},
-  {"name":"everyone","tokens":{"limit":150000,"window":"1d"}}
-]'
-OMNI_ROUTING_JSON='{
-  "rules":[
-    {"id":"smart","when":"request.model == \"smart\"",
-     "target":{"type":"anthropic","apiKey":"${ANTHROPIC_API_KEY}","model":"claude-sonnet-4-5"}},
-    {"id":"gpt-family","when":"request.model.startsWith(\"gpt-\")",
-     "target":{"type":"openai","apiKey":"${OPENAI_API_KEY}"}},
-    {"id":"everything-else","when":"true",
-     "target":{"type":"openai","apiKey":"${OPENAI_API_KEY}"}}
-  ]
-}'
+cp examples/custom-domain.env.example examples/.env
 ```
 
-Each rule carries its own upstream — provider type, credentials and model — and the first match wins.
-Swap which model backs `"smart"` from the dashboard or an environment variable; no app release
-required.
-Every option is documented in [docs/reference/configuration.mdx](docs/reference/configuration.mdx).
+Set your domain and generate the stable secrets described in `examples/.env`, then run:
 
-## Using it from your app
+```sh
+docker compose \
+  --env-file examples/.env \
+  -f examples/docker-compose.custom-domain.yml \
+  up -d --wait
+```
 
-The proxy speaks the OpenAI protocol, so every OpenAI SDK works — only the base URL and the auth
-headers change.
+Caddy obtains and renews HTTPS certificates. PostgreSQL and Caddy use named volumes, both services
+have health checks, and omni-model stays private behind the reverse proxy.
 
-**JavaScript / TypeScript** (Firebase App Check):
+Choose a deployment guide:
+
+- [Google Cloud Run](docs/deployments/cloud-run.mdx)
+- [Fly.io](docs/deployments/fly-io.mdx)
+- [Hetzner or another VPS](docs/deployments/vps.mdx)
+- [Coolify](docs/deployments/coolify.mdx)
+
+## Integrate from your app
+
+Use the SDK you already prefer. Set its base URL to omni-model, use an omni-model publishable key as
+the SDK API key, and add the headers required by your authentication configuration.
 
 ```ts
 import OpenAI from "openai";
 
-const client = new OpenAI({
+const llm = new OpenAI({
   baseURL: "https://ai.example.com/v1",
   apiKey: publishableKey,
   defaultHeaders: {
-    "X-Firebase-ID-Token": await getIdToken(),
-    "X-Firebase-AppCheck": await getAppCheckToken(),
+    "X-Firebase-ID-Token": await currentUser.getIdToken(),
+    "X-Firebase-AppCheck": (await getToken(appCheck)).token,
   },
+  dangerouslyAllowBrowser: true,
 });
 
-const completion = await client.chat.completions.create({
+const response = await llm.chat.completions.create({
   model: "smart",
-  messages: [{ role: "user", content: "Hello!" }],
+  messages: [{ role: "user", content: "Explain this screen." }],
 });
 ```
 
-**Python** (publishable key plus Firebase Auth):
+The `Authorization` header carries the publishable key for OpenAI SDK compatibility. User identity
+and app proofs use dedicated headers:
 
-```python
-from openai import OpenAI
+| Purpose | Header examples |
+| --- | --- |
+| Client application | `Authorization: Bearer <publishable-key>` |
+| Signed-in user | `X-Firebase-ID-Token`, `X-Supabase-Access-Token`, `X-Clerk-Session-Token`, `X-Cognito-ID-Token` |
+| Genuine application | `X-Firebase-AppCheck`, `X-Apple-Device-Token`, App Attest headers |
 
-client = OpenAI(
-    base_url="https://ai.example.com/v1",
-    api_key=publishable_key,
-    default_headers={"X-Firebase-ID-Token": user_id_token},
-)
+Client guides:
 
-completion = client.chat.completions.create(
-    model="gemini-2.0-flash",
-    messages=[{"role": "user", "content": "Hello!"}],
-)
-```
+- [JavaScript, browsers, and LangChain-compatible clients](docs/integrations/javascript.mdx)
+- [Swift and MacPaw/OpenAI](docs/integrations/swift.mdx)
+- [Apple Foundation Models](docs/integrations/foundation-models.mdx)
+- [Kotlin](docs/integrations/kotlin.mdx)
+- [React Native](docs/integrations/react-native.mdx)
+- [Flutter](docs/integrations/flutter.mdx)
 
-**iOS with App Attest** — after the one-time key registration
-(`POST /auth/app-attest/challenge` + `POST /auth/app-attest/register`, see
-[the protocol](docs/security/app-attest.mdx)), each request carries three headers:
+## Design principles
 
-```sh
-curl https://ai.example.com/v1/chat/completions \
-  -H "content-type: application/json" \
-  -H "x-appattest-keyid: $KEY_ID" \
-  -H "x-appattest-assertion: $ASSERTION" \
-  -H "x-appattest-challenge: $CHALLENGE" \
-  -d '{"model": "smart", "messages": [{"role": "user", "content": "Hello!"}]}'
-```
+- **Closed by default.** The proxy cannot serve `/v1/*` until a user verifier is configured.
+- **Credentials stay credentials.** Provider keys are encrypted before storage and never returned
+  by the admin API.
+- **Configuration changes are safe.** A new revision is validated before it is stored and applied.
+  A bad edit leaves the last working revision serving.
+- **Requests keep one consistent configuration.** Live reloads never change the policy of a request
+  or stream already in flight.
+- **Observability must not become an outage.** Request logging is bounded and fail-open. Content
+  capture is optional, capped, and redacts credential-bearing headers.
 
-## Storage backends
+Read more:
 
-Rate-limit counters, token budgets and attestation keys live in pluggable storage:
-
-| Type | Counter atomicity | Shared across instances | Survives restart | Use when |
-| --- | --- | --- | --- | --- |
-| `postgres` | exact (single-statement upsert) | yes | yes | production, at any number of replicas |
-| `memory` | exact (single process) | no | no | local development |
-
-Details and options per backend in [docs/reference/configuration.mdx](docs/reference/configuration.mdx).
-
-## Extending
-
-Everything pluggable — auth verifiers, model providers, storage backends — goes through a
-registry of factories keyed by `type`. Add a component by implementing its contract and
-registering it; core never needs a fork:
-
-```ts
-const registry = createDefaultRegistry();
-registry.providers.set("my-llm", myProviderFactory);
-const app = await createOmniApp({ config, registry });
-```
-
-The contracts (`AuthVerifier`, `ChatProvider`, `StorageAdapter`) and the extension recipe are
-documented in [CLAUDE.md](CLAUDE.md); an embedding example is in
-[docs/reference/configuration.mdx](docs/reference/configuration.mdx).
-
-## Contributing
-
-See [CLAUDE.md](CLAUDE.md) — the contributor guide covers the architecture rules, toolchain,
-testing conventions and PR checklist. `pnpm run ci` (lint + build + test) must be green.
+- [Architecture](docs/architecture.mdx)
+- [Storage and backups](docs/storage.mdx)
+- [Model routing](docs/model-routing/routing.mdx)
+- [Application verification](docs/security/verify-on-device.mdx)
+- [Request logs](docs/reference/logging.mdx)
+- [Configuration reference](docs/reference/configuration.mdx)
 
 ## License
 
-[MIT](LICENSE)
+omni-model is licensed under the [Apache License 2.0](LICENSE). It is free to use, modify, and
+self-host for personal or commercial applications under the license terms.

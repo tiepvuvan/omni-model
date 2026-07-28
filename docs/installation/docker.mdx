@@ -9,33 +9,34 @@ on any platform that runs containers, pointed at a PostgreSQL database.
 ## Requirements
 
 - A container runtime (Docker, Podman, Kubernetes, ECS, Nomad — anything that runs an OCI image).
-- A PostgreSQL 14+ database. Postgres holds rate-limit counters and, in a scaled-out deployment,
-  is what makes those counters correct across instances.
-- At least one provider API key, and at least one [security verifier](/security/custom-jwt) — the
-  proxy refuses to start without one, because a proxy that authenticates nobody is an open relay
-  on your provider credits.
+- A PostgreSQL 14+ database.
+- Two stable random values for dashboard sessions and credential encryption.
 
 ## Run it
 
-Use the prebuilt image — no clone, no build:
+The fastest local setup is the repository's Compose stack:
 
 ```sh
-docker run -p 8787:8787 \
-  -e DATABASE_URL=postgres://omni:secret@db:5432/omni \
-  -e OPENAI_API_KEY=sk-... \
-  -e OMNI_JWT_SECRET=replace-with-a-long-random-secret \
-  -e OMNI_STORAGE_TYPE=postgres \
-  -e 'OMNI_STORAGE_POSTGRES_URL=${DATABASE_URL}' \
-  -e OMNI_SECURITY_JWT_ENABLED=true \
-  -e 'OMNI_SECURITY_JWT_SECRET=${OMNI_JWT_SECRET}' \
-  -e 'OMNI_SECURITY_JWT_ALGORITHMS=["HS256"]' \
-  -e OMNI_TARGET_TYPE=openai \
-  -e 'OMNI_TARGET_API_KEY=${OPENAI_API_KEY}' \
-  ghcr.io/tiepvuvan/omni-model:latest
+git clone https://github.com/tiepvuvan/omni-model.git
+cd omni-model
+docker build -t omni-model:local .
+
+printf 'OMNI_ADMIN_SECRET=%s\nOMNI_ENCRYPTION_KEY=%s\n' \
+  "$(openssl rand -base64 32)" \
+  "$(openssl rand -base64 32)" > examples/.env
+
+docker compose \
+  --env-file examples/.env \
+  -f examples/docker-compose.dashboard.yml \
+  up -d --wait
 ```
 
-Values wrapped in `${...}` are resolved from the container's environment, so secrets stay in one
-place and never appear twice in your deployment manifest.
+Open [http://localhost:8787/admin](http://localhost:8787/admin), create the first operator, and use
+the dashboard to configure user authentication, app verification, routing, rate limits, and
+publishable keys.
+
+The container can start before that configuration exists: `/healthz` remains available and
+`/v1/*` stays closed with `503 not_configured`.
 
 ## Schema migrations
 
@@ -66,7 +67,7 @@ OMNI_STORAGE_POSTGRES_MIGRATE=false omni-model
 `migrate` takes the same advisory lock the server does, so it is safe to run from an init container
 on every pod start and safe to run while a server is booting. It prints what it applied and exits.
 
-## Production configuration
+## Optional first-boot configuration
 
 ```sh
 OMNI_STORAGE_TYPE=postgres
@@ -78,6 +79,9 @@ OMNI_TARGET_TYPE=openai
 OMNI_TARGET_API_KEY=${OPENAI_API_KEY}
 OMNI_RATE_LIMITS_JSON=[{"name":"per-user-daily-tokens","tokens":{"limit":30000,"window":"1d"}}]
 ```
+
+Most deployments can skip this block and use the dashboard. Environment configuration is useful
+when infrastructure automation must seed a fresh database without an operator.
 
 <Note>
   Set `OMNI_SERVER_TRUST_PROXY_HEADERS=true` **only** when the container sits behind a reverse

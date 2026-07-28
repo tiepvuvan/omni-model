@@ -1,0 +1,116 @@
+---
+title: Storage and backups
+description: Learn what omni-model stores in PostgreSQL and how to back it up safely.
+---
+
+PostgreSQL is omni-model's durable source of truth. It lets one container start small and lets
+multiple replicas share the same policy and usage state when you scale.
+
+## What is stored
+
+| Data | Purpose | Protection |
+| --- | --- | --- |
+| Configuration revisions | Append-only history and the active configuration | Provider credentials are references, not plaintext |
+| Encrypted secrets | Provider and integration credentials entered in the dashboard | JWE encryption with a master key held outside PostgreSQL |
+| Publishable keys | Client identification and revocation | Only SHA-256 hashes are stored |
+| Rate-limit state | Per-user token windows and in-flight coordination | Expiring key-value rows |
+| Request logs | Status, routing, latency, and token usage | Bounded, fail-open writes with configurable retention |
+| Request content | Optional prompts, bodies, headers, and completions | Separate retention, byte cap, and credential-header redaction |
+| Prompt cache | Reusable upstream responses | TTL plus entry and byte limits |
+| Dashboard accounts | Operator sessions, roles, and invitations | Managed by the admin authentication layer |
+
+omni-model owns relations prefixed with `omni_`. Give it a dedicated database or PostgreSQL schema
+when you want isolation from other applications.
+
+## Secrets and publishable keys
+
+Set `OMNI_ENCRYPTION_KEY` to a stable 32-byte key. Credentials entered in the dashboard are sealed
+as JWE using `dir` and `A256GCM`; the configuration revision stores only a secret reference. The
+admin API never reveals the plaintext again.
+
+Publishable keys use a different design. The full value is displayed once when it is created, while
+PostgreSQL keeps only its hash, display prefix, and final four characters. A database backup cannot
+be used to reconstruct an active publishable key.
+
+<Warning>
+  Store `OMNI_ENCRYPTION_KEY` outside the database and back it up separately. A database restore
+  without the matching key cannot decrypt provider credentials.
+</Warning>
+
+## Request logs and content
+
+Metadata logging and content capture are separate:
+
+- Metadata records request status, selected route and model, latency, token usage, cache status, and
+  client attribution.
+- Content capture can store prompts, request bodies, selected headers, and completions for
+  debugging. It is opt-in, size-capped, and can use a shorter retention period.
+- Credential-bearing headers are redacted before storage.
+- Logging uses a bounded queue and never blocks a model response. If PostgreSQL is unavailable,
+  requests continue while logs may be dropped.
+
+Use **Settings** to choose retention and content capture based on your privacy requirements.
+
+## Prompt cache
+
+The cache key covers the selected provider, concrete model, stream mode, endpoint, and complete
+request body. An identical request can therefore reuse the original upstream response without
+spending provider tokens again.
+
+Expired entries are never served. PostgreSQL eviction removes expired entries first and then the
+oldest entries until both the configured entry count and byte limit are satisfied. Configure the
+TTL and maximum size in **Settings**.
+
+## Migrations
+
+The container applies forward-only migrations before accepting traffic. A PostgreSQL advisory lock
+allows several replicas to start at once: one applies the migration in a transaction while the
+others wait.
+
+For a database role without DDL permission, run the migration command with a privileged role before
+starting the application:
+
+```sh
+omni-model migrate
+```
+
+Then disable automatic migration on the runtime role:
+
+```sh
+OMNI_STORAGE_POSTGRES_MIGRATE=false omni-model
+```
+
+## Back up
+
+A complete recovery plan needs two independent backups:
+
+1. A normal PostgreSQL backup containing omni-model data.
+2. The current `OMNI_ENCRYPTION_KEY` and any decrypt-only values in
+   `OMNI_ENCRYPTION_KEY_PREVIOUS`, stored in your secret manager.
+
+For a small self-hosted deployment, a compressed logical backup is easy to inspect and restore:
+
+```sh
+pg_dump --format=custom --no-owner --file=omni.dump "$DATABASE_URL"
+```
+
+Automate it, encrypt it, send it off the host, and test restores on a schedule. Provider environment
+variables referenced as `${VAR}` are not stored in the database, so include them in your secret
+manager backup as well.
+
+## Restore
+
+Restore into an empty database, then start the same or a newer omni-model image with the matching
+encryption key:
+
+```sh
+createdb omni_restore
+pg_restore --no-owner --dbname=omni_restore omni.dump
+```
+
+Point `OMNI_STORAGE_POSTGRES_URL` at the restored database and check `/readyz`. Sign in to the
+dashboard and verify the active routing revision, publishable keys, and a provider connection before
+moving production traffic.
+
+Continue with the [Docker installation guide](/installation/docker) or
+[deployment guides](/deployments/vps).
