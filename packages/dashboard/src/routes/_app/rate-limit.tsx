@@ -8,8 +8,10 @@ import { CelEditor } from "../../components/routing/cel-editor";
 import { CelReference } from "../../components/routing/cel-reference";
 import { Button, Callout, Card, IconButton } from "../../components/ui/primitives";
 import { api, type ConfigResponse, type RateLimitRule } from "../../lib/api";
+import { pageHead } from "../../lib/page-title";
 
 export const Route = createFileRoute("/_app/rate-limit")({
+  head: () => pageHead("Rate Limits"),
   loader: async (): Promise<{ config: ConfigResponse }> => ({ config: await api.config() }),
   component: RateLimitScreen,
 });

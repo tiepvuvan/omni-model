@@ -3,10 +3,12 @@ import { useState } from "react";
 import { AuthCard } from "../components/auth-card";
 import { Button, Callout, TextField } from "../components/ui/primitives";
 import { api } from "../lib/api";
+import { pageHead } from "../lib/page-title";
 
 const MIN_PASSWORD = 8;
 
 export const Route = createFileRoute("/accept-invite")({
+  head: () => pageHead("Accept Invitation"),
   validateSearch: (search: Record<string, unknown>): { token: string } => ({
     token: typeof search.token === "string" ? search.token : "",
   }),

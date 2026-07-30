@@ -3,9 +3,9 @@ import { defineConfig } from "vitest/config";
 
 const pkg = (path: string): string => fileURLToPath(new URL(`./packages/${path}`, import.meta.url));
 
-// End-to-end tests that hit a real upstream (OpenRouter). Separate from the
-// default suite so `pnpm test` stays fast and offline. Run with `pnpm test:e2e`
-// and OPENROUTER_API_KEY set; the tests skip themselves when the key is absent.
+// End-to-end tests that boot real servers and optionally reach live providers.
+// Separate from the default suite so `pnpm test` stays fast and offline. Each
+// live suite owns its credential gate and skips itself when that gate is closed.
 export default defineConfig({
   resolve: {
     alias: {

@@ -1,4 +1,4 @@
-import { createMemoryHistory, RouterProvider } from "@tanstack/react-router";
+import { createMemoryHistory, HeadContent, RouterProvider } from "@tanstack/react-router";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
@@ -23,14 +23,20 @@ export async function renderAt(path: string) {
   // The root route's shell renders `<html><head><body>`, which is right in a
   // browser and malformed inside a test container — `<html>` nested in a `<div>`.
   // Base UI's dialog walks the document to manage focus and scroll, and on that
-  // malformed tree it never settles. Swapping the shell for a passthrough keeps
-  // every route, loader and guard intact while giving the dialog a sane document.
+  // malformed tree it never settles. Swapping the shell for a fragment keeps
+  // every route, loader, guard, and route-managed head tag intact while giving
+  // the dialog a sane document.
   // `shellComponent` is set by TanStack Start's route options and is not part of
   // the router's public `RouteOptions` type, hence the cast.
   const root = router.routesById.__root__ as unknown as {
     options: { shellComponent: (props: { children: ReactNode }) => ReactNode };
   };
-  root.options.shellComponent = ({ children }) => <>{children}</>;
+  root.options.shellComponent = ({ children }) => (
+    <>
+      <HeadContent />
+      {children}
+    </>
+  );
 
   const result = render(<RouterProvider router={router} />);
 

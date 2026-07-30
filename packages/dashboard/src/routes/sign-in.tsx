@@ -3,6 +3,7 @@ import { useState } from "react";
 import { AuthCard } from "../components/auth-card";
 import { Button, Callout, TextField } from "../components/ui/primitives";
 import { ApiError, api } from "../lib/api";
+import { pageHead } from "../lib/page-title";
 
 /**
  * Sign in — `/auth` in the design.
@@ -12,6 +13,7 @@ import { ApiError, api } from "../lib/api";
  * open exactly once.
  */
 export const Route = createFileRoute("/sign-in")({
+  head: () => pageHead("Sign In"),
   loader: async () => {
     const setup = await api.setup().catch(() => ({ needsFirstOperator: false, operators: 0 }));
     if (setup.needsFirstOperator) throw redirect({ to: "/setup" });

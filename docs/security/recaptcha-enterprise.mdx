@@ -111,6 +111,23 @@ const response = await fetch("https://proxy.example.com/v1/chat/completions", {
 Android and iOS clients use the reCAPTCHA Enterprise mobile SDK to execute the
 same action, then send the returned token in `X-Recaptcha-Token`.
 
+## Verify the live integration
+
+The repository includes two complementary E2E layers:
+
+- `application-verification.e2e.test.ts` runs offline on every E2E invocation and exercises all
+  policy branches with deterministic Google responses.
+- `live-providers/recaptcha-enterprise.e2e.test.ts` creates real Google assessments for configured
+  Web, Android, and iOS keys while keeping the user credential and model upstream local.
+
+The live suite accepts a service-account file, inline service-account JSON, or an assessment API
+key. It never persists credentials. Platform tokens can be supplied through mode-`0600` temporary
+files, which keeps short-lived proofs out of shell history and process listings.
+
+See [`e2e/README.md`](https://github.com/tiepvuvan/omni-model/blob/main/e2e/README.md#live-recaptcha-enterprise-web-android-and-ios)
+for the environment template, secure Web token handoff, mobile-token gates, IAM roles, and strict CI
+mode.
+
 ## Failure behavior
 
 Invalid tokens, action mismatches, scores below the threshold, and disallowed

@@ -16,7 +16,7 @@ The verification splits in two, because two of the four can only be produced by 
 | Apple App Attest | `apple-app-attest` | The example iOS app runs the challenge → attest → assert flow on device | **Yes** |
 | Apple DeviceCheck | `apple-device-check` | The example iOS app generates a DeviceCheck token on device | **Yes** |
 | Cloudflare Turnstile | `cloudflare-turnstile` | A browser widget creates a fresh token; the proxy calls Siteverify | No |
-| reCAPTCHA Enterprise | `recaptcha-enterprise` | A web or mobile SDK token is assessed by Google Cloud | Mobile SDK only |
+| reCAPTCHA Enterprise | `recaptcha-enterprise` | A web or mobile SDK token is assessed by Google Cloud | Mobile only |
 | Google Play Integrity | `google-play-integrity` | The Android app binds a Standard API verdict to the exact HTTP request | **Yes** |
 
 The offline `application-verification.e2e.test.ts` and `user-authentication.e2e.test.ts` suites
@@ -37,17 +37,20 @@ App Attest and DeviceCheck use the Secure Enclave — `DCAppAttestService`/`DCDe
 `isSupported == false` on the simulator. There is no REST shortcut; a real device is required.
 </Note>
 
-## The config
+## The configuration
 
-One `OMNI_SECURITY_JSON` value enables all four. `mode: any` means each request authenticates with
-exactly one method (each verifier reads a distinct header and returns "not mine" when its header is
-absent), so you can test them independently:
+Firebase Auth identifies the user on every request. App Check, App Attest, and
+DeviceCheck are application-verification alternatives, so `appAuth.mode: any`
+accepts the proof the current platform can produce:
 
 ```sh
-export OMNI_SECURITY_JSON='{
+export OMNI_SECURITY_USER_AUTH_JSON='{
+  "type":"firebase-auth",
+  "projectId":"${FIREBASE_PROJECT_ID}"
+}'
+export OMNI_SECURITY_APP_AUTH_JSON='{
   "mode":"any",
   "providers":[
-    {"type":"firebase-auth","projectId":"${FIREBASE_PROJECT_ID}"},
     {"type":"firebase-app-check","projectNumber":"${FIREBASE_PROJECT_NUMBER}"},
     {"type":"apple-app-attest","teamId":"${APPLE_TEAM_ID}","bundleId":"${APPLE_BUNDLE_ID}","environment":"development"},
     {"type":"apple-device-check","teamId":"${APPLE_TEAM_ID}","keyId":"${APPLE_DEVICECHECK_KEY_ID}","privateKey":"${APPLE_DEVICECHECK_KEY}","development":true}
@@ -83,26 +86,32 @@ FAIL). Pick a model your upstream serves in your region, or use a direct provide
 - For the automated App Check test: a registered **App Check debug token** (Firebase console →
   App Check → your app → Manage debug tokens) and the app's `GOOGLE_APP_ID` + Web `API_KEY`.
 
-## Part 1 — automated (Firebase Auth + App Check), no device
+## Part 1 — automated Firebase Auth + App Check
 
-The live e2e suite stands up the proxy (via `startServer`) and checks each Firebase credential
-against a real project. Run it from
+The live E2E suite stands up a real proxy and checks each Firebase credential
+against the real project while keeping its model upstream local. Run it from
 [`e2e/`](https://github.com/tiepvuvan/omni-model/tree/main/e2e):
 
 ```sh
-export OPENROUTER_API_KEY=sk-or-...
 export FIREBASE_API_KEY=...          # plist API_KEY
 export FIREBASE_PROJECT_ID=...       # plist PROJECT_ID
 export FIREBASE_PROJECT_NUMBER=...   # plist GCM_SENDER_ID
 export FIREBASE_APP_ID=...           # plist GOOGLE_APP_ID          (App Check)
-export FIREBASE_APPCHECK_DEBUG_TOKEN=...  #                          (App Check)
-pnpm test:e2e
+export GOOGLE_APPLICATION_CREDENTIALS=/secure/service-account.json
+export FIREBASE_APPCHECK_DEBUG_TOKEN_FILE=/secure/app-check-debug-token
+export OMNI_E2E_REQUIRE_FIREBASE=auth,app-check,combined
+pnpm test:e2e -- e2e/live-providers/firebase.e2e.test.ts
 ```
 
-It asserts: no credential → **401**, a real Firebase ID token → **200** (and a chat completes), a
-forged token → **401**; and — when the debug token is set — a real App Check token → **200**, a bogus
-one → **401**. The companion Apple suite additionally proves the DeviceCheck signing key and the App
-Attest challenge route, which needs no device.
+It asserts: missing or forged Firebase ID token → **401**, genuine Firebase ID
+token → **200**, bogus App Check token → **401**, genuine App Check token →
+**200**, and both credentials are required by the combined configuration. The
+service-account path lets the suite create and delete a disposable user without
+enabling Anonymous sign-in. Add `replay-protection` to the strict gate and set
+`FIREBASE_APPCHECK_TEST_CONSUME=true` to verify limited-use-token consumption.
+
+The companion Apple suite additionally proves the DeviceCheck signing key and
+the App Attest challenge route, which need no device-generated proof.
 
 ## Part 2 — on device (all four), against a deployed proxy
 

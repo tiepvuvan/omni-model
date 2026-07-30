@@ -2,8 +2,10 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useRef, useState } from "react";
 import { Callout, cx, Drawer } from "../../components/ui/primitives";
 import { ApiError, api, type RequestLog } from "../../lib/api";
+import { pageHead } from "../../lib/page-title";
 
 export const Route = createFileRoute("/_app/logs")({
+  head: () => pageHead("Activity Logs"),
   loader: async () => {
     try {
       return { page: await api.logs(), error: null };

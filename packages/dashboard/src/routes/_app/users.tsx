@@ -4,8 +4,10 @@ import copyIcon from "../../assets/copy.svg";
 import plusIcon from "../../assets/plus.svg";
 import { Button, Callout, cx, Modal, TextField, ThemedIcon } from "../../components/ui/primitives";
 import { api, type CreatedTeamInvite, type TeamInvite, type TeamUser } from "../../lib/api";
+import { pageHead } from "../../lib/page-title";
 
 export const Route = createFileRoute("/_app/users")({
+  head: () => pageHead("Users"),
   loader: () => api.team(),
   component: UsersScreen,
 });

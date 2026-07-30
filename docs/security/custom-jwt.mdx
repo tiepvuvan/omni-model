@@ -101,6 +101,10 @@ How to extract the token from the configured header.
 Allowed clock skew, in seconds.
 </ParamField>
 
+The repository's [live Firebase E2E setup](https://github.com/tiepvuvan/omni-model/blob/main/e2e/README.md#live-firebase-authentication-and-app-check)
+creates and deletes a disposable user, verifies a genuine ID token, and proves
+Firebase Auth and App Check are both required when configured together.
+
 ## `type: supabase`
 
 Verifies Supabase Auth access tokens, either with the project's legacy shared

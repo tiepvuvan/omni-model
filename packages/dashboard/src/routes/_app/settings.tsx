@@ -18,8 +18,10 @@ import {
   type ConfigResponse,
   type ServerBlock,
 } from "../../lib/api";
+import { pageHead } from "../../lib/page-title";
 
 export const Route = createFileRoute("/_app/settings")({
+  head: () => pageHead("Settings"),
   loader: async (): Promise<{ config: ConfigResponse; cache: CacheState }> => {
     const [config, cache] = await Promise.all([api.config(), api.cache()]);
     return { config, cache };

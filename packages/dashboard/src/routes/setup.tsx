@@ -3,6 +3,7 @@ import { useState } from "react";
 import { AuthCard } from "../components/auth-card";
 import { Button, Callout, TextField } from "../components/ui/primitives";
 import { ApiError, api } from "../lib/api";
+import { pageHead } from "../lib/page-title";
 
 /** Better Auth's own minimum; saying so up front beats a 422 after submitting. */
 const MIN_PASSWORD = 8;
@@ -15,6 +16,7 @@ const MIN_PASSWORD = 8;
  * screen the moment an account exists rather than relying on the form failing.
  */
 export const Route = createFileRoute("/setup")({
+  head: () => pageHead("Admin Setup"),
   loader: async () => {
     const setup = await api.setup();
     if (!setup.needsFirstOperator) throw redirect({ to: "/sign-in" });

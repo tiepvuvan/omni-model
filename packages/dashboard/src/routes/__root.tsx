@@ -1,5 +1,6 @@
 import { createRootRoute, HeadContent, Outlet, Scripts } from "@tanstack/react-router";
 import type { ReactNode } from "react";
+import { PRODUCT_TITLE } from "../lib/page-title";
 /*
  * Imported for its side effect rather than as `styles.css?url`.
  *
@@ -22,7 +23,7 @@ export const Route = createRootRoute({
       // The dashboard is an operator console behind a session; nothing about it
       // should ever appear in a search index.
       { name: "robots", content: "noindex, nofollow" },
-      { title: "omni-model" },
+      { title: PRODUCT_TITLE },
     ],
   }),
   shellComponent: RootDocument,

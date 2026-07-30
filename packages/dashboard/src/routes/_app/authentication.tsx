@@ -25,8 +25,10 @@ import {
   type SecurityBlock,
   type VerifierEntry,
 } from "../../lib/api";
+import { pageHead } from "../../lib/page-title";
 
 export const Route = createFileRoute("/_app/authentication")({
+  head: () => pageHead("Authentication"),
   loader: async (): Promise<{ config: ConfigResponse; meta: MetaResponse }> => {
     const [config, meta] = await Promise.all([api.config(), api.meta()]);
     return { config, meta };

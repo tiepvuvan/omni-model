@@ -4,8 +4,10 @@ import copyIcon from "../../assets/copy.svg";
 import plusIcon from "../../assets/plus.svg";
 import { Button, Callout, cx, Modal, TextField, ThemedIcon } from "../../components/ui/primitives";
 import { api, type CreatedPublishableKey, type PublishableKey } from "../../lib/api";
+import { pageHead } from "../../lib/page-title";
 
 export const Route = createFileRoute("/_app/publishable-keys")({
+  head: () => pageHead("Public API Keys"),
   loader: () => api.publishableKeys(),
   component: PublishableKeysScreen,
 });

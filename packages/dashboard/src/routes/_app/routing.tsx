@@ -20,9 +20,11 @@ import {
   type RoutingBlock,
   type RoutingRule,
 } from "../../lib/api";
+import { pageHead } from "../../lib/page-title";
 import { PREFERRED_PROVIDERS, preferredType } from "../../lib/preferred";
 
 export const Route = createFileRoute("/_app/routing")({
+  head: () => pageHead("Model Routing"),
   loader: async (): Promise<{ config: ConfigResponse; meta: MetaResponse }> => {
     const [config, meta] = await Promise.all([api.config(), api.meta()]);
     return { config, meta };

@@ -9,10 +9,10 @@ The `firebase-app-check` verifier validates the App Check token that the
 Firebase SDK attaches, on the **self-hosted HTTP proxy**.
 
 App Check tokens carry no user identity — they attest the app *instance*.
-`user.providers` includes `firebase-app-check`, its verified token claims are
-available under `user.claims.<verifier-name>`, and `user.id` stays unset. Pair
-this verifier with a user token verifier such as
-[`firebase-auth`](/security/custom-jwt) when you need both.
+`user.providers` includes `firebase-app-check`, and its verified token claims
+are available under `user.claims.<verifier-name>`. Configure the required
+`security.userAuth` separately; use [`firebase-auth`](/security/custom-jwt)
+when both credentials should come from Firebase.
 
 <Note>
 **You do not need Firebase Hosting or Functions to use this.** The verifier only
@@ -24,8 +24,12 @@ Admin credentials — see below.
 ## Configuration
 
 ```sh
-export OMNI_SECURITY_JSON='{
-  "mode":"any",
+export OMNI_SECURITY_USER_AUTH_JSON='{
+  "type":"firebase-auth",
+  "projectId":"my-app-12345"
+}'
+export OMNI_SECURITY_APP_AUTH_JSON='{
+  "mode":"all",
   "providers":[{
     "type":"firebase-app-check",
     "projectNumber":"1234567890",
@@ -121,25 +125,40 @@ curl https://your-proxy.example.com/v1/chat/completions \
 
 ## Requiring App Check and a user
 
-Use `mode: all` to require both an authentic app instance and a signed-in user
-on the same request:
+The user layer is always required. Add App Check under `appAuth` to require an
+authentic app instance on that same request:
 
 ```sh
-export OMNI_SECURITY_JSON='{
+export OMNI_SECURITY_USER_AUTH_JSON='{
+  "type":"firebase-auth",
+  "projectId":"${GOOGLE_CLOUD_PROJECT}"
+}'
+export OMNI_SECURITY_APP_AUTH_JSON='{
   "mode":"all",
   "providers":[
-    {"type":"firebase-app-check"},
-    {"type":"firebase-auth","projectId":"${GOOGLE_CLOUD_PROJECT}"}
+    {"type":"firebase-app-check","projectNumber":"${FIREBASE_PROJECT_NUMBER}"}
   ]
 }'
 ```
 
-With `mode: all`, a missing credential fails with `credential missing for
-<name>`, and the merged identity carries `firebase-app-check` and `firebase-auth`
+If either credential is absent or invalid, the request is rejected before
+routing. The merged identity carries `firebase-app-check` and `firebase-auth`
 in `user.providers`, plus `user.id` from Firebase Auth, into
 [routing and rate-limit rules](/model-routing/routing).
 Set `projectNumber` (App Check) and `projectId` (Firebase Auth) explicitly —
 they are different values from the same Firebase project.
+
+## Verify against a real Firebase project
+
+The live E2E suite creates a disposable Firebase user, verifies its real ID
+token, exchanges a registered debug secret for a real App Check token, and
+proves both layers are required together. Optional replay coverage requests a
+limited-use token, consumes it through Firebase Admin, and rejects its reuse.
+The model upstream is deterministic, so no model provider key or token cost is
+involved.
+
+See the [E2E Firebase setup](https://github.com/tiepvuvan/omni-model/blob/main/e2e/README.md#live-firebase-authentication-and-app-check)
+for the secure debug-token file, strict CI gate, and commands.
 
 ## Related
 
