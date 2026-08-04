@@ -19,23 +19,27 @@ let fake: FakeApi;
 
 /** Two rules, the catch-all last — the shape a healthy deployment has. */
 const TWO_RULES = {
+  providers: {
+    anthropic: { type: "anthropic", apiKey: { $secret: "sec-1" } },
+    gateway: {
+      type: "openai-compatible",
+      baseUrl: "https://api.example.test/v1",
+      apiKey: "${OPENAI_API_KEY}",
+    },
+    deepseek: { type: "deepseek", apiKey: "${DEEPSEEK_API_KEY}" },
+  },
   routing: {
     allowedModels: ["smart", "fast"],
     rules: [
       {
         id: "pro-users",
         when: 'has(user.claims.tier) && user.claims.tier == "pro"',
-        target: { type: "anthropic", apiKey: { $secret: "sec-1" }, model: "claude-sonnet-5" },
+        target: { provider: "anthropic", model: "claude-sonnet-5" },
       },
       {
         id: "everyone-else",
         when: "true",
-        target: {
-          type: "openai-compatible",
-          baseUrl: "https://api.example.test/v1",
-          apiKey: "${OPENAI_API_KEY}",
-          model: "gpt-4o-mini",
-        },
+        target: { provider: "gateway", model: "gpt-4o-mini" },
       },
     ],
   },
@@ -55,18 +59,32 @@ function row(id: string): HTMLElement {
 
 /** The `routing` block the last save sent. */
 function lastRouting(): { allowedModels: string[]; rules: Record<string, unknown>[] } {
-  const calls = fake.callsTo("PUT", "/routing");
+  const calls = fake.callsTo("PATCH", "/config");
   const body = calls[calls.length - 1]?.body as
-    | { value: { allowedModels: string[]; rules: Record<string, unknown>[] } }
+    | {
+        value: {
+          routing: { allowedModels: string[]; rules: Record<string, unknown>[] };
+        };
+      }
     | undefined;
-  if (body === undefined) throw new Error("nothing was saved to /routing");
-  return body.value;
+  if (body === undefined) throw new Error("nothing was saved to /config");
+  return body.value.routing;
+}
+
+/** The centralized providers sent in the same atomic save as routing. */
+function lastProviders(): Record<string, Record<string, unknown>> {
+  const calls = fake.callsTo("PATCH", "/config");
+  const body = calls[calls.length - 1]?.body as
+    | { value: { providers: Record<string, Record<string, unknown>> } }
+    | undefined;
+  if (body === undefined) throw new Error("nothing was saved to /config");
+  return body.value.providers;
 }
 
 const save = async (user: ReturnType<typeof userEvent.setup>) => {
   await user.click(screen.getByRole("button", { name: "Save Changes" }));
   await waitFor(() => {
-    expect(fake.callsTo("PUT", "/routing").length).toBeGreaterThan(0);
+    expect(fake.callsTo("PATCH", "/config").length).toBeGreaterThan(0);
   });
 };
 
@@ -147,42 +165,52 @@ describe("the rule rows", () => {
     expect(row("everyone")).not.toHaveTextContent("can never fire");
   });
 
-  it("starts a fresh deployment from a default catch-all rule", async () => {
+  it("starts a fresh deployment from complete model-routing rules", async () => {
     // An empty routing screen is a dead end: every request is a 404 and nothing
-    // says what a working configuration looks like. The seeded rule is a *draft*,
-    // so it shows the shape without storing a configuration nobody asked for.
+    // says what a working configuration looks like. The seeded policy is a
+    // *draft*, so it shows a useful large-request/fallback split without storing
+    // a configuration nobody asked for.
     fake.state.config = { routing: { allowedModels: [], rules: [] } };
 
     await renderAt("/routing");
 
-    const seeded = row("everyone");
-    expect(within(seeded).getByLabelText("Condition for everyone")).toHaveValue("true");
-    expect(seeded).toHaveTextContent("Catch-all — matches everything");
-    expect(fake.callsTo("PUT", "/routing")).toHaveLength(0);
-    // Offering it as a draft means Save Changes is live, because the screen now
-    // differs from what is stored.
+    expect(within(row("large-context")).getByLabelText("Condition for large-context")).toHaveValue(
+      "request.inputTokenCount > 16000",
+    );
+    expect(
+      within(row("large-context")).getByRole("combobox", { name: "Provider" }),
+    ).toHaveTextContent("openrouter · OpenAI compatible");
+    expect(within(row("large-context")).getByLabelText("Model (optional)")).toHaveValue(
+      "openai/gpt-4o",
+    );
+    expect(within(row("large-context")).queryByLabelText("API Key")).toBeNull();
+    expect(within(row("large-context")).queryByLabelText("Base URL")).toBeNull();
+
+    expect(within(row("default")).getByLabelText("Condition for default")).toHaveValue("true");
+    expect(within(row("default")).getByLabelText("Model (optional)")).toHaveValue(
+      "openai/gpt-4o-mini",
+    );
+    expect(row("default")).toHaveTextContent("Catch-all — matches everything");
+    expect(fake.callsTo("PATCH", "/config")).toHaveLength(0);
+    // Offering the policy as a draft means Save Changes is live, because the
+    // screen now differs from what is stored.
     expect(screen.getByRole("button", { name: "Save Changes" })).toBeEnabled();
   });
 });
 
-describe("credentials", () => {
-  it("shows a sealed credential as stored, without revealing it", async () => {
+describe("centralized providers", () => {
+  it("keeps credentials off routing rules and out of the routing screen", async () => {
     await renderAt("/routing");
 
-    const apiKey = within(row("pro-users")).getByLabelText("API Key");
-    expect(apiKey).toHaveValue("");
-    expect(apiKey).toHaveAttribute("placeholder", expect.stringContaining("leave blank to keep"));
+    expect(within(row("pro-users")).queryByLabelText("API Key")).toBeNull();
+    expect(within(row("everyone-else")).queryByLabelText("Base URL")).toBeNull();
     expect(document.body.textContent).not.toContain("sec-1");
+    expect(document.body.textContent).not.toContain("${OPENAI_API_KEY}");
+    expect(row("pro-users")).toHaveTextContent("anthropic · Anthropic");
+    expect(row("everyone-else")).toHaveTextContent("gateway · OpenAI compatible");
   });
 
-  it("names the environment variable a ${VAR} reference points at", async () => {
-    await renderAt("/routing");
-
-    // Safe to display: it names a variable rather than carrying a value.
-    expect(row("everyone-else")).toHaveTextContent("${OPENAI_API_KEY}");
-  });
-
-  it("keeps every untouched credential when something else is edited", async () => {
+  it("saves provider references while preserving centralized credentials", async () => {
     const user = userEvent.setup();
     await renderAt("/routing");
 
@@ -191,25 +219,10 @@ describe("credentials", () => {
     await user.type(model, "claude-opus-4");
     await save(user);
 
-    const targets = lastRouting().rules.map((rule) => rule.target as Record<string, unknown>);
-    // Dropping the key would delete the credential; sending "" would fail the
-    // factory's own validation. Sending the reference back is the only correct move.
-    expect(targets[0]?.apiKey).toEqual({ $secret: "sec-1" });
-    expect(targets[0]?.model).toBe("claude-opus-4");
-    expect(targets[1]?.apiKey).toBe("${OPENAI_API_KEY}");
-  });
-
-  it("replaces a credential when a new one is typed", async () => {
-    const user = userEvent.setup();
-    await renderAt("/routing");
-
-    await user.type(within(row("pro-users")).getByLabelText("API Key"), "sk-ant-rotated");
-    await save(user);
-
-    // Plaintext on the wire is correct: the API seals it before the revision is
-    // written, which is the only way an operator can type a key at all.
     const target = lastRouting().rules[0]?.target as Record<string, unknown>;
-    expect(target.apiKey).toBe("sk-ant-rotated");
+    expect(target).toEqual({ provider: "anthropic", model: "claude-opus-4" });
+    expect(lastProviders().anthropic?.apiKey).toEqual({ $secret: "sec-1" });
+    expect(lastProviders().gateway?.apiKey).toBe("${OPENAI_API_KEY}");
   });
 
   it("drops a blank model so the client's model passes through", async () => {
@@ -232,7 +245,7 @@ describe("editing", () => {
 
     await user.type(within(row("pro-users")).getByLabelText("Model (optional)"), "-x");
 
-    expect(fake.callsTo("PUT", "/routing")).toHaveLength(0);
+    expect(fake.callsTo("PATCH", "/config")).toHaveLength(0);
     expect(screen.getByRole("button", { name: "Save Changes" })).toBeEnabled();
   });
 
@@ -333,42 +346,34 @@ describe("editing", () => {
     expect(lastRouting().rules.map((rule) => rule.id)).toEqual(["everyone-else"]);
   });
 
-  it("clears the options when a target's provider changes", async () => {
+  it("changes a rule by named provider id without copying provider options", async () => {
     const user = userEvent.setup();
     await renderAt("/routing");
 
-    await user.click(
-      within(row("everyone-else")).getByRole("button", { name: /^Provider: OpenAI compatible/ }),
-    );
-    // The menu is portalled, so it is looked up on the page rather than inside
-    // the row that opened it.
-    await user.click(await screen.findByRole("menuitem", { name: "Anthropic" }));
+    await user.click(within(row("everyone-else")).getByRole("combobox", { name: "Provider" }));
+    await user.click(await screen.findByRole("option", { name: "anthropic · Anthropic" }));
+    await save(user);
 
-    // Anthropic's card does not draw a base URL, so the field goes — and the
-    // value goes with it. Carrying a value across a type change is how an
-    // endpoint belonging to the old provider silently follows the rule to the new
-    // one, which the factories' `strictObject` would then reject on save.
-    await waitFor(() => {
-      expect(within(row("everyone-else")).queryByLabelText("Base URL")).toBeNull();
-    });
+    const target = lastRouting().rules[1]?.target as Record<string, unknown>;
+    expect(target.provider).toBe("anthropic");
+    expect(target).not.toHaveProperty("apiKey");
+    expect(target).not.toHaveProperty("baseUrl");
   });
 
-  it("offers DeepSeek as a first-class target with its own API key form", async () => {
+  it("stores an optional fallback provider on the rule", async () => {
     const user = userEvent.setup();
     await renderAt("/routing");
 
     await user.click(
-      within(row("everyone-else")).getByRole("button", { name: /^Provider: OpenAI compatible/ }),
+      within(row("everyone-else")).getByRole("combobox", { name: "Fallback provider" }),
     );
-    await user.click(await screen.findByRole("menuitem", { name: "DeepSeek" }));
+    await user.click(await screen.findByRole("option", { name: "deepseek" }));
+    await save(user);
 
-    await waitFor(() => {
-      expect(row("everyone-else")).toHaveTextContent("DeepSeek");
-      expect(within(row("everyone-else")).getByLabelText("API Key")).toBeInTheDocument();
-      expect(within(row("everyone-else")).getByLabelText("Model (optional)")).toHaveAttribute(
-        "placeholder",
-        "deepseek-v4-flash",
-      );
+    expect(lastRouting().rules[1]?.target).toMatchObject({
+      provider: "gateway",
+      fallbackProvider: "deepseek",
+      model: "gpt-4o-mini",
     });
   });
 
@@ -553,28 +558,6 @@ describe("the model dropdown", () => {
     expect(await screen.findByRole("option", { name: "gpt-4o-mini" })).toBeInTheDocument();
   });
 
-  it("sends the candidate target, so an unsaved key is what gets checked", async () => {
-    const user = userEvent.setup();
-    await renderAt("/routing");
-
-    await user.type(within(row("pro-users")).getByLabelText("API Key"), "sk-ant-new");
-
-    // Every rule checks its own target on mount, so waiting for "any call" would
-    // pass on those. The lookup for the typed key is also debounced, so this waits
-    // for the specific call rather than for a count.
-    const keys = () =>
-      fake
-        .callsTo("POST", "/providers/models")
-        .map((call) => (call.body as { target: Record<string, unknown> }).target.apiKey);
-    await waitFor(
-      () => {
-        // The whole point: the key being typed, not the one already stored.
-        expect(keys()).toContain("sk-ant-new");
-      },
-      { timeout: 3000 },
-    );
-  });
-
   it("reports a refused key rather than showing an empty list", async () => {
     // A wrong key must not look like "this provider has no models".
     fake.state.upstreamModels = { ok: false, models: [], status: 401, error: null };
@@ -619,30 +602,27 @@ describe("the model dropdown", () => {
   });
 });
 
-describe("the provider menu", () => {
-  it("offers every registered provider, in the design's order", async () => {
+describe("the provider selectors", () => {
+  it("offers every configured provider by stable id", async () => {
     const user = userEvent.setup();
     await renderAt("/routing");
 
-    await user.click(
-      within(row("pro-users")).getByRole("button", { name: /^Provider: Anthropic/ }),
-    );
+    await user.click(within(row("pro-users")).getByRole("combobox", { name: "Provider" }));
 
-    // Not alphabetical: the file lists OpenAI, DeepSeek, Anthropic,
-    // OpenAI compatible, Gemini, and an operator scanning for their vendor
-    // expects that order. The fake registry has three of the five, in the file's
-    // order rather than alphabetically — which is what an operator scanning for
-    // their vendor expects.
-    const items = (await screen.findAllByRole("menuitem")).map((item) => item.textContent);
-    expect(items).toEqual(["DeepSeek", "Anthropic", "OpenAI compatible"]);
+    const items = (await screen.findAllByRole("option")).map((item) => item.textContent);
+    expect(items).toEqual([
+      "anthropic · Anthropic",
+      "gateway · OpenAI compatible",
+      "deepseek · DeepSeek",
+    ]);
   });
 
-  it("names the current provider in the trigger, so it reads without opening", async () => {
+  it("names the current provider id and type without opening", async () => {
     await renderAt("/routing");
 
-    expect(
-      within(row("pro-users")).getByRole("button", { name: /^Provider: Anthropic/ }),
-    ).toBeInTheDocument();
+    expect(within(row("pro-users")).getByRole("combobox", { name: "Provider" })).toHaveTextContent(
+      "anthropic · Anthropic",
+    );
   });
 });
 
@@ -696,16 +676,14 @@ describe("the variable reference", () => {
 });
 
 describe("adding a rule", () => {
-  it("adds a rule whose provider is pickable from its own header", async () => {
+  it("adds a rule with a configured provider selected", async () => {
     const user = userEvent.setup();
     await renderAt("/routing");
 
     await user.click(screen.getByRole("button", { name: "Matching Rule" }));
 
-    // No separate "choose a provider" step: the new card's header is the picker,
-    // which is one click away.
-    expect(
-      within(row("rule-3")).getByRole("button", { name: /^Provider: OpenAI compatible/ }),
-    ).toBeInTheDocument();
+    expect(within(row("rule-3")).getByRole("combobox", { name: "Provider" })).toHaveTextContent(
+      "anthropic · Anthropic",
+    );
   });
 });

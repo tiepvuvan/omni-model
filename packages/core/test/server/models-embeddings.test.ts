@@ -112,6 +112,31 @@ routing:
 `;
 
 describe("POST /v1/embeddings", () => {
+  it("uses the configured fallback when the primary provider cannot serve embeddings", async () => {
+    const yaml = `
+version: 1
+providers:
+  primary: { type: fake }
+  backup: { type: fake }
+routing:
+  rules:
+    - id: embeddings
+      when: "true"
+      target: { provider: primary, fallbackProvider: backup, model: embed-large }
+`;
+    const { app, providers } = await createTestApp({
+      yaml,
+      behaviors: {
+        backup: { embeddingsResult: { kind: "embeddings", response: EMBED_RESPONSE } },
+      },
+    });
+
+    const response = await app.fetch(embeddingsRequest({ model: "embed", input: "hello" }));
+    expect(response.status).toBe(200);
+    expect(providers.get("primary")?.embeddingsCalls).toHaveLength(0);
+    expect(providers.get("backup")?.embeddingsCalls[0]?.model).toBe("embed-large");
+  });
+
   it("routes, redacts the response and records usage with completion_tokens 0", async () => {
     const storage = new MemoryStorageAdapter(() => FIXED_NOW);
     const { app, providers, collector } = await createTestApp({

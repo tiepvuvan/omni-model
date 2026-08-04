@@ -2,6 +2,7 @@ import { jwtVerify } from "jose";
 import { z } from "zod";
 import { ConfigError } from "../../errors.js";
 import type { RuntimeContext } from "../../types.js";
+import { testJwks } from "../configuration-test.js";
 import type { AuthResult, AuthVerifier, AuthVerifierFactory } from "../types.js";
 import { extractToken, invalidTokenResult, remoteJwks } from "./token.js";
 
@@ -16,6 +17,8 @@ const optionsSchema = z.strictObject({
   name: z.string().optional(),
   /** Firebase project id, e.g. "my-app-12345". */
   projectId: z.string().min(1),
+  /** Optional Firebase Web API key, used to confirm that `projectId` matches. */
+  apiKey: z.string().min(1).optional(),
   /** Header carrying the ID token. Authorization is reserved for publishable keys. */
   header: z.string().min(1).default("x-firebase-id-token"),
   /** "bearer" strips a `Bearer ` prefix; "none" uses the raw header value. */
@@ -44,6 +47,49 @@ export const firebaseAuthVerifierFactory: AuthVerifierFactory = {
     return {
       type: TYPE,
       name: opts.name ?? TYPE,
+      async testConfiguration(ctx) {
+        if (opts.apiKey === undefined) {
+          const keys = await testJwks(FIREBASE_AUTH_JWKS_URL, ctx, "Firebase Authentication");
+          if (keys.ok === false) return keys;
+          return {
+            ok: null,
+            reason:
+              "Firebase signing keys are reachable. Add the Firebase Web API key to verify that " +
+              "the project ID belongs to this app.",
+          };
+        }
+
+        let response: Response;
+        try {
+          response = await ctx.fetch(
+            `https://identitytoolkit.googleapis.com/v1/projects?key=${encodeURIComponent(
+              opts.apiKey,
+            )}`,
+            { headers: { accept: "application/json" } },
+          );
+        } catch {
+          return { ok: false, message: "Firebase Authentication could not be reached." };
+        }
+        if (!response.ok) {
+          return {
+            ok: false,
+            status: response.status,
+            message: `Firebase rejected the Web API key (HTTP ${response.status}).`,
+          };
+        }
+        const body: unknown = await response.json().catch(() => null);
+        const projectId =
+          typeof body === "object" && body !== null && "projectId" in body
+            ? (body as { projectId?: unknown }).projectId
+            : undefined;
+        if (projectId !== opts.projectId) {
+          return {
+            ok: false,
+            message: "The Firebase Web API key belongs to a different project ID.",
+          };
+        }
+        return { ok: true, message: `Firebase project “${opts.projectId}” was verified.` };
+      },
       async verify(request, ctx): Promise<AuthResult | null> {
         const token = extractToken(request, opts.header, opts.scheme);
         if (token === null) return null;

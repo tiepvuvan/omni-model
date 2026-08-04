@@ -132,6 +132,58 @@ export const recaptchaEnterpriseVerifierFactory: AuthVerifierFactory = {
     return {
       type: TYPE,
       name: opts.name ?? TYPE,
+      async testConfiguration(ctx) {
+        const headers: Record<string, string> = { "content-type": "application/json" };
+        if (opts.apiKey !== undefined) {
+          headers["x-goog-api-key"] = opts.apiKey;
+        } else {
+          try {
+            const accessToken = await runtime.getGoogleAccessToken?.({
+              scopes: [CLOUD_PLATFORM_SCOPE],
+              ...(serviceAccountKey === undefined ? {} : { serviceAccountKey }),
+            });
+            if (accessToken === undefined) {
+              return { ok: false, message: "Google OAuth credentials are unavailable." };
+            }
+            headers.authorization = `Bearer ${accessToken}`;
+          } catch {
+            return { ok: false, message: "Google OAuth rejected the reCAPTCHA credentials." };
+          }
+        }
+
+        let response: Response;
+        try {
+          response = await ctx.fetch(endpoint, {
+            method: "POST",
+            headers,
+            body: JSON.stringify({
+              event: {
+                token: "omni-model-configuration-test",
+                siteKey: opts.siteKey,
+                expectedAction: opts.expectedAction,
+              },
+            }),
+          });
+        } catch {
+          return { ok: false, message: "reCAPTCHA Enterprise could not be reached." };
+        }
+        if (!response.ok) {
+          return {
+            ok: false,
+            status: response.status,
+            message: `Google rejected the reCAPTCHA configuration (HTTP ${response.status}).`,
+          };
+        }
+        if (parseAssessment(await response.json().catch(() => null)) === null) {
+          return { ok: false, message: "reCAPTCHA Enterprise returned an invalid assessment." };
+        }
+        return {
+          ok: true,
+          message:
+            "Google accepted the reCAPTCHA project, site key, and server credential; the " +
+            "synthetic token was rejected.",
+        };
+      },
       async verify(request, ctx): Promise<AuthResult | null> {
         const token = request.headers.get(opts.header);
         if (token === null || token === "") return null;

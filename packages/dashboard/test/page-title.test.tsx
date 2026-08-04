@@ -63,6 +63,7 @@ describe("page titles", () => {
         "/sign-in",
         "/_app/authentication",
         "/_app/logs",
+        "/_app/providers",
         "/_app/publishable-keys",
         "/_app/rate-limit",
         "/_app/routing",

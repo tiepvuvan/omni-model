@@ -23,6 +23,12 @@ export type AuthResult =
   | { ok: true; identity: Identity }
   | { ok: false; reason: string; status?: number };
 
+/** Result of checking a verifier's candidate configuration without saving it. */
+export type AuthConfigurationTestResult =
+  | { ok: true; message: string }
+  | { ok: false; message: string; status?: number }
+  | { ok: null; reason: string };
+
 /** Runtime services available to verifiers, including shared storage. */
 export interface VerifyContext extends RuntimeContext {
   storage: StorageAdapter;
@@ -62,6 +68,11 @@ export interface AuthVerifier {
    * reason (and status) is what the client receives.
    */
   verify(request: Request, ctx: VerifyContext): Promise<AuthResult | null>;
+  /**
+   * Exercise the configured upstream or key material without requiring a real
+   * client token. Absent only when a meaningful preflight is impossible.
+   */
+  testConfiguration?(ctx: RuntimeContext): Promise<AuthConfigurationTestResult>;
   routes?: AuthRoute[];
 }
 

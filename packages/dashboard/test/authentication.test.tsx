@@ -406,6 +406,99 @@ describe("editing", () => {
   });
 });
 
+describe("configuration checks", () => {
+  it("tests an unsaved Firebase project and Web API key", async () => {
+    const user = userEvent.setup();
+    await renderAt("/authentication");
+
+    await user.click(within(card("Firebase")).getByRole("radio", { name: "Use Firebase" }));
+    await user.type(await within(card("Firebase")).findByLabelText("Project ID"), "my-project");
+    await user.type(within(card("Firebase")).getByLabelText("API Key (optional)"), "firebase-key");
+    await user.click(within(card("Firebase")).getByRole("button", { name: "Test configuration" }));
+
+    await waitFor(() => {
+      expect(fake.callsTo("POST", "/verifiers/test")).toHaveLength(1);
+    });
+    expect(fake.callsTo("POST", "/verifiers/test")[0]?.body).toEqual({
+      verifier: { type: "firebase-auth", projectId: "my-project", apiKey: "firebase-key" },
+    });
+    expect(await within(card("Firebase")).findByText("Configuration verified")).toBeInTheDocument();
+  });
+
+  it("reuses a sealed credential without revealing it", async () => {
+    const user = userEvent.setup();
+    await renderAt("/authentication");
+
+    await user.click(
+      within(card("Custom JWT")).getByRole("button", { name: "Test configuration" }),
+    );
+
+    await waitFor(() => {
+      expect(fake.callsTo("POST", "/verifiers/test")).toHaveLength(1);
+    });
+    expect(fake.callsTo("POST", "/verifiers/test")[0]?.body).toMatchObject({
+      verifier: { type: "jwt", secret: { $secret: "sec-jwt" } },
+    });
+    expect(document.body.textContent).not.toContain("sec-jwt");
+  });
+
+  it("shows an upstream rejection next to the method", async () => {
+    fake.state.verifierTest = {
+      ok: false,
+      status: 404,
+      message: "The Cognito user pool rejected the configuration (HTTP 404).",
+    };
+    fake.state.config = {
+      security: {
+        ...JWT_ONLY.security,
+        userAuth: {
+          type: "aws-cognito",
+          region: "us-east-1",
+          userPoolId: "us-east-1_Missing",
+          clientIds: ["client"],
+        },
+      },
+    };
+    const user = userEvent.setup();
+    await renderAt("/authentication");
+
+    await user.click(
+      within(card("AWS Cognito")).getByRole("button", { name: "Test configuration" }),
+    );
+
+    expect(
+      await within(card("AWS Cognito")).findByText("Configuration check failed"),
+    ).toBeInTheDocument();
+    expect(card("AWS Cognito")).toHaveTextContent("HTTP 404");
+  });
+
+  it("distinguishes a partial preflight from a successful verification", async () => {
+    fake.state.verifierTest = {
+      ok: null,
+      reason: "The project number is confirmed when a real App Check token is verified.",
+    };
+    const user = userEvent.setup();
+    await renderAt("/authentication");
+    await user.click(
+      within(card("Firebase App Check")).getByRole("checkbox", {
+        name: "Enable Firebase App Check",
+      }),
+    );
+    await user.type(
+      await within(card("Firebase App Check")).findByLabelText("Project Number (optional)"),
+      "123456789",
+    );
+    await user.click(
+      within(card("Firebase App Check")).getByRole("button", { name: "Test configuration" }),
+    );
+
+    expect(
+      await within(card("Firebase App Check")).findByText("A full preflight is not available"),
+    ).toBeInTheDocument();
+    expect(within(card("Firebase App Check")).queryByText("Configuration verified")).toBeNull();
+  });
+});
+
 describe("the sidebar", () => {
   it("lists every built section", async () => {
     await renderAt("/authentication");

@@ -200,17 +200,20 @@ describe.skipIf(!POSTGRES_URL)("E2E: the admin API from an empty database", () =
             requireWriteKey: true,
             userAuth: { type: "jwt", secret: JWT_SECRET, algorithms: ["HS256"] },
           },
+          providers: {
+            primary: {
+              type: "deepseek",
+              baseUrl: "https://upstream.invalid/v1",
+              apiKey: { $secret: secretId },
+              models: ["mock-model"],
+            },
+          },
           routing: {
             rules: [
               {
                 id: "main",
                 when: "true",
-                target: {
-                  type: "deepseek",
-                  baseUrl: "https://upstream.invalid/v1",
-                  apiKey: { $secret: secretId },
-                  models: ["mock-model"],
-                },
+                target: { provider: "primary" },
               },
             ],
           },
@@ -314,7 +317,7 @@ describe.skipIf(!POSTGRES_URL)("E2E: the admin API from an empty database", () =
       modelRequested: "mock-model",
       // The provider *type*, not a rule id: a log row wants to say "this went to
       // an OpenAI-compatible upstream". Which rule matched is `routeName`.
-      providerId: "deepseek",
+      providerId: "primary",
       routeName: "main",
       userId: "user-e2e",
       writeKeyName: "ios app",

@@ -104,6 +104,18 @@ describe("firebaseAppCheckVerifierFactory", () => {
     expect(await verifier.verify(request, ctx)).toBeNull();
   });
 
+  it("checks signing-key reachability without claiming the project number was proven", async () => {
+    const calls: string[] = [];
+    const ctx = makeCtx(jwksFetch(calls));
+    const verifier = firebaseAppCheckVerifierFactory.create(options, ctx);
+
+    expect(await verifier.testConfiguration?.(ctx)).toMatchObject({
+      ok: null,
+      reason: expect.stringContaining("real App Check token"),
+    });
+    expect(calls).toEqual([JWKS_URL]);
+  });
+
   it("rejects a token whose audience lacks the project", async () => {
     const ctx = makeCtx(jwksFetch([]));
     const verifier = firebaseAppCheckVerifierFactory.create(options, ctx);

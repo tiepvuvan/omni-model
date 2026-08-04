@@ -145,6 +145,7 @@ describe("full config examples in the reference page parse", () => {
       "OMNI_STORAGE_POSTGRES_URL",
       "OMNI_TARGET_TYPE",
       "OMNI_SECURITY_FIREBASE_AUTH_ENABLED",
+      "OMNI_SECURITY_FIREBASE_AUTH_API_KEY",
       "OMNI_SECURITY_FIREBASE_APPCHECK_ENABLED",
       "OMNI_SECURITY_FIREBASE_APPCHECK_CONSUME",
       "OMNI_ROUTING_ALLOWED_MODELS",
@@ -184,7 +185,8 @@ describe("the documented container production configuration", () => {
     expect(config.security.userAuth).toMatchObject({ type: "jwt" });
     // The shortcuts seed one catch-all rule, which is the whole point of them.
     expect(config.routing.rules).toMatchObject([
-      { id: "default", when: "true", target: { type: "openai" } },
+      { id: "default", when: "true", target: { provider: "default" } },
     ]);
+    expect(config.providers.default).toMatchObject({ type: "openai" });
   });
 });

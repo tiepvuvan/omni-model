@@ -43,9 +43,11 @@ const hex = (bytes: ArrayBuffer): string =>
  * prompt's answer to a different prompt.
  */
 export async function promptCacheKey(input: {
+  /** Named provider instance. Falls back to `providerType` for legacy callers. */
+  providerId?: string;
   /** Provider type the router chose, e.g. `openai`. */
   providerType: string;
-  /** Routing rule the request matched, since it owns the credentials. */
+  /** Routing rule the request matched. */
   routeName: string;
   /** Model the upstream will actually be asked for. */
   model: string;
@@ -57,6 +59,7 @@ export async function promptCacheKey(input: {
 }): Promise<string> {
   const source = canonical({
     endpoint: input.endpoint,
+    providerId: input.providerId ?? input.providerType,
     providerType: input.providerType,
     routeName: input.routeName,
     model: input.model,

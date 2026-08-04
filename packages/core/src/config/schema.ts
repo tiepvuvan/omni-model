@@ -227,14 +227,50 @@ export const cacheConfigSchema = z.strictObject({
   maxEntries: z.number().int().positive().default(10_000),
 });
 
-export const routeTargetSchema = z.looseObject({
+/** One named model upstream. Its factory validates every option after `type`. */
+export const modelProviderConfigSchema = z.looseObject({
   type: z.string().min(1),
-  /**
-   * Upstream model name. Omit to forward whatever the client asked for, which is
-   * what a rule matching on `request.model` usually wants.
-   */
+});
+
+/** Safe stable key used by routing, logs, and dotted credential paths. */
+const modelProviderIdSchema = z
+  .string()
+  .min(1)
+  .regex(/^[A-Za-z0-9_-]+$/, "provider id may contain only letters, numbers, _ and -");
+
+const namedRouteTargetSchema = z
+  .strictObject({
+    /** Key in the top-level `providers` map. */
+    provider: modelProviderIdSchema,
+    /** Optional provider to retry when the primary returns an upstream error. */
+    fallbackProvider: modelProviderIdSchema.optional(),
+    /**
+     * Upstream model name. Omit to forward whatever the client asked for, which is
+     * what a rule matching on `request.model` usually wants.
+     */
+    model: z.string().optional(),
+  })
+  .refine(
+    ({ provider, fallbackProvider }) =>
+      fallbackProvider === undefined || fallbackProvider !== provider,
+    {
+      path: ["fallbackProvider"],
+      message: "fallback provider must be different from the primary provider",
+    },
+  );
+
+/**
+ * Legacy inline target retained so existing stored revisions can still boot.
+ *
+ * New configuration should always use `provider`; the dashboard no longer writes
+ * this shape.
+ */
+const legacyRouteTargetSchema = z.looseObject({
+  type: z.string().min(1),
   model: z.string().optional(),
 });
+
+export const routeTargetSchema = z.union([namedRouteTargetSchema, legacyRouteTargetSchema]);
 
 export const routingRuleSchema = z.strictObject({
   /**
@@ -318,9 +354,8 @@ export const omniConfigSchema = z.strictObject({
    * that is the axis these rules protect.
    */
   rateLimits: z.array(rateLimitRuleSchema).default(defaultRateLimits),
-  // No `providers` block: an upstream is described by the rule that routes to it
-  // (`routing.rules[].target`), so there is no name to reference and nothing to
-  // leave dangling.
+  /** Named reusable upstreams. Routing rules reference these keys. */
+  providers: z.record(modelProviderIdSchema, modelProviderConfigSchema).default({}),
   routing: routingConfigSchema.prefault({}),
   logging: loggingConfigSchema.prefault({}),
   concurrency: concurrencyConfigSchema.prefault({}),
@@ -333,6 +368,7 @@ export type StorageConfig = z.output<typeof storageConfigSchema>;
 export type SecurityProviderConfig = z.output<typeof securityProviderConfigSchema>;
 export type SecurityConfig = z.output<typeof securityConfigSchema>;
 export type RateLimitRuleConfig = z.output<typeof rateLimitRuleSchema>;
+export type ModelProviderConfig = z.output<typeof modelProviderConfigSchema>;
 export type RouteTargetConfig = z.output<typeof routeTargetSchema>;
 export type RoutingRuleConfig = z.output<typeof routingRuleSchema>;
 export type RoutingConfig = z.output<typeof routingConfigSchema>;

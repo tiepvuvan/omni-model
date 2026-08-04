@@ -84,16 +84,28 @@ secure-token JWKS. The Firebase uid (`sub`) becomes `user.id`. Clients send
 the raw token in `X-Firebase-ID-Token`.
 
 ```sh
-export OMNI_SECURITY_USER_AUTH_JSON='{"type":"firebase-auth","projectId":"my-app-12345"}'
+export OMNI_SECURITY_USER_AUTH_JSON='{
+  "type":"firebase-auth",
+  "projectId":"my-app-12345",
+  "apiKey":"${FIREBASE_WEB_API_KEY}"
+}'
 ```
 
 <ParamField path="projectId" type="string" required>
 Firebase project id, e.g. `my-app-12345`. The verifier pins the issuer to
 `https://securetoken.google.com/<projectId>` and the audience to `<projectId>`.
 </ParamField>
+<ParamField path="apiKey" type="string">
+Optional Firebase Web API key. Supplying it lets the Authentication settings page make a
+project-specific test call and reject a key from a different Firebase project before you save.
+</ParamField>
 <ParamField path="header" type="string" default="x-firebase-id-token">
 Header carrying the raw ID token.
 </ParamField>
+
+The proxy does not need the Web API key to verify ID tokens. Without it, the configuration test can
+confirm that Google's signing-key service is reachable, but it cannot prove that the project id was
+typed correctly until a real client token is presented.
 <ParamField path="scheme" type="bearer | none" default="none">
 How to extract the token from the configured header.
 </ParamField>

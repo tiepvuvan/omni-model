@@ -95,6 +95,15 @@ describe("jwtVerifierFactory", () => {
       expect(calls).toEqual([JWKS_URL]);
     });
 
+    it("tests the configured remote JWKS before save", async () => {
+      const calls: string[] = [];
+      const ctx = makeCtx(jwksFetch(JWKS_URL, [jwk], calls));
+      const verifier = jwtVerifierFactory.create(options, ctx);
+
+      expect(await verifier.testConfiguration?.(ctx)).toMatchObject({ ok: true });
+      expect(calls).toEqual([JWKS_URL]);
+    });
+
     it("accepts a case-insensitive bearer prefix", async () => {
       const ctx = makeCtx(jwksFetch(JWKS_URL, [jwk], []));
       const verifier = jwtVerifierFactory.create(
@@ -210,6 +219,16 @@ describe("jwtVerifierFactory", () => {
       const result = await verifier.verify(withHeader("x-auth-token", token), ctx);
       if (result === null || !result.ok) throw new Error("expected success");
       expect(result.identity.userId).toBe("user-2");
+    });
+
+    it("accepts structurally valid local key material without a network call", async () => {
+      const ctx = makeCtx(rejectFetch);
+      const verifier = jwtVerifierFactory.create(options, ctx);
+
+      expect(await verifier.testConfiguration?.(ctx)).toMatchObject({
+        ok: true,
+        message: expect.stringContaining("local JWT key material"),
+      });
     });
 
     it("rejects a token signed with a different secret", async () => {

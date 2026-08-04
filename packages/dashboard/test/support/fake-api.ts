@@ -5,6 +5,7 @@ import type {
   RequestLog,
   TeamInvite,
   TeamUser,
+  VerifierTestResponse,
 } from "../../src/lib/api";
 
 /**
@@ -50,7 +51,7 @@ export interface FakeState {
   users: TeamUser[];
   /** Pending dashboard invitations. */
   invites: TeamInvite[];
-  /** What `POST /providers/models` should answer for a candidate target. */
+  /** What `POST /providers/models` should answer for a candidate provider. */
   upstreamModels: {
     ok: boolean | null;
     models: string[];
@@ -58,6 +59,8 @@ export interface FakeState {
     error?: string | null;
     reason?: string;
   };
+  /** What `POST /verifiers/test` should answer for a candidate verifier. */
+  verifierTest: VerifierTestResponse;
 }
 
 export const PROVIDER_SCHEMAS = [
@@ -250,6 +253,7 @@ export const VERIFIER_SCHEMAS = [
       properties: {
         type: { type: "string" },
         projectId: { type: "string" },
+        apiKey: { type: "string" },
         header: { type: "string", default: "x-firebase-id-token" },
         scheme: { type: "string", enum: ["bearer", "none"], default: "none" },
       },
@@ -309,6 +313,7 @@ export function createFakeApi(initial: Partial<FakeState> = {}) {
     simulate: { matched: false, reason: "no rule matches", rules: [], warnings: [] },
     warnings: [],
     upstreamModels: { ok: true, models: ["gpt-4o", "gpt-4o-mini", "o3"] },
+    verifierTest: { ok: true, message: "The remote authentication project was verified." },
     cache: { available: true, entries: 0, oldestAt: null, bytes: null },
     logs: [],
     writeKeys: [],
@@ -458,6 +463,9 @@ export function createFakeApi(initial: Partial<FakeState> = {}) {
           logsAvailable: true,
         });
 
+      case path === "/verifiers/test" && method === "POST":
+        return json(state.verifierTest);
+
       case path.startsWith("/logs?") && method === "GET":
         return json({
           logs: state.logs.map(({ content: _content, ...log }) => log),
@@ -557,6 +565,11 @@ export function createFakeApi(initial: Partial<FakeState> = {}) {
       case path === "/routing" && method === "PUT": {
         const value = isRecord(body) && isRecord(body.value) ? body.value : {};
         return save({ ...state.config, routing: value });
+      }
+
+      case path === "/providers" && method === "PUT": {
+        const value = isRecord(body) && isRecord(body.value) ? body.value : {};
+        return save({ ...state.config, providers: value });
       }
 
       case path === "/security" && method === "PUT": {

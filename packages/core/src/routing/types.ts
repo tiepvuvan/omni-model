@@ -58,13 +58,16 @@ export interface RequestFacts {
 }
 
 export interface RouteDecision {
-  /**
-   * Where to send it. The rule owns its upstream, so a matched rule always has
-   * one — there is no id to look up and therefore no "provider not found".
-   */
+  /** Primary named upstream selected by the matching rule. */
   provider: ChatProvider;
+  /** Stable configured provider id, recorded in request logs. */
+  providerId: string;
   /** Provider type, recorded per request for usage attribution. */
   providerType: string;
+  /** Optional retry upstream used when the primary returns an error. */
+  fallbackProvider?: ChatProvider;
+  fallbackProviderId?: string;
+  fallbackProviderType?: string;
   /** Final upstream model (the rule's override, or the client-requested model). */
   model: string;
   /** Which rule matched. Always set: nothing serves a request implicitly. */
@@ -75,6 +78,7 @@ export interface RouteDecision {
 export interface RuleEvaluation {
   /** The rule's name, else its id. */
   rule: string;
+  providerId: string;
   providerType: string;
   /** `"match"` wins; the others are why it did not. */
   outcome: "match" | "no-match" | "error" | "non-boolean";

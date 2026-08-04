@@ -121,18 +121,23 @@ The calling application appears in CEL expressions as `client`:
 Use `client.id != null` when a rule only needs to know whether a publishable key was presented.
 
 ```yaml
+providers:
+  anthropic:
+    type: anthropic
+    apiKey: ${ANTHROPIC_API_KEY}
+  openai:
+    type: openai
+    apiKey: ${OPENAI_API_KEY}
 routing:
   rules:
     - id: internal-tools
       when: client.name == "admin-dashboard"
       target:
-        type: anthropic
-        apiKey: ${ANTHROPIC_API_KEY}
+        provider: anthropic
     - id: everyone-else
       when: "true"
       target:
-        type: openai
-        apiKey: ${OPENAI_API_KEY}
+        provider: openai
 ```
 
 Token budgets remain per user. Publishable keys provide client attribution and model restriction;

@@ -12,6 +12,7 @@ const JSON_BLOCKS: ReadonlyArray<readonly [name: string, path: readonly string[]
   ["OMNI_SECURITY_JSON", ["security"]],
   ["OMNI_SECURITY_USER_AUTH_JSON", ["security", "userAuth"]],
   ["OMNI_SECURITY_APP_AUTH_JSON", ["security", "appAuth"]],
+  ["OMNI_PROVIDERS_JSON", ["providers"]],
   ["OMNI_RATE_LIMITS_JSON", ["rateLimits"]],
   ["OMNI_ROUTING_JSON", ["routing"]],
   ["OMNI_LOGGING_JSON", ["logging"]],
@@ -49,7 +50,8 @@ const STORAGE_VALUES: ReadonlyArray<readonly [name: string, field: string]> = [
  * The overwhelmingly common first boot is "one provider, one key, send everything
  * there". Expressing that as `OMNI_ROUTING_RULES='[{...}]'` would make the
  * simplest case the ugliest, so these build the rule instead: `when: "true"` with
- * one target. Anything more — several upstreams, conditions on claims — is
+ * one named provider and one referencing target. Anything more — several
+ * upstreams, conditions on claims — is `OMNI_PROVIDERS_JSON` plus
  * `OMNI_ROUTING_RULES`, or the admin API.
  */
 const TARGET_VALUES: ReadonlyArray<readonly [name: string, field: string]> = [
@@ -119,6 +121,7 @@ const SECURITY_PROFILES: readonly SecurityProfile[] = [
     enabled: "OMNI_SECURITY_FIREBASE_AUTH_ENABLED",
     values: [
       ["OMNI_SECURITY_FIREBASE_AUTH_PROJECT_ID", "projectId"],
+      ["OMNI_SECURITY_FIREBASE_AUTH_API_KEY", "apiKey"],
       ["OMNI_SECURITY_FIREBASE_AUTH_HEADER", "header"],
       ["OMNI_SECURITY_FIREBASE_AUTH_SCHEME", "scheme"],
       ["OMNI_SECURITY_FIREBASE_AUTH_CLOCK_TOLERANCE_SECONDS", "clockToleranceSeconds"],
@@ -543,7 +546,7 @@ function catchAllTarget(root: Record<string, unknown>): Record<string, unknown> 
   }
 
   if (rules.length === 0) {
-    const target: Record<string, unknown> = {};
+    const target: Record<string, unknown> = { provider: "default" };
     rules.push({ id: "default", when: "true", target });
     return target;
   }
@@ -553,7 +556,7 @@ function catchAllTarget(root: Record<string, unknown>): Record<string, unknown> 
   }
   const existingTarget = first.target;
   if (existingTarget === undefined) {
-    const target: Record<string, unknown> = {};
+    const target: Record<string, unknown> = { provider: "default" };
     first.target = target;
     return target;
   }
@@ -563,6 +566,35 @@ function catchAllTarget(root: Record<string, unknown>): Record<string, unknown> 
   return existingTarget;
 }
 
+function targetProvider(
+  root: Record<string, unknown>,
+  target: Record<string, unknown>,
+): Record<string, unknown> {
+  const id =
+    typeof target.provider === "string" && target.provider !== "" ? target.provider : "default";
+  target.provider = id;
+  const existingProviders = root.providers;
+  let providers: Record<string, unknown>;
+  if (existingProviders === undefined) {
+    providers = {};
+    root.providers = providers;
+  } else if (isObject(existingProviders)) {
+    providers = existingProviders;
+  } else {
+    throw new ConfigError("OMNI_TARGET_* conflicts with a non-object providers configuration");
+  }
+  const existing = providers[id];
+  if (existing === undefined) {
+    const provider: Record<string, unknown> = {};
+    providers[id] = provider;
+    return provider;
+  }
+  if (!isObject(existing)) {
+    throw new ConfigError(`OMNI_TARGET_* conflicts with providers.${id}`);
+  }
+  return existing;
+}
+
 function applyTargetValues(
   root: Record<string, unknown>,
   env: Record<string, string | undefined>,
@@ -570,6 +602,12 @@ function applyTargetValues(
   if (TARGET_VALUES.some(([name]) => env[name] !== undefined) === false) return;
 
   const target = catchAllTarget(root);
+  if ("type" in target) {
+    throw new ConfigError(
+      "OMNI_TARGET_* cannot extend a legacy inline routing target; move it to top-level providers",
+    );
+  }
+  const provider = targetProvider(root, target);
   for (const [name, field] of TARGET_VALUES) {
     const value = env[name];
     // An empty compatible-provider API key means "no API key" rather than an
@@ -577,7 +615,8 @@ function applyTargetValues(
     if (value === undefined || (name === "OMNI_TARGET_API_KEY" && value.trim() === "")) {
       continue;
     }
-    target[field] = shortcutValue(value, name);
+    if (field === "model") target.model = shortcutValue(value, name);
+    else provider[field] = shortcutValue(value, name);
   }
 }
 

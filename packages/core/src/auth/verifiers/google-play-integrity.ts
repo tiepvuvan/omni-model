@@ -217,6 +217,46 @@ export const googlePlayIntegrityVerifierFactory: AuthVerifierFactory = {
     return {
       type: TYPE,
       name: opts.name ?? TYPE,
+      async testConfiguration(ctx) {
+        let accessToken: string;
+        try {
+          accessToken = await getGoogleAccessToken({
+            scopes: [PLAY_INTEGRITY_SCOPE],
+            ...(serviceAccountKey === undefined ? {} : { serviceAccountKey }),
+          });
+        } catch {
+          return {
+            ok: false,
+            message: "Google OAuth rejected the Play Integrity service-account configuration.",
+          };
+        }
+        let response: Response;
+        try {
+          response = await ctx.fetch(endpoint, {
+            method: "POST",
+            headers: {
+              authorization: `Bearer ${accessToken}`,
+              "content-type": "application/json",
+            },
+            body: JSON.stringify({ integrityToken: "omni-model-configuration-test" }),
+          });
+        } catch {
+          return { ok: false, message: "Google Play Integrity could not be reached." };
+        }
+        if (response.ok || response.status === 400) {
+          return {
+            ok: true,
+            message:
+              "Google accepted the Play Integrity project credentials and package endpoint; " +
+              "the synthetic token was rejected.",
+          };
+        }
+        return {
+          ok: false,
+          status: response.status,
+          message: `Google rejected the Play Integrity configuration (HTTP ${response.status}).`,
+        };
+      },
       async verify(request, ctx): Promise<AuthResult | null> {
         const token = request.headers.get(opts.header);
         if (token === null || token === "") return null;

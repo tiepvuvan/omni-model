@@ -74,17 +74,21 @@ describe("component metadata", () => {
 describe("routing simulation", () => {
   /** Two routes: one that only fires for a named client, one catch-all. */
   const routed = baseConfig({
+    providers: {
+      premium: { type: "openai", apiKey: "sk-b", baseUrl: "https://b.test/v1" },
+      standard: { type: "openai", apiKey: "sk-a", baseUrl: "https://a.test/v1" },
+    },
     routing: {
       rules: [
         {
           id: "premium-clients",
           when: 'client.name == "ios app"',
-          target: { type: "openai", apiKey: "sk-b", baseUrl: "https://b.test/v1" },
+          target: { provider: "premium" },
         },
         {
           id: "everything-else",
           when: "true",
-          target: { type: "openai", apiKey: "sk-a", baseUrl: "https://a.test/v1" },
+          target: { provider: "standard" },
         },
       ],
     },
@@ -100,7 +104,7 @@ describe("routing simulation", () => {
     const body = (await response.json()) as { matched: boolean; route: string; provider: string };
     expect(body.matched).toBe(true);
     expect(body.route).toBe("premium-clients");
-    expect(body.provider).toBe("openai");
+    expect(body.provider).toBe("premium");
   });
 
   it("falls through to the catch-all for a different client", async () => {
@@ -111,7 +115,7 @@ describe("routing simulation", () => {
     });
     const body = (await response.json()) as { route: string; provider: string };
     expect(body.route).toBe("everything-else");
-    expect(body.provider).toBe("openai");
+    expect(body.provider).toBe("standard");
   });
 
   it("returns the facts the rules were evaluated against", async () => {

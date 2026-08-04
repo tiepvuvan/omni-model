@@ -54,8 +54,9 @@ installation.
 - **Application and device attestation.** Require Firebase App Check, Apple App Attest,
   DeviceCheck, Google Play Integrity, Cloudflare Turnstile, or reCAPTCHA Enterprise. Combine
   verifiers to accept multiple client platforms without sharing a secret between them.
-- **Flexible model routing with CEL.** Route by model, token count, temperature, user claims, client,
-  headers, IP, path, or method. Change the model behind an alias without releasing a new app.
+- **Flexible model routing with CEL.** Configure provider accounts once, then route by model, token
+  count, temperature, user claims, client, headers, IP, path, or method. Add a fallback provider and
+  change the model behind an alias without releasing a new app.
 - **Per-user token budgets.** Layer CEL rules for free, paid, internal, or custom user groups. A
   concurrent-request guard prevents parallel calls from racing past a post-paid token budget.
 - **Prompt caching.** Identical requests can reuse the same completion. Cache hits avoid an upstream
@@ -65,8 +66,8 @@ installation.
   Set the limit in **Settings**.
 - **OpenAI-compatible API.** Use `/v1/chat/completions`, streaming SSE, `/v1/models`, and
   `/v1/embeddings` with your preferred OpenAI-compatible SDK.
-- **First-class providers.** Route to OpenAI, DeepSeek, Anthropic, Google Gemini, or any
-  OpenAI-compatible endpoint.
+- **Centralized providers.** Manage multiple OpenAI, DeepSeek, Anthropic, Google Gemini, or
+  OpenAI-compatible accounts and their encrypted credentials from one Providers page.
 - **Operational dashboard.** Manage authentication, routing, rate limits, publishable keys, team
   access, cache limits, and organization settings. Inspect request prompts, redacted headers,
   request bodies, routed models, latency, and token usage.
@@ -95,7 +96,7 @@ docker compose \
 Open [http://localhost:8787/admin](http://localhost:8787/admin), create the first operator, then:
 
 1. Choose your user authentication and optional app-attestation methods.
-2. Add a model-routing rule and provider key.
+2. Add a provider and choose it from a model-routing rule.
 3. Set token budgets and input limits.
 4. Generate a publishable key for your app.
 

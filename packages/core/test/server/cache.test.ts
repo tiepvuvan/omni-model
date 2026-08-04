@@ -373,6 +373,12 @@ describe("the cache key", () => {
     );
   });
 
+  it("separates two configured accounts of the same provider type", async () => {
+    expect(await promptCacheKey({ ...base, providerId: "openai-primary" })).not.toBe(
+      await promptCacheKey({ ...base, providerId: "openai-backup" }),
+    );
+  });
+
   it("separates the two endpoints and the two response shapes", async () => {
     expect(await promptCacheKey(base)).not.toBe(await promptCacheKey({ ...base, stream: true }));
     expect(await promptCacheKey(base)).not.toBe(

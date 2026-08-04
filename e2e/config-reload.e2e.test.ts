@@ -28,17 +28,20 @@ function config(overrides: Record<string, unknown> = {}): Record<string, unknown
     server: { logLevel: "silent" },
     storage: { type: "postgres", url: "${OMNI_E2E_DATABASE_URL}" },
     security: { userAuth: { type: "jwt", secret: JWT_SECRET, algorithms: ["HS256"] } },
+    providers: {
+      main: {
+        type: "openai-compatible",
+        baseUrl: "https://upstream.invalid/v1",
+        apiKey: "sk-e2e",
+        models: ["mock-model"],
+      },
+    },
     routing: {
       rules: [
         {
           id: "main",
           when: "true",
-          target: {
-            type: "openai-compatible",
-            baseUrl: "https://upstream.invalid/v1",
-            apiKey: "sk-e2e",
-            models: ["mock-model"],
-          },
+          target: { provider: "main" },
         },
       ],
     },
@@ -150,12 +153,7 @@ describe.skipIf(!POSTGRES_URL)("E2E: two instances over one database", () => {
             {
               id: "main",
               when: "true",
-              target: {
-                type: "openai-compatible",
-                baseUrl: "https://upstream.invalid/v1",
-                apiKey: "sk-e2e",
-                models: ["mock-model"],
-              },
+              target: { provider: "main" },
             },
           ],
         },
@@ -180,9 +178,9 @@ describe.skipIf(!POSTGRES_URL)("E2E: two instances over one database", () => {
     // Saved straight to the store, bypassing validation — which is exactly what
     // the admin API refuses to do, and therefore the only way a bad document is
     // already in the store when a replica reads it. Everything else is valid, so
-    // the unknown provider is what fails rather than a missing verifier.
+    // the unknown provider implementation is what fails rather than a missing verifier.
     const broken = config({
-      routing: { rules: [{ id: "main", when: "true", target: { type: "no-such-provider" } }] },
+      providers: { main: { type: "no-such-provider" } },
     });
     const saved = await a.configStore.save(broken, {
       createdBy: "e2e",
@@ -196,7 +194,7 @@ describe.skipIf(!POSTGRES_URL)("E2E: two instances over one database", () => {
 
     // Still serving, still on the old revision, and the reason is recorded.
     expect(b.holder.status().revision).toBe(before);
-    expect(b.holder.status().lastError).toMatch(/routing\.rules\[0\]\.target/);
+    expect(b.holder.status().lastError).toMatch(/providers\.main/);
     expect(b.holder.status().configured).toBe(true);
     expect((await chat(baseB, token)).status).toBe(404);
 
@@ -223,12 +221,7 @@ describe.skipIf(!POSTGRES_URL)("E2E: two instances over one database", () => {
             {
               id: "main",
               when: "true",
-              target: {
-                type: "openai-compatible",
-                baseUrl: "https://upstream.invalid/v1",
-                apiKey: "sk-e2e",
-                models: ["mock-model"],
-              },
+              target: { provider: "main" },
             },
           ],
         },

@@ -79,6 +79,31 @@ describe("appleDeviceCheckVerifierFactory", () => {
     expect(calls).toHaveLength(0);
   });
 
+  it("preflights the team and key with a synthetic device token", async () => {
+    const calls: RecordedCall[] = [];
+    const ctx = makeCtx({
+      fetch: recordingFetch(calls, () => new Response("invalid token", { status: 400 })),
+    });
+    const verifier = appleDeviceCheckVerifierFactory.create(baseOptions(), ctx);
+
+    expect(await verifier.testConfiguration?.(ctx)).toMatchObject({
+      ok: true,
+      message: expect.stringContaining("credentials"),
+    });
+    expect(calls[0]?.body.device_token).toBe("omni-model-configuration-test");
+  });
+
+  it("reports rejected DeviceCheck credentials without exposing the private key", async () => {
+    const ctx = makeCtx({
+      fetch: (async () => new Response("unauthorized", { status: 401 })) as typeof fetch,
+    });
+    const verifier = appleDeviceCheckVerifierFactory.create(baseOptions(), ctx);
+
+    const result = await verifier.testConfiguration?.(ctx);
+    expect(result).toMatchObject({ ok: false, status: 401 });
+    expect(JSON.stringify(result)).not.toContain(privateKey);
+  });
+
   it("validates a token with Apple and sends a well-formed request", async () => {
     const calls: RecordedCall[] = [];
     const ctx = makeCtx({ fetch: recordingFetch(calls, () => new Response("", { status: 200 })) });

@@ -13,15 +13,16 @@ describe("admin authorization", () => {
     ["GET", "/admin/api/status"],
     ["GET", "/admin/api/config"],
     ["PUT", "/admin/api/config"],
+    ["PATCH", "/admin/api/config"],
     ["POST", "/admin/api/config/validate"],
+    ["POST", "/admin/api/verifiers/test"],
     ["GET", "/admin/api/config/revisions"],
     ["PUT", "/admin/api/security"],
     ["PUT", "/admin/api/rate-limits"],
     ["PUT", "/admin/api/routing"],
     ["PUT", "/admin/api/logging"],
-    ["PUT", "/admin/api/providers/default"],
-    ["DELETE", "/admin/api/providers/default"],
-    ["POST", "/admin/api/providers/default/test"],
+    ["PUT", "/admin/api/providers"],
+    ["POST", "/admin/api/providers/models"],
     ["GET", "/admin/api/write-keys"],
     ["POST", "/admin/api/write-keys"],
     ["DELETE", "/admin/api/write-keys/abc"],
@@ -40,7 +41,7 @@ describe("admin authorization", () => {
 
   /** GET and DELETE requests cannot carry one. */
   const bodyFor = (method: string): { body?: string } =>
-    method === "POST" || method === "PUT" ? { body: "{}" } : {};
+    method === "POST" || method === "PUT" || method === "PATCH" ? { body: "{}" } : {};
 
   it.each(guarded)("%s %s answers 401 without a session", async (method, path) => {
     const { call } = await createTestAdmin({ config: baseConfig() });

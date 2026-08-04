@@ -37,9 +37,10 @@ omni-model
 OpenAI · DeepSeek · Anthropic · Gemini · OpenAI-compatible upstream
 ```
 
-The first matching routing rule selects both the provider and the concrete model. A client can ask
-for a stable alias such as `smart` while you change the upstream model without shipping an app
-update.
+Provider endpoints and encrypted credentials are configured once under stable IDs. The first
+matching routing rule selects a primary ID, an optional fallback ID, and the concrete model. A
+client can ask for a stable alias such as `smart` while you change the upstream model without
+shipping an app update.
 
 ## Three independent trust signals
 

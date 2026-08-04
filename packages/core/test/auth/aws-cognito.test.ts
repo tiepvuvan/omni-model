@@ -86,6 +86,15 @@ describe("awsCognitoVerifierFactory", () => {
     );
   });
 
+  it("tests the region and user pool through the pool-specific JWKS endpoint", async () => {
+    const calls: string[] = [];
+    const ctx = context(jwksFetch(calls));
+    const verifier = awsCognitoVerifierFactory.create(baseOptions, ctx);
+
+    expect(await verifier.testConfiguration?.(ctx)).toMatchObject({ ok: true });
+    expect(calls).toEqual([JWKS_URL]);
+  });
+
   it("verifies an access token, client_id, and required scopes", async () => {
     const calls: string[] = [];
     const ctx = context(jwksFetch(calls));

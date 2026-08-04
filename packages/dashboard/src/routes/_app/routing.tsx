@@ -1,4 +1,4 @@
-import { createFileRoute, useRouter } from "@tanstack/react-router";
+import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import deleteIcon from "../../assets/delete.svg";
 import plusIcon from "../../assets/plus.svg";
@@ -7,21 +7,21 @@ import { ActionBar, WidePane } from "../../components/chrome";
 import { CelEditor } from "../../components/routing/cel-editor";
 import { CelReference } from "../../components/routing/cel-reference";
 import { ModelField } from "../../components/routing/model-field";
-import { ProviderPicker, VendorIcon } from "../../components/routing/provider-picker";
+import { VENDOR_TITLES, VendorIcon } from "../../components/routing/provider-picker";
 import { RuleMenu } from "../../components/routing/rule-menu";
 import { SimulatePanel } from "../../components/routing/simulate-panel";
-import { mergeCredentials, SchemaForm } from "../../components/schema-form";
-import { Button, Callout, Card, IconButton } from "../../components/ui/primitives";
+import { Button, Callout, Card, IconButton, SelectField } from "../../components/ui/primitives";
 import {
   api,
   type ConfigResponse,
   type MetaResponse,
   type ProbeResponse,
+  type ProvidersBlock,
   type RoutingBlock,
   type RoutingRule,
 } from "../../lib/api";
 import { pageHead } from "../../lib/page-title";
-import { PREFERRED_PROVIDERS, preferredType } from "../../lib/preferred";
+import { DEFAULT_PROVIDER_ID, starterProviders } from "../../lib/provider-config";
 
 export const Route = createFileRoute("/_app/routing")({
   head: () => pageHead("Model Routing"),
@@ -34,22 +34,7 @@ export const Route = createFileRoute("/_app/routing")({
 
 /** `when: "true"` — the only expression the router treats as a catch-all. */
 const CATCH_ALL = "true";
-
-/**
- * The target fields the design draws, per provider type.
- *
- * A curated list: the factories accept more than the file shows, and rendering all
- * of it turns a two-field card into a form. `SchemaForm` appends anything
- * *required* the list misses, so a save can never need a hidden field. `model` is
- * absent because the card renders it itself, last, as a dropdown.
- */
-const TARGET_FIELDS: Record<string, readonly string[]> = {
-  openai: ["apiKey"],
-  deepseek: ["apiKey"],
-  "openai-compatible": ["baseUrl", "apiKey"],
-  anthropic: ["apiKey"],
-  google: ["apiKey"],
-};
+const NO_FALLBACK = "__no_fallback__";
 
 function routingOf(config: ConfigResponse): RoutingBlock {
   const routing = config.config?.routing;
@@ -70,37 +55,105 @@ function catchAllIndex(rules: readonly RoutingRule[]): number {
   return rules.findIndex((rule) => rule.when.trim() === CATCH_ALL);
 }
 
+function modelFor(type: string, tier: "capable" | "fast"): string {
+  const models: Record<string, Record<"capable" | "fast", string>> = {
+    "openai-compatible": {
+      capable: "openai/gpt-4o",
+      fast: "openai/gpt-4o-mini",
+    },
+    openai: { capable: "gpt-4o", fast: "gpt-4o-mini" },
+    anthropic: { capable: "claude-sonnet-4-5", fast: "claude-haiku-4-5" },
+    google: { capable: "gemini-2.5-pro", fast: "gemini-2.5-flash" },
+    deepseek: { capable: "deepseek-reasoner", fast: "deepseek-chat" },
+  };
+  return models[type]?.[tier] ?? "your-model";
+}
+
 /**
- * The rule a deployment with none starts from.
+ * A complete, editable policy for a deployment with no routing configuration.
  *
- * An empty routing screen is a dead end: every request is a 404, and nothing on
- * the page says what the shape of a working configuration is. Seeding one
- * catch-all rule makes the answer visible — a condition of `true`, a provider, a
- * key — and it is a *draft*, so nothing is stored until Save Changes. Which also
- * means it cannot quietly create a configuration nobody asked for.
+ * Large requests go to a more capable model and everything else takes the
+ * cheaper path. Credentials are environment references rather than empty
+ * fields, and the draft is never stored until the operator chooses Save.
  */
-function defaultRule(providerType: string): RoutingRule {
-  return { id: "everyone", name: "Everyone", when: "true", target: { type: providerType } };
+function starterRules(providerId: string, providerType: string): RoutingRule[] {
+  return [
+    {
+      id: "large-context",
+      name: "Large context",
+      when: "request.inputTokenCount > 16000",
+      target: { provider: providerId, model: modelFor(providerType, "capable") },
+    },
+    {
+      id: "default",
+      name: "Default",
+      when: "true",
+      target: { provider: providerId, model: modelFor(providerType, "fast") },
+    },
+  ];
+}
+
+function uniqueProviderId(preferred: string, providers: ProvidersBlock): string {
+  const base = preferred.replace(/[^A-Za-z0-9_-]/g, "-") || "provider";
+  if (!(base in providers)) return base;
+  let number = 2;
+  while (`${base}-${number}` in providers) number += 1;
+  return `${base}-${number}`;
+}
+
+/**
+ * Turn legacy inline route targets into named providers in the initial draft.
+ *
+ * Nothing is stored until Save Changes, so an old revision keeps booting while
+ * the operator can review the exact migration the new screen proposes.
+ */
+function prepareDraft(config: ConfigResponse): {
+  providers: ProvidersBlock;
+  routing: RoutingBlock;
+} {
+  const providers: ProvidersBlock = { ...(config.config?.providers ?? {}) };
+  const stored = routingOf(config);
+  const rules = stored.rules.map((rule, index) => {
+    if (rule.target.provider !== undefined) return rule;
+    const type = rule.target.type;
+    if (type === undefined) return rule;
+    const id = uniqueProviderId(rule.id ?? type ?? `provider-${index + 1}`, providers);
+    const { type: _type, model, ...options } = rule.target;
+    providers[id] = { type, ...options };
+    return {
+      ...rule,
+      target: {
+        provider: id,
+        ...(model === undefined ? {} : { model }),
+      },
+    };
+  });
+
+  if (rules.length > 0) return { providers, routing: { ...stored, rules } };
+  if (Object.keys(providers).length === 0) Object.assign(providers, starterProviders());
+  const firstId = Object.keys(providers)[0] ?? DEFAULT_PROVIDER_ID;
+  const firstType = providers[firstId]?.type ?? "openai-compatible";
+  return { providers, routing: { ...stored, rules: starterRules(firstId, firstType) } };
 }
 
 function RoutingScreen() {
-  const { config, meta } = Route.useLoaderData();
+  const { config } = Route.useLoaderData();
   const router = useRouter();
   const stored = routingOf(config);
-  // Not `meta.providers[0]`: `/meta` sorts alphabetically, which would seed every
-  // new deployment with Anthropic purely because of the letter A.
-  const firstProvider = preferredType(meta.providers, PREFERRED_PROVIDERS);
+  const storedProviders = config.config?.providers ?? {};
+  const prepared = prepareDraft(config);
 
-  const [draft, setDraft] = useState<RoutingBlock>(() =>
-    stored.rules.length === 0 ? { ...stored, rules: [defaultRule(firstProvider)] } : stored,
-  );
+  const [draft, setDraft] = useState<RoutingBlock>(prepared.routing);
+  const [draftProviders, setDraftProviders] = useState<ProvidersBlock>(prepared.providers);
   const [error, setError] = useState<string | null>(null);
   const [warnings, setWarnings] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [simulateOpen, setSimulateOpen] = useState(false);
   const [probes, setProbes] = useState<Record<string, ProbeResponse | "running">>({});
 
-  const dirty = JSON.stringify(draft) !== JSON.stringify(stored);
+  const dirty =
+    JSON.stringify(draft) !== JSON.stringify(stored) ||
+    JSON.stringify(draftProviders) !== JSON.stringify(storedProviders);
   const catchAll = catchAllIndex(draft.rules);
 
   /*
@@ -123,14 +176,14 @@ function RoutingScreen() {
     }
     const timer = setTimeout(() => {
       void api
-        .validate({ ...(config.config ?? {}), routing: draft })
+        .validate({ ...(config.config ?? {}), providers: draftProviders, routing: draft })
         .then((result) => setCompileError(result.valid ? null : (result.error ?? null)))
         // A failed validate call is not a validation failure; leaving the previous
         // verdict up would be a lie either way, so it clears.
         .catch(() => setCompileError(null));
     }, 400);
     return () => clearTimeout(timer);
-  }, [draft, dirty, config.config]);
+  }, [draft, draftProviders, dirty, config.config]);
 
   /**
    * The compile error for one rule, if it is about that rule.
@@ -170,6 +223,9 @@ function RoutingScreen() {
     updateRule(index, { target });
   };
 
+  const providerIds = Object.keys(draftProviders);
+  const firstProviderId = providerIds[0] ?? "";
+
   const addRule = () => {
     // A new rule needs an id that is stable and unique, since logs reference it.
     const taken = new Set(draft.rules.map((rule, index) => idOf(rule, index)));
@@ -180,7 +236,7 @@ function RoutingScreen() {
       // a new rule needs no separate "pick a provider" step.
       return {
         ...now,
-        rules: [...now.rules, { id: `rule-${n}`, when: "", target: { type: firstProvider } }],
+        rules: [...now.rules, { id: `rule-${n}`, when: "", target: { provider: firstProviderId } }],
       };
     });
   };
@@ -205,20 +261,17 @@ function RoutingScreen() {
     setBusy(true);
     setError(null);
     try {
-      const rules = draft.rules.map((rule, index) => {
-        const previous: Partial<RoutingRule["target"]> = stored.rules[index]?.target ?? {};
-        const { type, model, ...options } = rule.target;
-        const { type: _t, model: _m, ...storedOptions } = previous;
-        return {
-          ...rule,
-          target: {
-            type,
-            ...mergeCredentials(options, storedOptions),
-            ...(model === undefined || model === "" ? {} : { model }),
-          },
-        };
-      });
-      const result = await api.putRouting({ ...draft, rules }, "update model routing");
+      const rules = draft.rules.map((rule) => ({
+        ...rule,
+        target: {
+          ...rule.target,
+          ...(rule.target.model === "" ? { model: undefined } : {}),
+        },
+      }));
+      const result = await api.patchConfig(
+        { providers: draftProviders, routing: { ...draft, rules } },
+        "update model routing",
+      );
       setWarnings(result.warnings ?? []);
       await router.invalidate();
     } catch (caught) {
@@ -248,6 +301,7 @@ function RoutingScreen() {
         busy={busy}
         onDiscard={() => {
           setDraft(stored);
+          setDraftProviders(storedProviders);
           setWarnings([]);
         }}
         onSave={save}
@@ -271,6 +325,16 @@ function RoutingScreen() {
           </Callout>
         ))}
 
+        {providerIds.length === 0 ? (
+          <Callout tone="warning" title="Configure a provider first" role="status">
+            Routing rules can only select named providers.{" "}
+            <Link to="/providers" className="underline">
+              Open Providers
+            </Link>
+            .
+          </Callout>
+        ) : null}
+
         {draft.rules.length === 0 ? (
           <Callout tone="warning" role="status">
             No rules, so every request to <span className="type-mono-12">/v1</span> is a 404. Add
@@ -283,8 +347,9 @@ function RoutingScreen() {
           const id = idOf(rule, index);
           const unreachable = catchAll !== -1 && index > catchAll;
           const probeResult = probes[id];
-          const schema =
-            meta.providers.find((entry) => entry.type === rule.target.type)?.optionsSchema ?? null;
+          const providerId = rule.target.provider ?? "";
+          const provider = draftProviders[providerId];
+          const providerType = provider?.type ?? rule.target.type ?? "";
 
           return (
             <div key={id} className="flex w-full items-start" data-rule={id}>
@@ -331,21 +396,11 @@ function RoutingScreen() {
               {/* The connector between the rule and where it goes. */}
               <span aria-hidden className="mt-[24px] h-[2px] w-[72px] shrink-0 bg-border" />
 
-              {/* The target: provider, credentials and model together. */}
+              {/* The target: named provider references and the model only. */}
               <Card
                 className="w-[408px] shrink-0 self-stretch"
-                title={
-                  <ProviderPicker
-                    available={meta.providers.map((entry) => entry.type)}
-                    value={rule.target.type}
-                    onChange={(type) => {
-                      // Options belong to a provider type; carrying them across a
-                      // change would submit keys the new factory rejects.
-                      if (type !== rule.target.type) setTarget(index, { type });
-                    }}
-                  />
-                }
-                icon={<VendorIcon type={rule.target.type} size={24} />}
+                title="Provider & model"
+                icon={<VendorIcon type={providerType} size={24} />}
                 actions={
                   <IconButton
                     icon={deleteIcon}
@@ -354,23 +409,58 @@ function RoutingScreen() {
                   />
                 }
               >
-                <SchemaForm
-                  schema={schema}
-                  values={rule.target}
-                  only={TARGET_FIELDS[rule.target.type] ?? ["apiKey"]}
-                  omit={["type", "model"]}
-                  componentType={rule.target.type}
-                  idPrefix={`target-${id}`}
-                  onChange={(options) =>
+                {rule.target.provider === undefined ? (
+                  <Callout tone="warning" role="status">
+                    This stored rule uses a legacy inline provider. Choose a named provider to
+                    migrate it; its credential remains sealed while you do.
+                  </Callout>
+                ) : null}
+
+                <SelectField
+                  label="Provider"
+                  value={providerId}
+                  items={providerIds.map((providerKey) => ({
+                    value: providerKey,
+                    label: `${providerKey} · ${
+                      VENDOR_TITLES[draftProviders[providerKey]?.type ?? ""] ??
+                      draftProviders[providerKey]?.type ??
+                      "Unknown"
+                    }`,
+                  }))}
+                  onValueChange={(provider) =>
                     setTarget(index, {
-                      ...options,
-                      type: rule.target.type,
-                    } as RoutingRule["target"])
+                      provider,
+                      ...(rule.target.fallbackProvider === undefined
+                        ? {}
+                        : { fallbackProvider: rule.target.fallbackProvider }),
+                      ...(rule.target.model === undefined ? {} : { model: rule.target.model }),
+                    })
                   }
+                  help="Credentials and endpoint settings live on the Providers page."
+                />
+
+                <SelectField
+                  label="Fallback provider"
+                  value={rule.target.fallbackProvider ?? NO_FALLBACK}
+                  items={[
+                    { value: NO_FALLBACK, label: "No fallback" },
+                    ...providerIds
+                      .filter((providerKey) => providerKey !== providerId)
+                      .map((providerKey) => ({ value: providerKey, label: providerKey })),
+                  ]}
+                  onValueChange={(fallbackProvider) =>
+                    setTarget(index, {
+                      ...rule.target,
+                      ...(fallbackProvider === NO_FALLBACK
+                        ? { fallbackProvider: undefined }
+                        : { fallbackProvider }),
+                    })
+                  }
+                  help="Tried only when the primary provider returns an upstream error."
                 />
 
                 <ModelField
-                  target={rule.target}
+                  provider={provider}
                   value={rule.target.model ?? ""}
                   onChange={(model) => setTarget(index, { ...rule.target, model })}
                 />
@@ -379,7 +469,12 @@ function RoutingScreen() {
           );
         })}
 
-        <Button icon={plusIcon} onClick={addRule} className="self-start">
+        <Button
+          icon={plusIcon}
+          onClick={addRule}
+          className="self-start"
+          disabled={providerIds.length === 0}
+        >
           Matching Rule
         </Button>
       </WidePane>

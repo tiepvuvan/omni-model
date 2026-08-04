@@ -134,6 +134,16 @@ describe("supabaseVerifierFactory", () => {
       const request = new Request("https://proxy.example/v1/chat/completions");
       expect(await verifier.verify(request, ctx)).toBeNull();
     });
+
+    it("accepts a structurally valid local JWT secret without a network call", async () => {
+      const ctx = makeCtx(rejectFetch);
+      const verifier = supabaseVerifierFactory.create({ jwtSecret: SECRET }, ctx);
+
+      expect(await verifier.testConfiguration?.(ctx)).toMatchObject({
+        ok: true,
+        message: expect.stringContaining("local Supabase JWT secret"),
+      });
+    });
   });
 
   describe("jwks mode", () => {
@@ -149,6 +159,9 @@ describe("supabaseVerifierFactory", () => {
       if (result === null || !result.ok) throw new Error("expected success");
       expect(result.identity.userId).toBe("user-7");
       expect(calls).toEqual([derivedUrl]);
+
+      expect(await verifier.testConfiguration?.(ctx)).toMatchObject({ ok: true });
+      expect(calls).toEqual([derivedUrl, derivedUrl]);
     });
 
     it("uses an explicit jwksUrl with issuer and audience overrides", async () => {

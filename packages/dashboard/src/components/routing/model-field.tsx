@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState } from "react";
-import { api, type RoutingTarget } from "../../lib/api";
+import { api, type ProviderEntry } from "../../lib/api";
 import { cx } from "../ui/primitives";
 
 /**
@@ -17,12 +17,12 @@ import { cx } from "../ui/primitives";
  * dropdown that could not express those would be a downgrade.
  */
 export function ModelField({
-  target,
+  provider,
   value,
   onChange,
 }: {
-  /** The whole target: the model list depends on the credential and endpoint. */
-  target: RoutingTarget;
+  /** Named provider configuration used for model discovery. */
+  provider: ProviderEntry | undefined;
   value: string;
   onChange: (model: string) => void;
 }) {
@@ -42,8 +42,7 @@ export function ModelField({
    * Everything except `model` — the model is the *answer*, so including it would
    * re-ask the upstream on every keystroke in this very field.
    */
-  const { model: _model, ...credentialShape } = target;
-  const signature = JSON.stringify(credentialShape);
+  const signature = JSON.stringify(provider);
   const asked = useRef<string | null>(null);
 
   useEffect(() => {
@@ -56,12 +55,16 @@ export function ModelField({
      * there is no default — and a key can be a sealed reference rather than a
      * string, which counts as supplied.
      */
+    if (provider === undefined) {
+      setState({ kind: "idle" });
+      return;
+    }
     const hasKey =
-      typeof target.apiKey === "string" ? target.apiKey !== "" : target.apiKey !== undefined;
+      typeof provider.apiKey === "string" ? provider.apiKey !== "" : provider.apiKey !== undefined;
     const hasEndpoint =
-      target.type !== "openai-compatible" ||
-      (typeof target.baseUrl === "string" && target.baseUrl !== "");
-    if (!hasEndpoint || (!hasKey && target.type !== "openai-compatible")) {
+      provider.type !== "openai-compatible" ||
+      (typeof provider.baseUrl === "string" && provider.baseUrl !== "");
+    if (!hasEndpoint || (!hasKey && provider.type !== "openai-compatible")) {
       setState({ kind: "idle" });
       return;
     }
@@ -71,7 +74,7 @@ export function ModelField({
       asked.current = signature;
       setState({ kind: "loading" });
       void api
-        .listUpstreamModels(target)
+        .listUpstreamModels(provider)
         .then((result) => {
           if (result.ok === false) {
             setState({
@@ -100,7 +103,7 @@ export function ModelField({
       // intermediate value is a wrong key that would report as refused.
     }, 700);
     return () => clearTimeout(timer);
-  }, [signature, target]);
+  }, [signature, provider]);
 
   const models = state.kind === "ok" ? state.models : [];
   const narrowed = models.filter((entry) =>
@@ -133,7 +136,7 @@ export function ModelField({
           aria-describedby={`${id}-help`}
           autoComplete="off"
           spellCheck={false}
-          placeholder={target.type === "deepseek" ? "deepseek-v4-flash" : "gpt-4o-mini"}
+          placeholder={provider?.type === "deepseek" ? "deepseek-v4-flash" : "gpt-4o-mini"}
           className="w-full rounded-[var(--radius-field)] border border-solid border-border bg-input-background p-[10px] type-mono-12 text-foreground-primary"
           onChange={(event) => {
             onChange(event.target.value);
@@ -195,10 +198,12 @@ export function ModelField({
               "Leave blank to pass the client's own model through unchanged."
             )}
           </>
-        ) : target.type === "openai-compatible" ? (
-          "Enter the base URL above and the models that endpoint serves load here. Leave blank to pass the client's own model through unchanged."
+        ) : provider === undefined ? (
+          "Choose a provider first."
+        ) : provider.type === "openai-compatible" ? (
+          "Configure the provider's base URL on the Providers page to load its models. Leave blank to pass the client's own model through unchanged."
         ) : (
-          "Enter the API key above and the list of models it can serve loads here. Leave blank to pass the client's own model through unchanged."
+          "Configure the provider's API key on the Providers page to load its models. Leave blank to pass the client's own model through unchanged."
         )}
       </p>
     </div>

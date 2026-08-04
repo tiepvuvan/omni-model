@@ -21,10 +21,18 @@ import { Badge, Button, cx, ThemedIcon } from "./ui/primitives";
 const NAV: readonly {
   label: string;
   icon: string;
-  to?: "/publishable-keys" | "/routing" | "/authentication" | "/rate-limit" | "/logs" | "/settings";
+  to?:
+    | "/publishable-keys"
+    | "/providers"
+    | "/routing"
+    | "/authentication"
+    | "/rate-limit"
+    | "/logs"
+    | "/settings";
 }[] = [
   { label: "Public API Keys", icon: navPublishableKeys, to: "/publishable-keys" },
   { label: "Authentication", icon: navAuthentication, to: "/authentication" },
+  { label: "Providers", icon: navRouting, to: "/providers" },
   { label: "Routing", icon: navRouting, to: "/routing" },
   { label: "Rate Limit", icon: navRateLimit, to: "/rate-limit" },
   { label: "Logs", icon: navLogs, to: "/logs" },

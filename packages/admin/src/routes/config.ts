@@ -62,7 +62,7 @@ function findCredentialPaths(node: unknown, path = "", found: string[] = []): st
   return found;
 }
 
-/** Read a dotted/indexed path like `routing.rules[0].target.apiKey`. */
+/** Read a dotted/indexed path like `providers.primary.apiKey`. */
 function valueAtPath(node: unknown, path: string): unknown {
   let current: unknown = node;
   for (const step of path.split(".")) {
@@ -104,7 +104,7 @@ export function createConfigRoutes(deps: AdminDeps): Hono<AdminEnv> {
   /**
    * Turn any plaintext credential in an inbound document into a reference.
    *
-   * The dashboard types an API key directly into a routing rule, so this is the
+   * The dashboard types an API key into a named provider, so this is the
    * boundary where that value stops being plaintext. Existing references pass
    * through untouched, so reading a configuration and saving it back does not
    * mint a secret per save.
@@ -262,7 +262,14 @@ export function createConfigRoutes(deps: AdminDeps): Hono<AdminEnv> {
 
   /** Replace one top-level block. */
   const patchBlock = (
-    block: "security" | "rateLimits" | "routing" | "logging" | "cache" | "concurrency",
+    block:
+      | "security"
+      | "providers"
+      | "rateLimits"
+      | "routing"
+      | "logging"
+      | "cache"
+      | "concurrency",
   ) => {
     app.put(`/${block === "rateLimits" ? "rate-limits" : block}`, async (c) => {
       const body = patchSchema.parse(await c.req.json());
@@ -272,6 +279,7 @@ export function createConfigRoutes(deps: AdminDeps): Hono<AdminEnv> {
     });
   };
   patchBlock("security");
+  patchBlock("providers");
   patchBlock("rateLimits");
   patchBlock("routing");
   patchBlock("logging");
@@ -328,13 +336,13 @@ export function createConfigRoutes(deps: AdminDeps): Hono<AdminEnv> {
   });
 
   /**
-   * Probe the upstream one rule points at.
+   * Probe the named upstream one rule points at.
    *
    * Runs against the *applied* bundle rather than a candidate document, so the
    * answer is about what is actually serving traffic — which is the question an
-   * operator is asking when a client reports failures. Addressed by rule, because
-   * credentials now belong to a rule: "is this rule's upstream reachable" is the
-   * question, and two rules can point at different keys for the same provider.
+   * operator is asking when a client reports failures. Addressed by rule because
+   * that is the behavior being diagnosed, even though credentials are centralized
+   * on named providers and several rules can share one upstream.
    *
    * The verdict comes from watching the upstream call, not from whether
    * `listModels` resolved: that method deliberately falls back to the configured
@@ -347,9 +355,15 @@ export function createConfigRoutes(deps: AdminDeps): Hono<AdminEnv> {
     const bundle = deps.holder.current();
     if (bundle === null) throw new OmniErrorClass(503, "no configuration is applied");
 
+    const rule = bundle.config.routing.rules.find(
+      (entry, index) => (entry.id ?? `rules[${index}]`) === id,
+    );
+    if (rule === undefined) throw notFound(`routing rule "${id}" is not configured`);
     // Resolved through the applied configuration, so the probe uses the same
-    // decrypted credential a request would.
-    const provider = bundle.providers.get(id);
+    // decrypted credential a request would. Legacy inline targets remain keyed
+    // by rule id until the operator migrates them.
+    const providerId = typeof rule.target.provider === "string" ? rule.target.provider : id;
+    const provider = bundle.providers.get(providerId);
     if (provider === undefined) throw notFound(`routing rule "${id}" is not configured`);
     if (provider.listModels === undefined) {
       return c.json({ ok: null, reason: "this provider type cannot be probed" });

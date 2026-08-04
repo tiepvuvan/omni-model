@@ -166,11 +166,13 @@ docs/                      Mintlify docs site (docs.json + MDX): installation,
     window is the whole point. Shutdown refuses new work, keeps listening (a closed socket makes
     `/readyz` unreachable, and an unreachable probe drains nothing), waits, then closes. Bounded by
     `OMNI_SHUTDOWN_DRAIN_MS`: one client holding a stream open must not stall a deploy.
-20. **An upstream belongs to the rule that routes to it.** `routing.rules[].target` carries the
-    provider type, its credentials and the model; there is no `providers` block, no name to
-    reference, and therefore no dangling reference to validate. Rules are ordered and the first match
-    wins — a catch-all is `when: "true"`, and no match is a 404. `RouteDecision` returns the provider
-    itself, so a matched rule cannot fail to find where it pointed.
+20. **Upstreams are named once; rules only select them.** The top-level `providers` map owns provider
+    types, endpoints and credentials. `routing.rules[].target` carries a primary provider id, an
+    optional different fallback provider id, and the model. Bundle construction resolves every
+    reference and rejects a dangling primary or fallback before the revision can serve. Rules are
+    ordered and the first match wins — a catch-all is `when: "true"`, and no match is a 404.
+    `RouteDecision` returns the resolved provider objects, so request handling never looks them up
+    again mid-flight.
 21. **The Drizzle schema is the source of truth; drizzle-kit is a generator, not the migrator.**
     Ours takes `pg_advisory_xact_lock` over the whole set in one transaction, so concurrent boots
     cannot half-apply; drizzle-kit's does not. Generated SQL is embedded, never read from files, and

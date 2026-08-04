@@ -3,6 +3,7 @@ import { jwtVerify } from "jose";
 import { z } from "zod";
 import { ConfigError } from "../../errors.js";
 import type { RuntimeContext } from "../../types.js";
+import { testJwks } from "../configuration-test.js";
 import type { AuthResult, AuthVerifier, AuthVerifierFactory, Identity } from "../types.js";
 import { extractToken, invalidTokenResult, remoteJwks } from "./token.js";
 
@@ -87,6 +88,18 @@ export const supabaseVerifierFactory: AuthVerifierFactory = {
     return {
       type: TYPE,
       name: opts.name ?? TYPE,
+      async testConfiguration(ctx) {
+        const endpoint =
+          opts.jwksUrl ??
+          (baseUrl === undefined ? undefined : `${baseUrl}/auth/v1/.well-known/jwks.json`);
+        if (endpoint === undefined) {
+          return {
+            ok: true,
+            message: "The local Supabase JWT secret is structurally valid; no remote URL is set.",
+          };
+        }
+        return testJwks(endpoint, ctx, "The Supabase project", { allowEmpty: true });
+      },
       async verify(request, ctx): Promise<AuthResult | null> {
         const token = extractToken(request, opts.header, opts.scheme);
         if (token === null) return null;

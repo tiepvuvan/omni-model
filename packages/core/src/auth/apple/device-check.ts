@@ -80,6 +80,43 @@ export const appleDeviceCheckVerifierFactory: AuthVerifierFactory = {
     return {
       type: "apple-device-check",
       name: opts.name ?? "apple-device-check",
+      async testConfiguration(ctx) {
+        let jwt: string;
+        try {
+          jwt = await bearerJwt(ctx.now());
+        } catch {
+          return {
+            ok: false,
+            message: "The DeviceCheck private key could not sign a test request.",
+          };
+        }
+        let response: Response;
+        try {
+          response = await ctx.fetch(endpoint, {
+            method: "POST",
+            headers: { authorization: `Bearer ${jwt}`, "content-type": "application/json" },
+            body: JSON.stringify({
+              device_token: "omni-model-configuration-test",
+              transaction_id: crypto.randomUUID(),
+              timestamp: ctx.now(),
+            }),
+          });
+        } catch {
+          return { ok: false, message: "Apple DeviceCheck could not be reached." };
+        }
+        if (response.ok || response.status === 400) {
+          return {
+            ok: true,
+            message:
+              "Apple accepted the DeviceCheck credentials; the synthetic token was rejected.",
+          };
+        }
+        return {
+          ok: false,
+          status: response.status,
+          message: `Apple rejected the DeviceCheck credentials (HTTP ${response.status}).`,
+        };
+      },
       async verify(request: Request, ctx: VerifyContext) {
         const token = request.headers.get(opts.header);
         if (token === null || token === "") return null;

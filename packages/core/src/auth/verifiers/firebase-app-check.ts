@@ -2,6 +2,7 @@ import { jwtVerify } from "jose";
 import { z } from "zod";
 import { ConfigError } from "../../errors.js";
 import type { RuntimeContext } from "../../types.js";
+import { testJwks } from "../configuration-test.js";
 import type { AuthResult, AuthVerifier, AuthVerifierFactory } from "../types.js";
 import { extractToken, invalidTokenResult, remoteJwks } from "./token.js";
 
@@ -61,6 +62,16 @@ export const firebaseAppCheckVerifierFactory: AuthVerifierFactory = {
     return {
       type: TYPE,
       name: opts.name ?? TYPE,
+      async testConfiguration(ctx) {
+        const keys = await testJwks(APP_CHECK_JWKS_URL, ctx, "Firebase App Check");
+        if (keys.ok === false) return keys;
+        return {
+          ok: null,
+          reason:
+            "Firebase App Check signing keys are reachable. The project number and app IDs are " +
+            "confirmed when the first real App Check token is verified.",
+        };
+      },
       async verify(request, ctx): Promise<AuthResult | null> {
         const token = extractToken(request, opts.header, "none");
         if (token === null) return null;

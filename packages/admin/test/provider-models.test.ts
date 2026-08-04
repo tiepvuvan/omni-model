@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { baseConfig, createTestAdmin, errorOf } from "./helpers.js";
 
 /**
- * `POST /providers/models` — list what a candidate target can serve.
+ * `POST /providers/models` — list what a candidate provider can serve.
  *
  * The dashboard calls this while an operator is typing an API key, so it does two
  * jobs: populate the model dropdown, and prove the key works *before* it is saved.
@@ -26,15 +26,15 @@ function upstreamServing(...models: string[]): typeof fetch {
 
 const ask = async (
   admin: Awaited<ReturnType<typeof createTestAdmin>>,
-  target: Record<string, unknown>,
+  provider: Record<string, unknown>,
 ) =>
   admin.call("/admin/api/providers/models", {
     method: "POST",
-    body: JSON.stringify({ target }),
+    body: JSON.stringify({ provider }),
     headers: { "content-type": "application/json" },
   });
 
-describe("listing a candidate target's models", () => {
+describe("listing a candidate provider's models", () => {
   it("returns what the upstream serves for a key that works", async () => {
     const admin = await createTestAdmin({
       config: baseConfig(),

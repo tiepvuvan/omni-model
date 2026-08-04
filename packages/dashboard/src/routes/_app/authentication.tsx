@@ -11,6 +11,7 @@ import vendorSupabase from "../../assets/vendor-supabase.svg";
 import { ActionBar, CenteredPane, PaneTitle } from "../../components/chrome";
 import { mergeCredentials, type OptionValues, SchemaForm } from "../../components/schema-form";
 import {
+  Button,
   Callout,
   Card,
   Checkbox,
@@ -24,6 +25,7 @@ import {
   type MetaResponse,
   type SecurityBlock,
   type VerifierEntry,
+  type VerifierTestResponse,
 } from "../../lib/api";
 import { pageHead } from "../../lib/page-title";
 
@@ -53,7 +55,11 @@ const PRESENTATION: Record<
   string,
   { title: string; icon: string; fields: readonly string[]; monochrome?: boolean }
 > = {
-  "firebase-auth": { title: "Firebase", icon: vendorFirebase, fields: ["projectId"] },
+  "firebase-auth": {
+    title: "Firebase",
+    icon: vendorFirebase,
+    fields: ["projectId", "apiKey"],
+  },
   clerk: {
     title: "Clerk",
     icon: vendorClerk,
@@ -171,6 +177,25 @@ function findApp(block: SecurityBlock, type: string): VerifierEntry | undefined 
   return block.appAuth.providers.find((entry) => entry.type === type);
 }
 
+function ConfigurationTestResult({ result }: { result: VerifierTestResponse }) {
+  if (result.ok === null) {
+    return (
+      <Callout tone="info" title="A full preflight is not available" role="status">
+        {result.reason}
+      </Callout>
+    );
+  }
+  return (
+    <Callout
+      tone={result.ok ? "success" : "danger"}
+      title={result.ok ? "Configuration verified" : "Configuration check failed"}
+      role="status"
+    >
+      {result.message}
+    </Callout>
+  );
+}
+
 function AuthenticationScreen() {
   const { config, meta } = Route.useLoaderData();
   const router = useRouter();
@@ -195,6 +220,9 @@ function AuthenticationScreen() {
   const [draft, setDraft] = useState<SecurityBlock>(stored);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [tests, setTests] = useState<Record<string, VerifierTestResponse | "testing" | undefined>>(
+    {},
+  );
 
   const dirty = JSON.stringify(draft) !== JSON.stringify(stored);
   const chosen = draft.userAuth?.type ?? null;
@@ -210,10 +238,12 @@ function AuthenticationScreen() {
   const chooseUser = (type: string) => {
     if (type === chosen) return;
     const previous = stored.userAuth?.type === type ? optionsOf(stored.userAuth) : {};
+    setTests((now) => ({ ...now, [type]: undefined }));
     setDraft((now) => ({ ...now, userAuth: { type, ...previous } }));
   };
 
   const setUserOptions = (options: OptionValues) => {
+    if (chosen !== null) setTests((now) => ({ ...now, [chosen]: undefined }));
     setDraft((now) =>
       now.userAuth === null ? now : { ...now, userAuth: { type: now.userAuth.type, ...options } },
     );
@@ -223,6 +253,7 @@ function AuthenticationScreen() {
     draft.appAuth.providers.some((entry) => entry.type === type);
 
   const toggleApp = (type: string, on: boolean) => {
+    setTests((now) => ({ ...now, [type]: undefined }));
     setDraft((now) => ({
       ...now,
       appAuth: {
@@ -235,6 +266,7 @@ function AuthenticationScreen() {
   };
 
   const setAppOptions = (type: string, options: OptionValues) => {
+    setTests((now) => ({ ...now, [type]: undefined }));
     setDraft((now) => ({
       ...now,
       appAuth: {
@@ -244,6 +276,34 @@ function AuthenticationScreen() {
         ),
       },
     }));
+  };
+
+  const candidate = (
+    entry: VerifierEntry,
+    previous: VerifierEntry | null | undefined,
+  ): VerifierEntry => ({
+    type: entry.type,
+    ...mergeCredentials(optionsOf(entry), optionsOf(previous)),
+  });
+
+  const testConfiguration = async (
+    entry: VerifierEntry,
+    previous: VerifierEntry | null | undefined,
+  ) => {
+    const type = entry.type;
+    setTests((now) => ({ ...now, [type]: "testing" }));
+    try {
+      const result = await api.testVerifier(candidate(entry, previous));
+      setTests((now) => ({ ...now, [type]: result }));
+    } catch (caught) {
+      setTests((now) => ({
+        ...now,
+        [type]: {
+          ok: false,
+          message: caught instanceof Error ? caught.message : "The configuration check failed.",
+        },
+      }));
+    }
   };
 
   const save = async () => {
@@ -273,6 +333,7 @@ function AuthenticationScreen() {
         { ...draft, userAuth, appAuth: { ...draft.appAuth, providers } },
         "update client authentication",
       );
+      setTests({});
       await router.invalidate();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "The change could not be saved.");
@@ -286,7 +347,15 @@ function AuthenticationScreen() {
 
   return (
     <>
-      <ActionBar dirty={dirty} busy={busy} onDiscard={() => setDraft(stored)} onSave={save} />
+      <ActionBar
+        dirty={dirty}
+        busy={busy}
+        onDiscard={() => {
+          setDraft(stored);
+          setTests({});
+        }}
+        onSave={save}
+      />
 
       <CenteredPane>
         {error !== null ? (
@@ -319,12 +388,28 @@ function AuthenticationScreen() {
               title={titleOf(type)}
               icon={verifierIcon(type, vendorJwt)}
               actions={
-                <Radio
-                  name="user-auth"
-                  label={`Use ${titleOf(type)}`}
-                  checked={chosen === type}
-                  onSelect={() => chooseUser(type)}
-                />
+                <div className="flex items-center gap-[8px]">
+                  {chosen === type && draft.userAuth !== null ? (
+                    <Button
+                      size="medium"
+                      disabled={tests[type] === "testing"}
+                      onClick={() =>
+                        void testConfiguration(
+                          draft.userAuth as VerifierEntry,
+                          stored.userAuth?.type === type ? stored.userAuth : null,
+                        )
+                      }
+                    >
+                      {tests[type] === "testing" ? "Testing…" : "Test configuration"}
+                    </Button>
+                  ) : null}
+                  <Radio
+                    name="user-auth"
+                    label={`Use ${titleOf(type)}`}
+                    checked={chosen === type}
+                    onSelect={() => chooseUser(type)}
+                  />
+                </div>
               }
             >
               {chosen === type ? (
@@ -342,6 +427,9 @@ function AuthenticationScreen() {
                   Not in use. Select it to configure it.
                 </p>
               )}
+              {chosen === type && tests[type] !== undefined && tests[type] !== "testing" ? (
+                <ConfigurationTestResult result={tests[type]} />
+              ) : null}
             </Card>
           ))}
         </div>
@@ -379,11 +467,27 @@ function AuthenticationScreen() {
               title={titleOf(type)}
               icon={verifierIcon(type, vendorApple)}
               actions={
-                <Checkbox
-                  aria-label={`Enable ${titleOf(type)}`}
-                  checked={appEnabled(type)}
-                  onCheckedChange={(on) => toggleApp(type, on)}
-                />
+                <div className="flex items-center gap-[8px]">
+                  {appEnabled(type) ? (
+                    <Button
+                      size="medium"
+                      disabled={tests[type] === "testing"}
+                      onClick={() => {
+                        const entry = findApp(draft, type);
+                        if (entry !== undefined) {
+                          void testConfiguration(entry, findApp(stored, type));
+                        }
+                      }}
+                    >
+                      {tests[type] === "testing" ? "Testing…" : "Test configuration"}
+                    </Button>
+                  ) : null}
+                  <Checkbox
+                    aria-label={`Enable ${titleOf(type)}`}
+                    checked={appEnabled(type)}
+                    onCheckedChange={(on) => toggleApp(type, on)}
+                  />
+                </div>
               }
             >
               {appEnabled(type) ? (
@@ -401,6 +505,9 @@ function AuthenticationScreen() {
                   Not enabled. Tick the box to configure it.
                 </p>
               )}
+              {appEnabled(type) && tests[type] !== undefined && tests[type] !== "testing" ? (
+                <ConfigurationTestResult result={tests[type]} />
+              ) : null}
             </Card>
           ))}
         </div>

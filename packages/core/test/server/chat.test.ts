@@ -22,6 +22,64 @@ routing:
 `;
 
 describe("POST /v1/chat/completions", () => {
+  it("retries the configured fallback provider after an upstream error", async () => {
+    const yaml = `
+version: 1
+providers:
+  primary: { type: fake }
+  backup: { type: fake }
+routing:
+  rules:
+    - id: resilient
+      when: "true"
+      target: { provider: primary, fallbackProvider: backup, model: routed-model }
+`;
+    const { app, providers } = await createTestApp({
+      yaml,
+      behaviors: {
+        primary: {
+          error: {
+            status: 502,
+            body: {
+              error: {
+                message: "primary unavailable",
+                type: "api_error",
+                param: null,
+                code: "upstream_error",
+              },
+            },
+          },
+        },
+        backup: { completion: cannedCompletion("routed-model") },
+      },
+    });
+
+    const response = await app.fetch(chatRequest(CHAT_BODY));
+    expect(response.status).toBe(200);
+    expect(providers.get("primary")?.chatCalls).toHaveLength(1);
+    expect(providers.get("backup")?.chatCalls).toHaveLength(1);
+    expect(providers.get("backup")?.chatCalls[0]?.request.model).toBe("routed-model");
+  });
+
+  it("does not call a fallback when the primary provider succeeds", async () => {
+    const yaml = `
+version: 1
+providers:
+  primary: { type: fake }
+  backup: { type: fake }
+routing:
+  rules:
+    - id: resilient
+      when: "true"
+      target: { provider: primary, fallbackProvider: backup }
+`;
+    const { app, providers } = await createTestApp({ yaml });
+
+    expect((await app.fetch(chatRequest(CHAT_BODY))).status).toBe(200);
+    expect(providers.get("primary")?.chatCalls).toHaveLength(1);
+    expect(providers.get("backup")?.chatCalls).toHaveLength(0);
+  });
+
   it("routes with a model override and returns only public completion fields", async () => {
     const completion = {
       ...cannedCompletion("fake-large"),

@@ -70,6 +70,42 @@ describe("request logging", () => {
     expect(entry?.content).toBeUndefined();
   });
 
+  it("records the provider that actually answered after fallback", async () => {
+    const yaml = `
+version: 1
+storage: { type: memory }
+providers:
+  primary: { type: fake }
+  backup: { type: fake }
+routing:
+  rules:
+    - id: resilient
+      when: "true"
+      target: { provider: primary, fallbackProvider: backup }
+rateLimits: []
+`;
+    const { app, logs } = await setup(yaml, {
+      behaviors: {
+        primary: {
+          error: {
+            status: 502,
+            body: {
+              error: {
+                message: "primary unavailable",
+                type: "api_error",
+                param: null,
+                code: "upstream_error",
+              },
+            },
+          },
+        },
+      },
+    });
+
+    expect((await app.fetch(chatRequest(CHAT_BODY))).status).toBe(200);
+    expect((await logs())[0]).toMatchObject({ providerId: "backup", status: 200 });
+  });
+
   it("returns the request id, so a user can quote it in a support request", async () => {
     const { app, logs } = await setup();
     const response = await app.fetch(chatRequest(CHAT_BODY));

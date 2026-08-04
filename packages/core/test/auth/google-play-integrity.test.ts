@@ -146,6 +146,39 @@ describe("googlePlayIntegrityVerifierFactory", () => {
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
+  it("preflights OAuth and the package endpoint with a synthetic token", async () => {
+    const getGoogleAccessToken = vi.fn<GoogleAccessTokenProvider>(async () => "access-token");
+    const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
+      expect(input).toBe(
+        "https://playintegrity.googleapis.com/v1/com.example.app:decodeIntegrityToken",
+      );
+      expect(JSON.parse(String(init?.body))).toEqual({
+        integrityToken: "omni-model-configuration-test",
+      });
+      return new Response("invalid token", { status: 400 });
+    });
+    const ctx = runtime(fetchImpl, getGoogleAccessToken);
+    const verifier = googlePlayIntegrityVerifierFactory.create({ packageName: PACKAGE }, ctx);
+
+    expect(await verifier.testConfiguration?.(ctx)).toMatchObject({
+      ok: true,
+      message: expect.stringContaining("package endpoint"),
+    });
+    expect(getGoogleAccessToken).toHaveBeenCalledWith({
+      scopes: ["https://www.googleapis.com/auth/playintegrity"],
+    });
+  });
+
+  it("reports a package or permission refusal as a failed preflight", async () => {
+    const ctx = runtime(
+      vi.fn<typeof fetch>(async () => new Response("forbidden", { status: 403 })),
+      async () => "access-token",
+    );
+    const verifier = googlePlayIntegrityVerifierFactory.create({ packageName: PACKAGE }, ctx);
+
+    expect(await verifier.testConfiguration?.(ctx)).toMatchObject({ ok: false, status: 403 });
+  });
+
   it("decodes a Standard token and enforces the exact request binding", async () => {
     const serviceAccountKey = JSON.stringify({
       type: "service_account",

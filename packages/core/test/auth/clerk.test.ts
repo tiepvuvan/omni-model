@@ -97,6 +97,15 @@ describe("clerkVerifierFactory", () => {
     expect(calls).toEqual([JWKS_URL]);
   });
 
+  it("tests the configured Clerk instance through its JWKS endpoint", async () => {
+    const calls: string[] = [];
+    const ctx = context(jwksFetch(calls));
+    const verifier = clerkVerifierFactory.create({ issuer: ISSUER }, ctx);
+
+    expect(await verifier.testConfiguration?.(ctx)).toMatchObject({ ok: true });
+    expect(calls).toEqual([JWKS_URL]);
+  });
+
   it("returns null without its bearer header and supports a custom header", async () => {
     const calls: string[] = [];
     const fetchImpl = jwksFetch(calls);

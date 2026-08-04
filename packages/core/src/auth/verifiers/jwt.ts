@@ -3,6 +3,7 @@ import { importSPKI, jwtVerify } from "jose";
 import { z } from "zod";
 import { ConfigError } from "../../errors.js";
 import type { RuntimeContext } from "../../types.js";
+import { testJwks } from "../configuration-test.js";
 import type { AuthResult, AuthVerifier, AuthVerifierFactory, Identity } from "../types.js";
 import { extractToken, invalidTokenResult, remoteJwks } from "./token.js";
 
@@ -103,6 +104,13 @@ export const jwtVerifierFactory: AuthVerifierFactory = {
     return {
       type: TYPE,
       name: opts.name ?? TYPE,
+      testConfiguration:
+        opts.jwksUrl === undefined
+          ? async () => ({
+              ok: true,
+              message: "The local JWT key material is structurally valid; no remote URL is set.",
+            })
+          : (ctx) => testJwks(opts.jwksUrl as string, ctx, "The custom JWT issuer"),
       async verify(request, ctx): Promise<AuthResult | null> {
         const token = extractToken(request, opts.header, opts.scheme);
         if (token === null) return null;

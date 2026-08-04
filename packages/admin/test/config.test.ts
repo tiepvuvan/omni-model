@@ -99,6 +99,69 @@ describe("configuration read and write", () => {
 });
 
 describe("block-level updates", () => {
+  it("centralizes providers and keeps routing rules as credential-free references", async () => {
+    const configured = baseConfig({
+      providers: {
+        primary: {
+          type: "openai",
+          apiKey: "sk-primary",
+          baseUrl: "https://primary.test/v1",
+        },
+      },
+      routing: {
+        rules: [{ id: "default", when: "true", target: { provider: "primary" } }],
+      },
+    });
+    const { call, holder } = await createTestAdmin({ config: configured });
+
+    const response = await call("/admin/api/providers", {
+      method: "PUT",
+      body: JSON.stringify({
+        value: {
+          primary: {
+            type: "openai",
+            apiKey: "sk-primary",
+            baseUrl: "https://primary.test/v1",
+          },
+          backup: {
+            type: "anthropic",
+            apiKey: "sk-backup",
+          },
+        },
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect([...(holder.current()?.providers.keys() ?? [])]).toEqual(["primary", "backup"]);
+    expect(holder.current()?.config.routing.rules[0]?.target).toEqual({ provider: "primary" });
+  });
+
+  it("refuses to remove a provider while a routing rule references it", async () => {
+    const configured = baseConfig({
+      providers: {
+        primary: {
+          type: "openai",
+          apiKey: "sk-primary",
+          baseUrl: "https://primary.test/v1",
+        },
+      },
+      routing: {
+        rules: [{ id: "default", when: "true", target: { provider: "primary" } }],
+      },
+    });
+    const { call, holder, configStore } = await createTestAdmin({ config: configured });
+
+    const response = await call("/admin/api/providers", {
+      method: "PUT",
+      body: JSON.stringify({ value: {} }),
+    });
+
+    expect(response.status).toBe(400);
+    expect((await errorOf(response)).message).toMatch(/target\.provider.*"primary"/s);
+    expect([...(holder.current()?.providers.keys() ?? [])]).toEqual(["primary"]);
+    expect(await configStore.history(10)).toHaveLength(1);
+  });
+
   it("replaces one block and leaves the rest alone", async () => {
     const { call, holder } = await createTestAdmin({ config: baseConfig() });
     const response = await call("/admin/api/logging", {

@@ -16,6 +16,7 @@ import { Route as SetupRouteImport } from './routes/setup'
 import { Route as SignInRouteImport } from './routes/sign-in'
 import { Route as AppAuthenticationRouteImport } from './routes/_app/authentication'
 import { Route as AppLogsRouteImport } from './routes/_app/logs'
+import { Route as AppProvidersRouteImport } from './routes/_app/providers'
 import { Route as AppPublishableKeysRouteImport } from './routes/_app/publishable-keys'
 import { Route as AppRateLimitRouteImport } from './routes/_app/rate-limit'
 import { Route as AppRoutingRouteImport } from './routes/_app/routing'
@@ -56,6 +57,11 @@ const AppLogsRoute = AppLogsRouteImport.update({
   path: '/logs',
   getParentRoute: () => AppRoute,
 } as any)
+const AppProvidersRoute = AppProvidersRouteImport.update({
+  id: '/providers',
+  path: '/providers',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppPublishableKeysRoute = AppPublishableKeysRouteImport.update({
   id: '/publishable-keys',
   path: '/publishable-keys',
@@ -89,6 +95,7 @@ export interface FileRoutesByFullPath {
   '/sign-in': typeof SignInRoute
   '/authentication': typeof AppAuthenticationRoute
   '/logs': typeof AppLogsRoute
+  '/providers': typeof AppProvidersRoute
   '/publishable-keys': typeof AppPublishableKeysRoute
   '/rate-limit': typeof AppRateLimitRoute
   '/routing': typeof AppRoutingRoute
@@ -102,6 +109,7 @@ export interface FileRoutesByTo {
   '/sign-in': typeof SignInRoute
   '/authentication': typeof AppAuthenticationRoute
   '/logs': typeof AppLogsRoute
+  '/providers': typeof AppProvidersRoute
   '/publishable-keys': typeof AppPublishableKeysRoute
   '/rate-limit': typeof AppRateLimitRoute
   '/routing': typeof AppRoutingRoute
@@ -117,6 +125,7 @@ export interface FileRoutesById {
   '/sign-in': typeof SignInRoute
   '/_app/authentication': typeof AppAuthenticationRoute
   '/_app/logs': typeof AppLogsRoute
+  '/_app/providers': typeof AppProvidersRoute
   '/_app/publishable-keys': typeof AppPublishableKeysRoute
   '/_app/rate-limit': typeof AppRateLimitRoute
   '/_app/routing': typeof AppRoutingRoute
@@ -132,6 +141,7 @@ export interface FileRouteTypes {
     | '/sign-in'
     | '/authentication'
     | '/logs'
+    | '/providers'
     | '/publishable-keys'
     | '/rate-limit'
     | '/routing'
@@ -145,6 +155,7 @@ export interface FileRouteTypes {
     | '/sign-in'
     | '/authentication'
     | '/logs'
+    | '/providers'
     | '/publishable-keys'
     | '/rate-limit'
     | '/routing'
@@ -159,6 +170,7 @@ export interface FileRouteTypes {
     | '/sign-in'
     | '/_app/authentication'
     | '/_app/logs'
+    | '/_app/providers'
     | '/_app/publishable-keys'
     | '/_app/rate-limit'
     | '/_app/routing'
@@ -225,6 +237,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppLogsRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/providers': {
+      id: '/_app/providers'
+      path: '/providers'
+      fullPath: '/providers'
+      preLoaderRoute: typeof AppProvidersRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/publishable-keys': {
       id: '/_app/publishable-keys'
       path: '/publishable-keys'
@@ -266,6 +285,7 @@ declare module '@tanstack/react-router' {
 interface AppRouteChildren {
   AppAuthenticationRoute: typeof AppAuthenticationRoute
   AppLogsRoute: typeof AppLogsRoute
+  AppProvidersRoute: typeof AppProvidersRoute
   AppPublishableKeysRoute: typeof AppPublishableKeysRoute
   AppRateLimitRoute: typeof AppRateLimitRoute
   AppRoutingRoute: typeof AppRoutingRoute
@@ -276,6 +296,7 @@ interface AppRouteChildren {
 const AppRouteChildren: AppRouteChildren = {
   AppAuthenticationRoute: AppAuthenticationRoute,
   AppLogsRoute: AppLogsRoute,
+  AppProvidersRoute: AppProvidersRoute,
   AppPublishableKeysRoute: AppPublishableKeysRoute,
   AppRateLimitRoute: AppRateLimitRoute,
   AppRoutingRoute: AppRoutingRoute,

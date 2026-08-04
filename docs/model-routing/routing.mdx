@@ -1,10 +1,10 @@
 ---
 title: Model routing
-description: How omni-model decides which upstream, with which credentials, serves each request.
+description: How omni-model selects a named upstream, optional fallback, and model for each request.
 ---
 
-Routing turns an incoming request into a decision: **which upstream, with which credentials, as which
-model**. It lets you expose stable client-facing names — a `"smart"` alias, a `"claude-*"` family —
+Routing turns an incoming request into a decision: **which named provider, with which fallback, as
+which model**. It lets you expose stable client-facing names — a `"smart"` alias, a `"claude-*"` family —
 and map them to concrete upstreams by user tier, request shape, headers or time, without shipping any
 of that logic in your app.
 
@@ -18,21 +18,31 @@ have not — the missing-key gotcha bites here too.
 
 ```json
 {
+  "providers": {
+    "anthropic-primary": {
+      "type": "anthropic",
+      "apiKey": "${ANTHROPIC_API_KEY}"
+    },
+    "openai-backup": {
+      "type": "openai",
+      "apiKey": "${OPENAI_API_KEY}"
+    }
+  },
   "routing": {
     "rules": [
       {
         "id": "pro-users",
         "when": "request.model == \"smart\" && has(user.claims.tier) && user.claims.tier == \"pro\"",
         "target": {
-          "type": "anthropic",
-          "apiKey": "${ANTHROPIC_API_KEY}",
+          "provider": "anthropic-primary",
+          "fallbackProvider": "openai-backup",
           "model": "claude-sonnet-5"
         }
       },
       {
         "id": "everyone-else",
         "when": "true",
-        "target": { "type": "openai", "apiKey": "${OPENAI_API_KEY}", "model": "gpt-4o-mini" }
+        "target": { "provider": "openai-backup", "model": "gpt-4o-mini" }
       }
     ]
   }
@@ -46,28 +56,36 @@ There is no separate default stage: **a catch-all is a last rule with `when: "tr
 matches, the request is a 404 `model_not_found` — which is what you want for a name nothing is
 configured to serve.
 
-## The target owns its credentials
+## Configure providers once
 
-A rule's `target` carries the provider type, its credentials and the upstream model. There is no
-separate providers block and no name to reference.
-
-That is deliberate. A reference can dangle, and with providers defined elsewhere, "which key does
-this rule actually use" stopped being answerable by reading the rule. Two rules can point at the same
-provider type with different keys — a cheap account for free users, a production account for paying
-ones — and each says so on its face.
+The top-level `providers` map owns endpoints and credentials. Each key is a stable provider ID.
+Rules only select that ID, an optional fallback ID, and a model. This keeps credentials centralized,
+lets several rules reuse one account, and lets you configure several accounts of the same type.
 
 ```json
 {
-  "id": "free-tier",
-  "when": "!has(user.claims.tier)",
-  "target": {
-    "type": "openai-compatible",
-    "baseUrl": "https://api.groq.com/openai/v1",
-    "apiKey": "${GROQ_API_KEY}",
-    "model": "llama-3.3-70b-versatile"
+  "providers": {
+    "groq-free": {
+      "type": "openai-compatible",
+      "baseUrl": "https://api.groq.com/openai/v1",
+      "apiKey": "${GROQ_API_KEY}"
+    }
+  },
+  "routing": {
+    "rules": [{
+      "id": "free-tier",
+      "when": "!has(user.claims.tier)",
+      "target": {
+        "provider": "groq-free",
+        "model": "llama-3.3-70b-versatile"
+      }
+    }]
   }
 }
 ```
+
+Saving a rule that references an unknown provider is rejected before it can become active. Removing
+a provider is likewise rejected while any primary or fallback target still points to it.
 
 `model` is the upstream name to forward as. **Omit it to pass the client's model through
 unchanged** — which is what a rule dispatching a family of real model names wants:
@@ -76,19 +94,26 @@ unchanged** — which is what a rule dispatching a family of real model names wa
 {
   "id": "anthropic-family",
   "when": "request.model.startsWith(\"claude-\")",
-  "target": { "type": "anthropic", "apiKey": "${ANTHROPIC_API_KEY}" }
+  "target": { "provider": "anthropic-primary" }
 }
 ```
 
 Set it when you are inventing an alias; leave it off when the client already knows the real name.
 
-DeepSeek is a first-class target, so its public API root is filled in automatically:
+DeepSeek is a first-class provider, so its public API root is filled in automatically:
 
 ```json
 {
-  "id": "deepseek",
-  "when": "request.model.startsWith(\"deepseek-\")",
-  "target": { "type": "deepseek", "apiKey": "${DEEPSEEK_API_KEY}" }
+  "providers": {
+    "deepseek": { "type": "deepseek", "apiKey": "${DEEPSEEK_API_KEY}" }
+  },
+  "routing": {
+    "rules": [{
+      "id": "deepseek",
+      "when": "request.model.startsWith(\"deepseek-\")",
+      "target": { "provider": "deepseek" }
+    }]
+  }
 }
 ```
 
@@ -98,6 +123,22 @@ The model remains a normal routing value. Current DeepSeek model names such as
 
 See the [configuration reference](/reference/configuration#target-fields) for each provider type's
 fields, or ask a running deployment: `GET /admin/api/meta` publishes them as JSON Schema.
+
+## Fallback providers
+
+Set `fallbackProvider` when a rule should retry one other provider after the primary returns or
+throws an upstream error:
+
+```json
+{
+  "provider": "openai-primary",
+  "fallbackProvider": "openai-backup",
+  "model": "gpt-4o-mini"
+}
+```
+
+The fallback must be a different configured provider. It is not load balancing and it is not tried
+after a successful response. Request logs record the provider that actually answered.
 
 ## What clients may ask for
 
@@ -172,7 +213,7 @@ express a new order.
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
 | `when` | string | yes | CEL expression. Only a literal `true` counts as a match. |
-| `target` | object | yes | Where a match goes: `type` plus that provider's options, and an optional `model`. |
+| `target` | object | yes | Where a match goes: `provider`, optional `fallbackProvider`, and optional `model`. |
 | `id` | string | no | Stable identity, used by request logs and the admin API. Defaults to the rule's position — set it explicitly if anything edits rules programmatically, since a positional id changes meaning when rules are reordered. |
 | `name` | string | no | Human label, shown as the route name in request logs. Defaults to `id`. |
 
@@ -183,7 +224,7 @@ express a new order.
 
 ## What ends up in the logs
 
-Every request records the rule that served it and the provider type it went to, so
+Every request records the rule that served it and the named provider that actually answered, so
 `GET /admin/api/logs` answers "where did this go and what did it cost" per request. See
 [logging](/reference/logging).
 

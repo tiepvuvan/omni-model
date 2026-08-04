@@ -47,11 +47,24 @@ export interface SecretRef {
 }
 
 export interface RoutingTarget {
-  type: string;
+  /** Named provider in the top-level providers map. */
+  provider?: string;
+  /** Optional named retry provider. */
+  fallbackProvider?: string;
+  /** Legacy inline provider discriminator, read-only compatibility. */
+  type?: string;
   /** Upstream model to forward as. Absent forwards the client's model unchanged. */
   model?: string;
   [option: string]: unknown;
 }
+
+/** One reusable named model provider and its factory-specific options. */
+export interface ProviderEntry {
+  type: string;
+  [option: string]: unknown;
+}
+
+export type ProvidersBlock = Record<string, ProviderEntry>;
 
 export interface RoutingRule {
   id?: string;
@@ -109,8 +122,15 @@ export interface SecurityBlock {
   requireWriteKey: boolean;
 }
 
+/** Verdict from exercising a candidate authentication verifier. */
+export type VerifierTestResponse =
+  | { ok: true; message: string }
+  | { ok: false; message: string; status?: number }
+  | { ok: null; reason: string };
+
 /** The stored configuration document: references, never plaintext. */
 export interface StoredConfig {
+  providers?: ProvidersBlock;
   routing?: Partial<RoutingBlock>;
   security?: Partial<SecurityBlock>;
   server?: Partial<ServerBlock>;
@@ -515,6 +535,17 @@ export const api = {
   putSecurity: (value: SecurityBlock, note?: string) =>
     request<SaveResponse>("/security", { method: "PUT", body: { value, note } }),
 
+  /** Exercise an unsaved authentication verifier without persisting it. */
+  testVerifier: (verifier: VerifierEntry) =>
+    request<VerifierTestResponse>("/verifiers/test", {
+      method: "POST",
+      body: { verifier },
+    }),
+
+  /** Replace every named model provider in one validated revision. */
+  putProviders: (value: ProvidersBlock, note?: string) =>
+    request<SaveResponse>("/providers", { method: "PUT", body: { value, note } }),
+
   /** Replace `routing` wholesale — the only call that can express a new order. */
   putRouting: (value: RoutingBlock, note?: string) =>
     request<SaveResponse>("/routing", { method: "PUT", body: { value, note } }),
@@ -597,21 +628,21 @@ export const api = {
     request<ProbeResponse>(`/routing/rules/${encodeURIComponent(id)}/test`, { method: "POST" }),
 
   /**
-   * Which models a candidate target can serve — and whether its key works.
+   * Which models a candidate provider can serve — and whether its key works.
    *
-   * Takes an unsaved target, so an operator finds out a key is wrong while typing
+   * Takes an unsaved provider entry, so an operator finds out a key is wrong while typing
    * it rather than when a client's request fails. `ok: false` means the upstream
    * refused; `ok: null` means this provider answers from configuration and never
    * contacted anything, so there is no verdict to give.
    */
-  listUpstreamModels: (target: RoutingTarget) =>
+  listUpstreamModels: (provider: ProviderEntry) =>
     request<{
       ok: boolean | null;
       models: string[];
       status?: number | null;
       error?: string | null;
       reason?: string;
-    }>("/providers/models", { method: "POST", body: { target } }),
+    }>("/providers/models", { method: "POST", body: { provider } }),
 
   simulate: (input: SimulateInput) =>
     request<SimulateResponse>("/routing/simulate", { method: "POST", body: input }),

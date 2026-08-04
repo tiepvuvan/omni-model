@@ -138,6 +138,7 @@ async function lookUp(
   if (cache === null) return null;
   try {
     const key = await promptCacheKey({
+      providerId: decision.providerId,
       providerType: decision.providerType,
       routeName: decision.routeName,
       model: decision.model,
@@ -180,6 +181,77 @@ export interface ChatExecution {
   cached: boolean;
 }
 
+/** The same routing decision, advanced to its one configured fallback. */
+function fallbackDecision(decision: RouteDecision): RouteDecision | null {
+  if (
+    decision.fallbackProvider === undefined ||
+    decision.fallbackProviderId === undefined ||
+    decision.fallbackProviderType === undefined
+  ) {
+    return null;
+  }
+  return {
+    provider: decision.fallbackProvider,
+    providerId: decision.fallbackProviderId,
+    providerType: decision.fallbackProviderType,
+    model: decision.model,
+    routeName: decision.routeName,
+  };
+}
+
+async function chatWithFallback(
+  decision: RouteDecision,
+  request: ChatCompletionRequest,
+  runtime: RuntimeContext,
+  options: ProviderCallOptions | undefined,
+  log: Logger,
+): Promise<{ result: ChatResult; used: RouteDecision }> {
+  const fallback = fallbackDecision(decision);
+  try {
+    const result = await decision.provider.chat(
+      { ...request, model: decision.model },
+      runtime,
+      options,
+    );
+    if (result.kind !== "error" || fallback === null) return { result, used: decision };
+    log.warn("primary provider returned an error; trying the configured fallback", {
+      provider: decision.providerId,
+      fallback: fallback.providerId,
+      route: decision.routeName,
+      status: result.status,
+    });
+    try {
+      return {
+        result: await fallback.provider.chat(
+          { ...request, model: fallback.model },
+          runtime,
+          options,
+        ),
+        used: fallback,
+      };
+    } catch (error) {
+      log.warn("fallback provider threw; returning the primary provider error", {
+        provider: fallback.providerId,
+        route: fallback.routeName,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return { result, used: decision };
+    }
+  } catch (error) {
+    if (fallback === null) throw error;
+    log.warn("primary provider threw; trying the configured fallback", {
+      provider: decision.providerId,
+      fallback: fallback.providerId,
+      route: decision.routeName,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return {
+      result: await fallback.provider.chat({ ...request, model: fallback.model }, runtime, options),
+      used: fallback,
+    };
+  }
+}
+
 /**
  * Rate-limit, route, then answer from the cache or call the provider's `chat`.
  *
@@ -204,7 +276,7 @@ export async function executeChat(
   if (lookup?.hit !== undefined && lookup.hit !== null) {
     observer?.cached?.();
     deps.log.info("request served from cache", {
-      provider: decision.providerType,
+      provider: decision.providerId,
       model: decision.model,
       route: decision.routeName,
     });
@@ -212,15 +284,13 @@ export async function executeChat(
   }
 
   deps.log.info("request routed", {
-    provider: decision.providerType,
+    provider: decision.providerId,
     model: decision.model,
     route: decision.routeName,
   });
-  const result = await decision.provider.chat(
-    { ...request, model: decision.model },
-    runtime,
-    options,
-  );
+  const called = await chatWithFallback(decision, request, runtime, options, deps.log);
+  if (called.used !== decision) observer?.routed?.(called.used);
+  const result = called.result;
   return { result, cacheKey: lookup?.key ?? null, cached: false };
 }
 
@@ -287,7 +357,7 @@ export async function executeEmbeddings(
   if (hit !== null && hit.kind === "completion") {
     observer?.cached?.();
     deps.log.info("request served from cache", {
-      provider: decision.providerType,
+      provider: decision.providerId,
       model: decision.model,
       route: decision.routeName,
     });
@@ -299,18 +369,56 @@ export async function executeEmbeddings(
   }
 
   deps.log.info("request routed", {
-    provider: decision.providerType,
+    provider: decision.providerId,
     model: decision.model,
     route: decision.routeName,
   });
-  const provider = decision.provider;
-  const embed = provider.embeddings?.bind(provider);
+  let used = decision;
+  let provider = decision.provider;
+  let embed = provider.embeddings?.bind(provider);
+  const fallback = fallbackDecision(decision);
+  if (embed === undefined && fallback !== null) {
+    provider = fallback.provider;
+    embed = provider.embeddings?.bind(provider);
+    if (embed !== undefined) {
+      used = fallback;
+      observer?.routed?.(used);
+    }
+  }
   if (embed === undefined) {
     throw notFound(`provider "${provider.id}" does not support embeddings`, {
       code: "unsupported_endpoint",
     });
   }
-  const result = await embed({ ...request, model: decision.model }, runtime, options);
+  let result: EmbeddingsResult;
+  try {
+    result = await embed({ ...request, model: used.model }, runtime, options);
+  } catch (error) {
+    if (used !== decision || fallback === null || fallback.provider.embeddings === undefined) {
+      throw error;
+    }
+    used = fallback;
+    observer?.routed?.(used);
+    result = await fallback.provider.embeddings(
+      { ...request, model: used.model },
+      runtime,
+      options,
+    );
+  }
+  if (
+    result.kind === "error" &&
+    used === decision &&
+    fallback !== null &&
+    fallback.provider.embeddings !== undefined
+  ) {
+    used = fallback;
+    observer?.routed?.(used);
+    result = await fallback.provider.embeddings(
+      { ...request, model: used.model },
+      runtime,
+      options,
+    );
+  }
   return { result, cacheKey: lookup?.key ?? null, cached: false };
 }
 

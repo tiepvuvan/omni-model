@@ -81,11 +81,12 @@ describe("container starter configuration", () => {
     // One user method, and the app scheme layered over it.
     expect(config.security.userAuth).toMatchObject({ type: "jwt" });
     expect(config.security.appAuth.providers).toMatchObject([{ type: "firebase-app-check" }]);
-    expect(config.routing.rules[0]?.target).toEqual({
+    expect(config.providers.default).toEqual({
       type: "openai-compatible",
       baseUrl: "https://api.openai.com/v1",
       apiKey: "sk-test",
     });
+    expect(config.routing.rules[0]?.target).toEqual({ provider: "default" });
     expect(config.routing.rules[0]?.id).toBe("default");
   });
 

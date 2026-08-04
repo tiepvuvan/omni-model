@@ -30,7 +30,8 @@ Use the smallest shape that fits the change:
 | Use case | Environment variable | Example |
 | --- | --- | --- |
 | Complete configuration | `OMNI_CONFIG_JSON` | A JSON object containing all top-level blocks. |
-| Routing rules and their upstreams | `OMNI_ROUTING_JSON` | A JSON object with `rules` and `allowedModels`. |
+| Named model providers | `OMNI_PROVIDERS_JSON` | An object keyed by stable provider ID. |
+| Routing rules | `OMNI_ROUTING_JSON` | A JSON object with `rules` and `allowedModels`. |
 | Rate-limit rules | `OMNI_RATE_LIMITS_JSON` | A JSON array of rules. |
 | Authentication | `OMNI_SECURITY_JSON`, `OMNI_SECURITY_USER_AUTH_JSON` or `OMNI_SECURITY_APP_AUTH_JSON` | A JSON object per layer. |
 | One upstream for everything | `OMNI_TARGET_*` | `OMNI_TARGET_TYPE=openai`. |
@@ -66,8 +67,8 @@ OMNI_SECURITY_FIREBASE_APPCHECK_APP_ID=1:1234567890:ios:abc123
 # Opt in only after clients send a fresh limited-use token per request.
 OMNI_SECURITY_FIREBASE_APPCHECK_CONSUME=false
 
-# More than one upstream, or a condition on a claim, is JSON: rules are ordered.
-OMNI_ROUTING_RULES='[{"id":"smart","when":"request.model == \"smart\"","target":{"type":"openai","apiKey":"${OPENAI_API_KEY}","model":"gpt-4o-mini"}}]'
+# More than one rule is JSON. The ergonomic variables above create provider "default".
+OMNI_ROUTING_RULES='[{"id":"smart","when":"request.model == \"smart\"","target":{"provider":"default","model":"gpt-4o-mini"}}]'
 ```
 
 <Note>
@@ -107,12 +108,15 @@ export OMNI_CONFIG_JSON='{
   "security": {
     "userAuth": { "type": "jwt", "secret": "${OMNI_JWT_SECRET}", "algorithms": ["HS256"] }
   },
+  "providers": {
+    "openai-primary": { "type": "openai", "apiKey": "${OPENAI_API_KEY}" }
+  },
   "routing": {
     "rules": [
       {
         "id": "everything",
         "when": "true",
-        "target": { "type": "openai", "apiKey": "${OPENAI_API_KEY}" }
+        "target": { "provider": "openai-primary" }
       }
     ]
   }
@@ -137,22 +141,32 @@ export OMNI_SECURITY_APP_AUTH_JSON='{
   "providers": [{"type":"firebase-app-check","appIds":["1:PROJECT_NUMBER:ios:APP_ID"]}]
 }'
 
+export OMNI_PROVIDERS_JSON='{
+  "groq": {
+    "type": "openai-compatible",
+    "baseUrl": "https://api.groq.com/openai/v1",
+    "apiKey": "${GROQ_API_KEY}"
+  },
+  "openai": {
+    "type": "openai",
+    "apiKey": "${OPENAI_API_KEY}"
+  }
+}'
+
 export OMNI_ROUTING_JSON='{
   "rules": [
     {
       "id": "fast",
       "when": "request.model == \"fast\"",
       "target": {
-        "type": "openai-compatible",
-        "baseUrl": "https://api.groq.com/openai/v1",
-        "apiKey": "${GROQ_API_KEY}",
+        "provider": "groq",
         "model": "llama-3.3-70b-versatile"
       }
     },
     {
       "id": "default",
       "when": "true",
-      "target": {"type": "openai", "apiKey": "${OPENAI_API_KEY}"}
+      "target": {"provider": "openai"}
     }
   ]
 }'
@@ -168,6 +182,7 @@ Available block variables are:
 | `OMNI_SECURITY_JSON` | `security` | object |
 | `OMNI_SECURITY_USER_AUTH_JSON` | `security.userAuth` | object |
 | `OMNI_SECURITY_APP_AUTH_JSON` | `security.appAuth` | object |
+| `OMNI_PROVIDERS_JSON` | `providers` | object |
 | `OMNI_RATE_LIMITS_JSON` | `rateLimits` | array |
 | `OMNI_ROUTING_JSON` | `routing` | object |
 | `OMNI_LOGGING_JSON` | `logging` | object |
@@ -187,8 +202,11 @@ OMNI__SECURITY__USER_AUTH__TYPE=jwt
 # security.appAuth.providers[0].type = "apple-app-attest"
 OMNI__SECURITY__APP_AUTH__PROVIDERS__0__TYPE=apple-app-attest
 
-# routing.rules[0].target.apiKey = "${OPENAI_API_KEY}"
-OMNI__ROUTING__RULES__0__TARGET__API_KEY='${OPENAI_API_KEY}'
+# providers.openai.apiKey = "${OPENAI_API_KEY}"
+OMNI__PROVIDERS__OPENAI__API_KEY='${OPENAI_API_KEY}'
+
+# routing.rules[0].target.provider = "openai"
+OMNI__ROUTING__RULES__0__TARGET__PROVIDER=openai
 
 # routing.rules[0].when = 'request.model == "smart"'
 OMNI__ROUTING__RULES__0__WHEN='request.model == "smart"'
@@ -202,14 +220,16 @@ For provider IDs or third-party option names that do not fit a shell-friendly pa
 as JSON instead:
 
 ```sh
-OMNI_ROUTING_JSON='{
+OMNI_PROVIDERS_JSON='{
   "azure_openai-production": {
     "type": "openai-compatible",
     "baseUrl": "https://example.openai.azure.com/openai/v1",
     "apiKey": "${AZURE_OPENAI_API_KEY}"
   }
 }'
-OMNI_TARGET_TYPE=azure_openai-production
+OMNI_ROUTING_JSON='{
+  "rules": [{"id":"default","when":"true","target":{"provider":"azure_openai-production"}}]
+}'
 ```
 
 ## Server
@@ -289,7 +309,7 @@ profiles; `OMNI_SECURITY_APP_AUTH_MODE` determines whether any or all of the app
 
 | Verifier | Enable and required configuration | Optional configuration |
 | --- | --- | --- |
-| Firebase Auth | `OMNI_SECURITY_FIREBASE_AUTH_ENABLED=true`<br/>`OMNI_SECURITY_FIREBASE_AUTH_PROJECT_ID=my-project` | `OMNI_SECURITY_FIREBASE_AUTH_HEADER`<br/>`OMNI_SECURITY_FIREBASE_AUTH_SCHEME` (`bearer` or `none`)<br/>`OMNI_SECURITY_FIREBASE_AUTH_CLOCK_TOLERANCE_SECONDS` |
+| Firebase Auth | `OMNI_SECURITY_FIREBASE_AUTH_ENABLED=true`<br/>`OMNI_SECURITY_FIREBASE_AUTH_PROJECT_ID=my-project` | `OMNI_SECURITY_FIREBASE_AUTH_API_KEY` (Firebase Web API key; lets the dashboard verify that it belongs to the project ID)<br/>`OMNI_SECURITY_FIREBASE_AUTH_HEADER`<br/>`OMNI_SECURITY_FIREBASE_AUTH_SCHEME` (`bearer` or `none`)<br/>`OMNI_SECURITY_FIREBASE_AUTH_CLOCK_TOLERANCE_SECONDS` |
 | Clerk | `OMNI_SECURITY_CLERK_ENABLED=true`<br/>`OMNI_SECURITY_CLERK_ISSUER=https://instance.clerk.accounts.dev` | `OMNI_SECURITY_CLERK_JWKS_URL`<br/>`OMNI_SECURITY_CLERK_AUTHORIZED_PARTIES` (JSON array)<br/>`OMNI_SECURITY_CLERK_AUDIENCE` (string or JSON array)<br/>`OMNI_SECURITY_CLERK_ALLOW_PENDING_SESSIONS`<br/>`OMNI_SECURITY_CLERK_HEADER`<br/>`OMNI_SECURITY_CLERK_SCHEME` (`bearer` or `none`)<br/>`OMNI_SECURITY_CLERK_CLOCK_TOLERANCE_SECONDS` |
 | AWS Cognito | `OMNI_SECURITY_AWS_COGNITO_ENABLED=true`<br/>`OMNI_SECURITY_AWS_COGNITO_REGION=us-east-1`<br/>`OMNI_SECURITY_AWS_COGNITO_USER_POOL_ID=us-east-1_Example`<br/>`OMNI_SECURITY_AWS_COGNITO_CLIENT_IDS='["app-client-id"]'` | `OMNI_SECURITY_AWS_COGNITO_TOKEN_USE` (`access`, `id`, or `either`)<br/>`OMNI_SECURITY_AWS_COGNITO_REQUIRED_SCOPES` (JSON array)<br/>`OMNI_SECURITY_AWS_COGNITO_HEADER`<br/>`OMNI_SECURITY_AWS_COGNITO_SCHEME` (`bearer` or `none`)<br/>`OMNI_SECURITY_AWS_COGNITO_CLOCK_TOLERANCE_SECONDS` |
 | Firebase App Check | `OMNI_SECURITY_FIREBASE_APPCHECK_ENABLED=true`<br/>`OMNI_SECURITY_FIREBASE_APPCHECK_PROJECT_NUMBER=1234567890` | `OMNI_SECURITY_FIREBASE_APPCHECK_APP_ID` (one)<br/>`OMNI_SECURITY_FIREBASE_APPCHECK_APP_IDS` (JSON array)<br/>`OMNI_SECURITY_FIREBASE_APPCHECK_HEADER`<br/>`OMNI_SECURITY_FIREBASE_APPCHECK_CONSUME` (default `false`)<br/>`OMNI_SECURITY_FIREBASE_APPCHECK_CLOCK_TOLERANCE_SECONDS`<br/><br/>`OMNI_GCP_PROJECT_NUMBER` is an alternative source for the project number. |
@@ -324,24 +344,38 @@ Supported provider types include `jwt`, `firebase-auth`, `clerk`, `aws-cognito`,
 supplied directly in the JSON entry. See the dedicated [security guides](/security/custom-jwt) for
 verifier-specific options and client headers.
 
-## Model routing
+## Providers and model routing
 
-Routing is one ordered list of rules. Each rule is a condition and a **target**: which upstream,
-with which credentials, as which model.
+The top-level `providers` object centralizes upstream endpoints and credentials. Routing is one
+ordered list of rules; each target selects a provider ID, an optional fallback provider, and a model.
 
 ```json
 {
+  "providers": {
+    "anthropic-primary": {
+      "type": "anthropic",
+      "apiKey": "${ANTHROPIC_API_KEY}"
+    },
+    "openai-backup": {
+      "type": "openai",
+      "apiKey": "${OPENAI_API_KEY}"
+    }
+  },
   "routing": {
     "rules": [
       {
         "id": "pro-users",
         "when": "request.model == \"smart\" && has(user.claims.tier) && user.claims.tier == \"pro\"",
-        "target": { "type": "anthropic", "apiKey": "${ANTHROPIC_API_KEY}", "model": "claude-sonnet-5" }
+        "target": {
+          "provider": "anthropic-primary",
+          "fallbackProvider": "openai-backup",
+          "model": "claude-sonnet-5"
+        }
       },
       {
         "id": "everyone-else",
         "when": "true",
-        "target": { "type": "openai", "apiKey": "${OPENAI_API_KEY}", "model": "gpt-4o-mini" }
+        "target": { "provider": "openai-backup", "model": "gpt-4o-mini" }
       }
     ]
   }
@@ -352,14 +386,14 @@ Rules are evaluated top to bottom and the **first match wins**; nothing after it
 separate default: a catch-all is a last rule with `when: "true"`. With no rule matching, the request
 is a 404 `model_not_found`.
 
-A target owns its credentials rather than referring to a named provider defined elsewhere. That is
-deliberate — a reference can dangle, and "which key does this rule actually use" stopped being
-answerable by reading the rule.
+Provider IDs use letters, numbers, `_`, and `-`, such as `openai-primary` or `eu-backup`. Several
+rules can reuse one provider, and several provider IDs can use the same type with different accounts
+or regions. A save is rejected if a rule's primary or fallback ID is missing.
 
-### Target fields
+### Provider fields
 
-`type` is required and is one of `openai`, `deepseek`, `openai-compatible`, `anthropic`, or
-`google`. The rest are that provider's own options, validated by its schema —
+Every provider requires `type`, one of `openai`, `deepseek`, `openai-compatible`, `anthropic`, or
+`google`. The remaining fields are that provider's own options, validated by its schema —
 `GET /admin/api/meta` publishes them as JSON Schema, which is how the dashboard renders a form per
 type.
 
@@ -371,16 +405,20 @@ type.
 | `anthropic` | `apiKey` | `baseUrl`, `version`, `maxTokensDefault` |
 | `google` | `apiKey` | `baseUrl` |
 
-`model` is common to all of them: the upstream model to forward as. Omit it to pass the
-client-requested model through unchanged, which is what a rule matching on `request.model` usually
-wants.
+### Target fields
+
+| Field | Required | Purpose |
+| --- | --- | --- |
+| `provider` | yes | Provider ID from the top-level `providers` object. |
+| `fallbackProvider` | no | Different provider ID to try only after the primary returns or throws an upstream error. |
+| `model` | no | Upstream model to forward as. Omit it to pass the client-requested model through unchanged. |
 
 ### Rule fields
 
 | Field | Type | Purpose |
 | --- | --- | --- |
 | `when` | string | CEL expression. Only a literal `true` counts as a match. |
-| `target` | object | Where a match goes. See above. |
+| `target` | object | Named provider, optional fallback, and optional model. See above. |
 | `id` | string | Stable identity, used by logs and the admin API. Defaults to the rule's position, so a hand-written configuration need not invent one — but anything editing rules programmatically should set it, since a positional id changes meaning when rules are reordered. |
 | `name` | string | Human label, shown as the route name in request logs. Defaults to `id`. |
 
@@ -418,8 +456,9 @@ OMNI_TARGET_BASE_URL=https://api.groq.com/openai/v1
 OMNI_TARGET_API_KEY='${GROQ_API_KEY}'
 ```
 
-They seed a rule with `id: "default"` and `when: "true"`. Anything more — several upstreams, or a
-condition on a claim — is `OMNI_ROUTING_RULES`, or the [admin API](/reference/admin-api).
+They seed provider ID `default` and a rule with `id: "default"` and `when: "true"`. Anything more —
+several upstreams, or a condition on a claim — uses `OMNI_PROVIDERS_JSON` with
+`OMNI_ROUTING_RULES`, or the [admin API](/reference/admin-api).
 
 ### Restricting what clients may ask for
 
@@ -475,6 +514,7 @@ its own options at startup, so unsupported fields fail before the service accept
 | `server` | object | `{ logLevel: "info", trustProxyHeaders: false, maxInputTokens: 128000 }` | HTTP and logging behavior. |
 | `storage` | object | `{ type: "memory" }` | Selects a storage backend and its options. |
 | `security` | object | `{ publicPaths: [], appAuth: { mode: "all", providers: [] } }` | `userAuth` has no default and is required for an HTTP proxy. |
+| `providers` | object | `{}` | Named model upstreams. Endpoints and credentials live here, keyed by stable ID. |
 | `rateLimits` | array | `[{ per-user-daily-tokens: 30000/1d }]` | Per-user token budgets. |
 | `routing` | object | `{ allowedModels: [], rules: [] }` | Restricts client model names and chooses an upstream. |
 

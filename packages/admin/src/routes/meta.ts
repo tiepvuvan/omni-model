@@ -1,4 +1,5 @@
 import {
+  type AuthVerifier,
   buildRequestFacts,
   ConfigError,
   interpolateDeep,
@@ -105,19 +106,68 @@ function warningsFor(broken: readonly RuleEvaluation[]): string[] {
 }
 
 const modelsSchema = z.object({
-  /** A candidate `routing.rules[].target`, not necessarily saved yet. */
-  target: z.looseObject({ type: z.string().min(1) }),
+  /** A candidate top-level provider entry, not necessarily saved yet. */
+  provider: z.looseObject({ type: z.string().min(1) }),
+});
+
+const verifierTestSchema = z.object({
+  /** A candidate user/app verifier entry, not necessarily saved yet. */
+  verifier: z.looseObject({ type: z.string().min(1) }),
 });
 
 export function createMetaRoutes(deps: AdminDeps): Hono<AdminEnv> {
   const app = new Hono<AdminEnv>();
 
   /**
-   * List the models a candidate target can serve — and prove its credential works.
+   * Exercise a candidate authentication configuration before it is saved.
+   *
+   * The verifier instance owns the check because only it knows which discovery,
+   * JWKS, assessment, or validation endpoint proves its options. Secret and
+   * environment references are resolved exactly as they are during bundle build.
+   */
+  app.post("/verifiers/test", async (c) => {
+    const body = verifierTestSchema.parse(await c.req.json());
+    const factory = deps.registry.auth.get(body.verifier.type);
+    if (factory === undefined) {
+      throw badRequestError(`unknown authentication verifier type "${body.verifier.type}"`);
+    }
+
+    const interpolated = interpolateDeep(body.verifier, deps.runtime.env);
+    const resolved = (await resolveSecretRefs(interpolated, deps.secrets ?? null)) as Record<
+      string,
+      unknown
+    >;
+
+    let verifier: AuthVerifier;
+    try {
+      verifier = factory.create(resolved, deps.runtime);
+    } catch (error) {
+      if (error instanceof ConfigError) throw badRequestError(error.message);
+      throw error;
+    }
+    if (verifier.testConfiguration === undefined) {
+      return c.json({
+        ok: null,
+        reason: "this verifier can only be confirmed with a real client token",
+      });
+    }
+
+    try {
+      return c.json(await verifier.testConfiguration(deps.runtime));
+    } catch {
+      return c.json({
+        ok: false,
+        message: "The authentication configuration test failed before receiving a verdict.",
+      });
+    }
+  });
+
+  /**
+   * List the models a candidate provider can serve — and prove its credential works.
    *
    * The existing per-rule probe answers for the *applied* bundle, which is no use
    * while an operator is still typing a key: the point is to check it before it is
-   * saved. So this builds a provider from the candidate target, asks the upstream,
+   * saved. So this builds a provider from the candidate entry, asks the upstream,
    * and reports what it said.
    *
    * Two things make the answer trustworthy. The verdict comes from watching the
@@ -129,14 +179,14 @@ export function createMetaRoutes(deps: AdminDeps): Hono<AdminEnv> {
    */
   app.post("/providers/models", async (c) => {
     const body = modelsSchema.parse(await c.req.json());
-    const factory = deps.registry.providers.get(body.target.type);
+    const factory = deps.registry.providers.get(body.provider.type);
     if (factory === undefined) {
-      throw badRequestError(`unknown provider type "${body.target.type}"`);
+      throw badRequestError(`unknown provider type "${body.provider.type}"`);
     }
 
     // `${VAR}` from the environment, then `{"$secret": id}` from the keyring —
     // the same order `buildBundle` resolves them in.
-    const interpolated = interpolateDeep(body.target, deps.runtime.env);
+    const interpolated = interpolateDeep(body.provider, deps.runtime.env);
     const resolved = (await resolveSecretRefs(interpolated, deps.secrets ?? null)) as Record<
       string,
       unknown
@@ -280,7 +330,8 @@ export function createMetaRoutes(deps: AdminDeps): Hono<AdminEnv> {
       return c.json({
         matched: true,
         route: decision.routeName,
-        provider: decision.providerType,
+        provider: decision.providerId,
+        providerType: decision.providerType,
         model: decision.model,
         rules,
         warnings: warningsFor(broken),

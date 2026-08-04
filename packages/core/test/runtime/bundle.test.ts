@@ -146,10 +146,11 @@ describe("buildBundle", () => {
     const bundle = buildBundle({
       config: {
         ...MINIMAL,
+        providers: {
+          shared: { type: "fake", apiKey: "$" + "{SECRET_KEY}" },
+        },
         routing: {
-          rules: [
-            { id: "main", when: "true", target: { type: "fake", apiKey: "$" + "{SECRET_KEY}" } },
-          ],
+          rules: [{ id: "main", when: "true", target: { provider: "shared" } }],
         },
       },
       registry,
@@ -159,8 +160,8 @@ describe("buildBundle", () => {
       logger: silentLogger,
     });
 
-    expect(bundle.config.routing.rules[0]?.target).toMatchObject({ apiKey: "sk-resolved" });
-    expect(instances.get("main")).toBeDefined();
+    expect(bundle.config.providers.shared).toMatchObject({ apiKey: "sk-resolved" });
+    expect(instances.get("shared")).toBeDefined();
   });
 
   it("fails loudly when a referenced variable is missing", () => {
@@ -169,13 +170,93 @@ describe("buildBundle", () => {
     expect(() =>
       build({
         ...MINIMAL,
+        providers: { shared: { type: "fake", apiKey: "$" + "{NOT_SET}" } },
+        routing: { rules: [{ id: "main", when: "true", target: { provider: "shared" } }] },
+      }),
+    ).toThrow(/NOT_SET/);
+  });
+
+  it("builds each named provider once and lets several rules reuse it", () => {
+    const registry = createDefaultRegistry();
+    const { factory, instances } = createFakeProviderSetup();
+    registry.providers.set(factory.type, factory);
+    registry.auth.set("test-authenticated", createAlwaysAuthenticatedFactory());
+
+    const bundle = buildBundle({
+      config: {
+        ...MINIMAL,
+        providers: { shared: { type: "fake" } },
         routing: {
           rules: [
-            { id: "main", when: "true", target: { type: "fake", apiKey: "$" + "{NOT_SET}" } },
+            {
+              id: "specific",
+              when: 'request.model == "smart"',
+              target: { provider: "shared", model: "large" },
+            },
+            { id: "default", when: "true", target: { provider: "shared" } },
+          ],
+        },
+      },
+      registry,
+      storage: new MemoryStorageAdapter(),
+      engine: new CelExpressionEngine(),
+      runtime: runtime(),
+      logger: silentLogger,
+    });
+
+    expect([...instances.keys()]).toEqual(["shared"]);
+    expect([...bundle.providers.keys()]).toEqual(["shared"]);
+  });
+
+  it("rejects missing primary and fallback provider references by path", () => {
+    expect(() =>
+      build({
+        ...MINIMAL,
+        routing: { rules: [{ id: "main", when: "true", target: { provider: "missing" } }] },
+      }),
+    ).toThrow(/routing\.rules\[0\]\.target\.provider.*"missing"/s);
+
+    expect(() =>
+      build({
+        ...MINIMAL,
+        providers: { primary: { type: "fake" } },
+        routing: {
+          rules: [
+            {
+              id: "main",
+              when: "true",
+              target: { provider: "primary", fallbackProvider: "missing" },
+            },
           ],
         },
       }),
-    ).toThrow(/NOT_SET/);
+    ).toThrow(/routing\.rules\[0\]\.target\.fallbackProvider.*"missing"/s);
+  });
+
+  it("rejects a provider as its own fallback and unknown named provider types", () => {
+    expect(() =>
+      build({
+        ...MINIMAL,
+        providers: { primary: { type: "fake" } },
+        routing: {
+          rules: [
+            {
+              id: "main",
+              when: "true",
+              target: { provider: "primary", fallbackProvider: "primary" },
+            },
+          ],
+        },
+      }),
+    ).toThrow(/fallback provider must be different/);
+
+    expect(() =>
+      build({
+        ...MINIMAL,
+        providers: { primary: { type: "not-registered" } },
+        routing: { rules: [{ id: "main", when: "true", target: { provider: "primary" } }] },
+      }),
+    ).toThrow(/providers\.primary.*"not-registered"/s);
   });
 
   it("keeps a target's model out of the provider's options", () => {

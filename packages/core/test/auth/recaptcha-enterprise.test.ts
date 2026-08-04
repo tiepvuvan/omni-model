@@ -100,6 +100,40 @@ describe("recaptchaEnterpriseVerifierFactory", () => {
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
+  it("preflights the project, site key, and API key with a synthetic assessment", async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async (_input, init) => {
+      expect(JSON.parse(String(init?.body))).toEqual({
+        event: {
+          token: "omni-model-configuration-test",
+          siteKey: "site-key",
+          expectedAction: "chat",
+        },
+      });
+      return Response.json({
+        tokenProperties: { valid: false, invalidReason: "MALFORMED" },
+        riskAnalysis: {},
+      });
+    });
+    const ctx = runtime(fetchImpl);
+    const verifier = recaptchaEnterpriseVerifierFactory.create(baseOptions, ctx);
+
+    expect(await verifier.testConfiguration?.(ctx)).toMatchObject({
+      ok: true,
+      message: expect.stringContaining("project, site key"),
+    });
+  });
+
+  it("reports a project or credential refusal without its API key", async () => {
+    const ctx = runtime(
+      vi.fn<typeof fetch>(async () => new Response("forbidden", { status: 403 })),
+    );
+    const verifier = recaptchaEnterpriseVerifierFactory.create(baseOptions, ctx);
+
+    const result = await verifier.testConfiguration?.(ctx);
+    expect(result).toMatchObject({ ok: false, status: 403 });
+    expect(JSON.stringify(result)).not.toContain("server-api-key");
+  });
+
   it("creates an API-key assessment with action, user agent and trusted IP", async () => {
     const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
       expect(input).toBe(

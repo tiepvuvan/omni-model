@@ -14,22 +14,26 @@ async function storedConfig(
   return body.config;
 }
 
-function targetOf(config: Record<string, unknown>): Record<string, unknown> {
-  const routing = config.routing as { rules: { target: Record<string, unknown> }[] };
-  return routing.rules[0]?.target as Record<string, unknown>;
+function providerOf(config: Record<string, unknown>, id = "main"): Record<string, unknown> {
+  return (config.providers as Record<string, Record<string, unknown>>)[id] as Record<
+    string,
+    unknown
+  >;
 }
 
 /**
- * The dashboard types an API key into a routing rule. That is the whole point of
- * the routing redesign — credentials belong to the rule that uses them — and it
- * puts a plaintext credential in an HTTP body, so the save path is the boundary
- * where it stops being plaintext.
+ * The Providers page accepts an API key once and routing rules only reference its
+ * stable id. The save path is the boundary where that plaintext stops being
+ * plaintext.
  */
-describe("credentials typed into a rule are sealed before they are stored", () => {
+describe("credentials typed into a named provider are sealed before they are stored", () => {
   const withKey = (apiKey: unknown) =>
     baseConfig({
+      providers: {
+        main: { type: "openai", apiKey, baseUrl: "https://upstream.test/v1" },
+      },
       routing: {
-        rules: [{ id: "main", when: "true", target: { type: "openai", apiKey } }],
+        rules: [{ id: "main", when: "true", target: { provider: "main" } }],
       },
     });
 
@@ -43,12 +47,12 @@ describe("credentials typed into a rule are sealed before they are stored", () =
 
     // Stored: a reference, and the value appears nowhere in the document.
     const stored = await storedConfig(call);
-    expect(isSecretRef(targetOf(stored).apiKey)).toBe(true);
+    expect(isSecretRef(providerOf(stored).apiKey)).toBe(true);
     expect(JSON.stringify(stored)).not.toContain(KEY);
 
     // Applied: the live bundle resolved that reference back to the real key, so
     // the proxy can actually call the upstream.
-    expect(holder.current()?.config.routing.rules[0]?.target).toMatchObject({ apiKey: KEY });
+    expect(holder.current()?.config.providers.main).toMatchObject({ apiKey: KEY });
   });
 
   it("does not echo the sealed value in the save response", async () => {
@@ -96,20 +100,20 @@ describe("credentials typed into a rule are sealed before they are stored", () =
       method: "PUT",
       body: JSON.stringify({ config: withKey(KEY) }),
     });
-    const firstRef = targetOf(await storedConfig(call)).apiKey as { $secret: string };
+    const firstRef = providerOf(await storedConfig(call)).apiKey as { $secret: string };
 
     await call("/admin/api/config", {
       method: "PUT",
       body: JSON.stringify({ config: withKey("sk-live-rotated") }),
     });
-    const secondRef = targetOf(await storedConfig(call)).apiKey as { $secret: string };
+    const secondRef = providerOf(await storedConfig(call)).apiKey as { $secret: string };
 
     // Same id: the secret is named after the path, and `put` reuses the row for a
     // name — which is what keeps any other configuration referencing it working.
     expect(secondRef.$secret).toBe(firstRef.$secret);
     const secrets = (await (await call("/admin/api/secrets")).json()) as { secrets: unknown[] };
     expect(secrets.secrets).toHaveLength(2);
-    expect(holder.current()?.config.routing.rules[0]?.target).toMatchObject({
+    expect(holder.current()?.config.providers.main).toMatchObject({
       apiKey: "sk-live-rotated",
     });
   });
@@ -136,22 +140,21 @@ describe("credentials typed into a rule are sealed before they are stored", () =
     ]);
   });
 
-  it("seals a key sent through the per-rule endpoint too", async () => {
-    // Not just PUT /config: the dashboard edits one rule at a time.
+  it("seals a key sent through the Providers page endpoint too", async () => {
     const { call } = await createTestAdmin({ config: baseConfig() });
-    const response = await call("/admin/api/routing/rules/backup", {
+    const response = await call("/admin/api/providers", {
       method: "PUT",
       body: JSON.stringify({
-        value: { when: "true", target: { type: "anthropic", apiKey: KEY } },
+        value: {
+          backup: { type: "anthropic", apiKey: KEY },
+        },
       }),
     });
     expect(response.status).toBe(200);
 
     const stored = await storedConfig(call);
     expect(JSON.stringify(stored)).not.toContain(KEY);
-    const rules = (stored.routing as { rules: { id: string; target: { apiKey: unknown } }[] })
-      .rules;
-    expect(isSecretRef(rules[1]?.target.apiKey)).toBe(true);
+    expect(isSecretRef(providerOf(stored, "backup").apiKey)).toBe(true);
   });
 
   it("records which paths were sealed, and never the values", async () => {
@@ -174,7 +177,7 @@ describe("credentials typed into a rule are sealed before they are stored", () =
       (entry) => entry.message === "sealed credentials from an admin write",
     );
     expect(sealed).toBeDefined();
-    expect(sealed?.paths).toEqual(["security.userAuth.secret", "routing.rules[0].target.apiKey"]);
+    expect(sealed?.paths).toEqual(["security.userAuth.secret", "providers.main.apiKey"]);
     expect(sealed?.by).toBe("root@test");
     expect(JSON.stringify(entries)).not.toContain(KEY);
   });
@@ -195,7 +198,7 @@ describe("credentials typed into a rule are sealed before they are stored", () =
     expect(error.code).toBe("secrets_unavailable");
     expect(error.message).toMatch(/OMNI_ENCRYPTION_KEY/);
     // Names the path, never the value.
-    expect(error.message).toContain("routing.rules[0].target.apiKey");
+    expect(error.message).toContain("providers.main.apiKey");
     expect(error.message).not.toContain(KEY);
 
     expect((await configStore.history(10)).length).toBe(1);

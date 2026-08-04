@@ -49,7 +49,7 @@ function parseResponse(value: unknown): TurnstileResponse | null {
 async function verifyUpstream(
   token: string,
   secret: string,
-  ctx: VerifyContext,
+  ctx: Pick<VerifyContext, "fetch" | "clientIp">,
 ): Promise<TurnstileResponse | null> {
   const idempotencyKey = crypto.randomUUID();
   const body = {
@@ -105,6 +105,23 @@ export const cloudflareTurnstileVerifierFactory: AuthVerifierFactory = {
     return {
       type: TYPE,
       name: opts.name ?? TYPE,
+      async testConfiguration(ctx) {
+        const result = await verifyUpstream("omni-model-configuration-test", opts.secret, ctx);
+        if (result === null || result.errorCodes.includes("internal-error")) {
+          return { ok: false, message: "Cloudflare Turnstile could not be reached." };
+        }
+        if (
+          result.errorCodes.includes("invalid-input-secret") ||
+          result.errorCodes.includes("missing-input-secret")
+        ) {
+          return { ok: false, message: "Cloudflare rejected the Turnstile secret key." };
+        }
+        return {
+          ok: true,
+          message:
+            "Cloudflare accepted the Turnstile secret key; the synthetic token was rejected.",
+        };
+      },
       async verify(request, ctx): Promise<AuthResult | null> {
         const token = request.headers.get(opts.header);
         if (token === null || token === "") return null;

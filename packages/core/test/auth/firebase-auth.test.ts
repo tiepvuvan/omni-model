@@ -142,6 +142,36 @@ describe("firebaseAuthVerifierFactory", () => {
     expect(await verifier.verify(withHeader("authorization", `Bearer ${token}`), ctx)).toBeNull();
   });
 
+  it("confirms that the optional Web API key belongs to the configured project", async () => {
+    const calls: string[] = [];
+    const ctx = makeCtx(async (input) => {
+      calls.push(String(input));
+      return Response.json({ projectId: PROJECT_ID });
+    });
+    const verifier = firebaseAuthVerifierFactory.create(
+      { ...options, apiKey: "firebase-web-key" },
+      ctx,
+    );
+
+    expect(await verifier.testConfiguration?.(ctx)).toEqual({
+      ok: true,
+      message: `Firebase project “${PROJECT_ID}” was verified.`,
+    });
+    expect(calls).toEqual([
+      "https://identitytoolkit.googleapis.com/v1/projects?key=firebase-web-key",
+    ]);
+  });
+
+  it("does not claim the project id was checked without a Web API key", async () => {
+    const ctx = makeCtx(jwksFetch([]));
+    const verifier = firebaseAuthVerifierFactory.create(options, ctx);
+
+    expect(await verifier.testConfiguration?.(ctx)).toMatchObject({
+      ok: null,
+      reason: expect.stringContaining("Web API key"),
+    });
+  });
+
   it("requires projectId and rejects unknown options", () => {
     const ctx = makeCtx(rejectFetch);
     expect(() => firebaseAuthVerifierFactory.create({ type: "firebase-auth" }, ctx)).toThrow(

@@ -2,6 +2,7 @@ import { jwtVerify } from "jose";
 import { z } from "zod";
 import { ConfigError } from "../../errors.js";
 import type { RuntimeContext } from "../../types.js";
+import { testJwks } from "../configuration-test.js";
 import type { AuthResult, AuthVerifier, AuthVerifierFactory } from "../types.js";
 import { extractToken, invalidTokenResult, isInvalidTokenError, remoteJwks } from "./token.js";
 
@@ -59,6 +60,8 @@ export const clerkVerifierFactory: AuthVerifierFactory = {
     return {
       type: TYPE,
       name: opts.name ?? TYPE,
+      testConfiguration: (ctx) =>
+        testJwks(opts.jwksUrl ?? `${issuer}/.well-known/jwks.json`, ctx, "The Clerk instance"),
       async verify(request, ctx): Promise<AuthResult | null> {
         const token = extractToken(request, opts.header, opts.scheme);
         if (token === null) return null;

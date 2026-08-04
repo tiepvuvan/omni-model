@@ -80,7 +80,8 @@ describe("environment configuration", () => {
       OMNI_SERVER_MAX_INPUT_TOKENS: "256000",
       OMNI_SERVER_ORGANIZATION_NAME: "Northstar",
       OMNI_SERVER_CUSTOM_DOMAIN: "ai.northstar.example",
-      OMNI_ROUTING_JSON: `{"rules":[{"id":"fast","when":"true","target":{"type":"openai-compatible","baseUrl":"https://api.example.com/v1","apiKey":"${OPENAI_API_KEY_REFERENCE}"}}]}`,
+      OMNI_PROVIDERS_JSON: `{"fast":{"type":"openai-compatible","baseUrl":"https://api.example.com/v1","apiKey":"${OPENAI_API_KEY_REFERENCE}"}}`,
+      OMNI_ROUTING_JSON: '{"rules":[{"id":"fast","when":"true","target":{"provider":"fast"}}]}',
       OMNI_LOG_LEVEL: "error",
       OMNI__SERVER__CORS__ALLOW_ORIGINS: '["https://override.example"]',
       OMNI__ROUTING__ALLOWED_MODELS: '["only-this"]',
@@ -95,9 +96,11 @@ describe("environment configuration", () => {
     });
     // The named JSON block replaced the whole-document rules, and the path
     // override then added to the block it did not touch.
-    expect(config.routing.rules).toMatchObject([
-      { id: "fast", target: { type: "openai-compatible", apiKey: "sk-test" } },
-    ]);
+    expect(config.providers.fast).toMatchObject({
+      type: "openai-compatible",
+      apiKey: "sk-test",
+    });
+    expect(config.routing.rules).toMatchObject([{ id: "fast", target: { provider: "fast" } }]);
     expect(config.routing.allowedModels).toEqual(["only-this"]);
   });
 
@@ -122,6 +125,7 @@ describe("environment configuration", () => {
       OMNI_SECURITY_MODE: "all",
       OMNI_SECURITY_FIREBASE_AUTH_ENABLED: "true",
       OMNI_SECURITY_FIREBASE_AUTH_PROJECT_ID: "my-firebase-project",
+      OMNI_SECURITY_FIREBASE_AUTH_API_KEY: "firebase-web-key",
       OMNI_SECURITY_FIREBASE_APPCHECK_ENABLED: "true",
       OMNI_SECURITY_FIREBASE_APPCHECK_PROJECT_NUMBER: "1234567890",
       OMNI_SECURITY_FIREBASE_APPCHECK_APP_ID: "1:1234567890:ios:abc123",
@@ -136,6 +140,13 @@ describe("environment configuration", () => {
     });
     // One catch-all rule, so the commonest deployment stays the simplest to
     // express: one provider, one key, send everything there.
+    expect(config.providers).toMatchObject({
+      default: {
+        type: "openai-compatible",
+        baseUrl: "https://gateway.example.com/v1",
+        apiKey: "gateway-key",
+      },
+    });
     expect(config.routing).toMatchObject({
       allowedModels: ["smart", "embeddings"],
       rules: [
@@ -143,9 +154,7 @@ describe("environment configuration", () => {
           id: "default",
           when: "true",
           target: {
-            type: "openai-compatible",
-            baseUrl: "https://gateway.example.com/v1",
-            apiKey: "gateway-key",
+            provider: "default",
             model: "gpt-4o-mini",
           },
         },
@@ -154,7 +163,11 @@ describe("environment configuration", () => {
     // The two layers land in their own halves: Firebase Auth is who the user is,
     // App Check is which app it came from.
     expect(config.security).toMatchObject({
-      userAuth: { type: "firebase-auth", projectId: "my-firebase-project" },
+      userAuth: {
+        type: "firebase-auth",
+        projectId: "my-firebase-project",
+        apiKey: "firebase-web-key",
+      },
       appAuth: {
         mode: "all",
         providers: [
@@ -324,10 +337,11 @@ describe("environment configuration", () => {
       OMNI_SECURITY_FIREBASE_APPCHECK_APP_ID: "",
     });
 
-    expect(config.routing.rules[0]?.target).toEqual({
+    expect(config.providers.default).toEqual({
       type: "openai-compatible",
       baseUrl: "https://gateway.example.com/v1",
     });
+    expect(config.routing.rules[0]?.target).toEqual({ provider: "default" });
     expect(config.security.appAuth.providers).toEqual([
       { type: "firebase-app-check", projectNumber: "1234567890" },
     ]);

@@ -212,9 +212,15 @@ omni-model stores them **encrypted in the database** and configuration refers to
 
 ```json
 {
+  "providers": {
+    "openai-primary": {
+      "type": "openai",
+      "apiKey": { "$secret": "3f7c…" }
+    }
+  },
   "routing": {
     "rules": [
-      { "id": "default", "when": "true", "target": { "type": "openai", "apiKey": { "$secret": "3f7c…" } } }
+      { "id": "default", "when": "true", "target": { "provider": "openai-primary" } }
     ]
   }
 }

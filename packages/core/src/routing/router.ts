@@ -10,21 +10,18 @@ import type {
   RuleEvaluation,
 } from "./types.js";
 
-/**
- * One rule, ready to evaluate: its condition compiled and its upstream built.
- *
- * The provider instance is *in* the rule rather than looked up by name when the
- * rule matches. That is what removes the "unknown provider" error class — there
- * is no name, so there is nothing to dangle — and it means a matched rule cannot
- * fail to find where it was pointing.
- */
+/** One rule, ready to evaluate with its provider references already resolved. */
 export interface CompiledRoutingRule {
   when: CompiledExpression;
   /** Label for logs; the rule's `name`, else its id. */
   routeName: string;
   provider: ChatProvider;
+  providerId: string;
   /** Provider type, recorded per request for usage attribution. */
   providerType: string;
+  fallbackProvider?: ChatProvider;
+  fallbackProviderId?: string;
+  fallbackProviderType?: string;
   /** Upstream model override; undefined forwards the client-requested model. */
   model: string | undefined;
   /** The non-boolean-result warning fires once per rule, not once per request. */
@@ -131,7 +128,15 @@ export function createRouter(
         if (result === true) {
           return {
             provider: rule.provider,
+            providerId: rule.providerId,
             providerType: rule.providerType,
+            ...(rule.fallbackProvider === undefined
+              ? {}
+              : {
+                  fallbackProvider: rule.fallbackProvider,
+                  fallbackProviderId: rule.fallbackProviderId,
+                  fallbackProviderType: rule.fallbackProviderType,
+                }),
             model: rule.model ?? facts.request.model,
             routeName: rule.routeName,
           };
@@ -158,7 +163,11 @@ export function createRouter(
       const vars = varsFor(facts);
       const evaluations: RuleEvaluation[] = [];
       for (const rule of rules) {
-        const base = { rule: rule.routeName, providerType: rule.providerType };
+        const base = {
+          rule: rule.routeName,
+          providerId: rule.providerId,
+          providerType: rule.providerType,
+        };
         try {
           const result = rule.when.evaluate(vars);
           if (result === true) {

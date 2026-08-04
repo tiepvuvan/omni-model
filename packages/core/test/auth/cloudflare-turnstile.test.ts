@@ -55,6 +55,36 @@ describe("cloudflareTurnstileVerifierFactory", () => {
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
+  it("distinguishes a valid secret from an invalid synthetic token", async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async (_input, init) => {
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      expect(body).toMatchObject({
+        secret: "server-secret",
+        response: "omni-model-configuration-test",
+      });
+      return Response.json({ success: false, "error-codes": ["invalid-input-response"] });
+    });
+    const ctx = runtime(fetchImpl);
+    const verifier = cloudflareTurnstileVerifierFactory.create({ secret: "server-secret" }, ctx);
+
+    expect(await verifier.testConfiguration?.(ctx)).toMatchObject({
+      ok: true,
+      message: expect.stringContaining("secret key"),
+    });
+  });
+
+  it("reports a rejected secret without echoing it", async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async () =>
+      Response.json({ success: false, "error-codes": ["invalid-input-secret"] }),
+    );
+    const ctx = runtime(fetchImpl);
+    const verifier = cloudflareTurnstileVerifierFactory.create({ secret: "do-not-echo" }, ctx);
+
+    const result = await verifier.testConfiguration?.(ctx);
+    expect(result).toMatchObject({ ok: false });
+    expect(JSON.stringify(result)).not.toContain("do-not-echo");
+  });
+
   it("validates server-side, forwards the trusted IP, and exposes only curated claims", async () => {
     const fetchImpl = vi.fn<typeof fetch>(async (_input, init) => {
       expect(init?.headers).toEqual({ "content-type": "application/json" });
